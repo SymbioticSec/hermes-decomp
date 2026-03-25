@@ -1,7 +1,10 @@
-use hbc_decomp::{BytecodeFile, BytecodeFormat, IRBuilder, IRBuilderOptions, StructureAnalysis, MetroRegistry, DecompileOptionsV2};
-use std::path::Path;
-use std::fs;
+use hbc_decomp::{
+    BytecodeFile, BytecodeFormat, DecompileOptionsV2, IRBuilder, IRBuilderOptions, MetroRegistry,
+    StructureAnalysis,
+};
 use std::error::Error;
+use std::fs;
+use std::path::Path;
 
 pub fn run_extract(
     file: &BytecodeFile,
@@ -16,6 +19,7 @@ pub fn run_extract(
     let options = IRBuilderOptions {
         resolve_strings: true,
         include_offsets: false,
+        ..Default::default()
     };
     let mut builder = IRBuilder::new(file, format, options);
     let cfg = builder.build_function(0)?;
@@ -32,6 +36,7 @@ pub fn run_extract(
         propagate: true,
         simplify: true,
         recover_structures: true,
+        ..Default::default()
     };
 
     // Pre-calculate closure contexts
@@ -47,9 +52,18 @@ pub fn run_extract(
         };
         let path = output_dir.join(filename);
 
-        print!("Extracting module {} (F{})... ", module.module_id, module.function_id);
-        
-        match hbc_decomp::decompile_function_v2_with_context(file, format, module.function_id, &decompile_opts, Some(&ctx)) {
+        print!(
+            "Extracting module {} (F{})... ",
+            module.module_id, module.function_id
+        );
+
+        match hbc_decomp::decompile_function_v2_with_context(
+            file,
+            format,
+            module.function_id,
+            &decompile_opts,
+            Some(&ctx),
+        ) {
             Ok(code) => {
                 // Add header
                 let mut content = String::new();
@@ -60,7 +74,7 @@ pub fn run_extract(
                 }
                 content.push_str(&format!("// Dependencies: {:?}\n\n", module.dependencies));
                 content.push_str(&code);
-                
+
                 fs::write(&path, content)?;
                 println!("OK");
             }
@@ -73,7 +87,6 @@ pub fn run_extract(
     Ok(())
 }
 
-
 pub fn print_modules(
     file: &BytecodeFile,
     format: &hbc_decomp::BytecodeFormat,
@@ -83,6 +96,7 @@ pub fn print_modules(
     let options = IRBuilderOptions {
         resolve_strings: true,
         include_offsets: false,
+        ..Default::default()
     };
     let mut builder = IRBuilder::new(file, format, options);
     let cfg = builder.build_function(0)?;
@@ -102,18 +116,28 @@ pub fn print_modules(
     let display_count = limit.unwrap_or(modules.len()).min(modules.len());
 
     for module in modules.iter().take(display_count) {
-        let name_str = module.name.as_ref()
+        let name_str = module
+            .name
+            .as_ref()
             .map(|n| format!(" - {n}"))
             .unwrap_or_default();
         let deps_str = if module.dependencies.is_empty() {
             String::new()
         } else {
-            format!(" deps: [{}]", module.dependencies.iter()
-                .map(|d| d.to_string())
-                .collect::<Vec<_>>()
-                .join(", "))
+            format!(
+                " deps: [{}]",
+                module
+                    .dependencies
+                    .iter()
+                    .map(|d| d.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         };
-        println!("Module {} (F{}){}{}", module.module_id, module.function_id, name_str, deps_str);
+        println!(
+            "Module {} (F{}){}{}",
+            module.module_id, module.function_id, name_str, deps_str
+        );
     }
 
     if display_count < modules.len() {
@@ -133,6 +157,7 @@ pub fn print_module_deps(
     let options = IRBuilderOptions {
         resolve_strings: true,
         include_offsets: false,
+        ..Default::default()
     };
     let mut builder = IRBuilder::new(file, format, options);
     let cfg = builder.build_function(0)?;
@@ -153,7 +178,8 @@ pub fn print_module_deps(
         }
         println!("\nDirect dependencies ({}):", module.dependencies.len());
         for &dep_id in &module.dependencies {
-            let dep_info = registry.get_module(dep_id)
+            let dep_info = registry
+                .get_module(dep_id)
                 .map(|m| format!(" -> F{}", m.function_id))
                 .unwrap_or_default();
             println!("  Module {dep_id}{dep_info}");
@@ -169,7 +195,8 @@ pub fn print_module_deps(
             println!("  None found");
         } else {
             for dep_id in dependents.iter().take(20) {
-                let dep_info = registry.get_module(*dep_id)
+                let dep_info = registry
+                    .get_module(*dep_id)
                     .map(|m| format!(" (F{})", m.function_id))
                     .unwrap_or_default();
                 println!("  Module {dep_id}{dep_info}");

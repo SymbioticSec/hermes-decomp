@@ -15,17 +15,36 @@ Thumbs.db
 
 # Decompiled output
 *.decompiled.js
+decompiled*.js
+debug_output.js
+global_snippet.js
 examples/**/*.js
 !examples/**/*.original.js
 examples/
 
-# Logs
+# Logs and debug artifacts
 *.log
+*_stderr*.txt
+
+# One-off refactoring scripts
+*.py
 
 # Environment
 .env
 .env.local
-CLAUDE.md
+**/CLAUDE.md
 PLAN.md
 THIRD_PARTY_NOTICES.md
 scripts/
+# IDE / AI tooling
+.claude/
+.cursor/
+.opencode/
+
+# Workspace files
+hermes_decompiler.code-workspace
+DOCUMENTATION.md
+
+# Binary test files
+index.android.hbc
+test_defaults.hbc

@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "hermes-dec")]
@@ -25,6 +25,9 @@ pub enum Command {
         input2: Option<PathBuf>,
         #[arg(long)]
         format_version: Option<u32>,
+        // Compare decompiled code for diff (slower)
+        #[arg(long)]
+        diff_code: bool,
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
         #[arg(long, value_enum, default_value = "auto")]
@@ -61,35 +64,41 @@ pub enum Command {
         layout: LayoutArg,
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        /// Include bytecode offsets as comments
+        // Include bytecode offsets as comments
         #[arg(long)]
         show_offsets: bool,
-        /// Don't resolve string table indices
+        // Don't resolve string table indices
         #[arg(long)]
         no_strings: bool,
-        /// Disable constant/copy propagation
+        // Disable constant/copy propagation
         #[arg(long)]
         no_propagate: bool,
-        /// Disable expression simplification
+        // Disable expression simplification
         #[arg(long)]
         no_simplify: bool,
-        /// Disable control flow structure recovery
+        // Disable control flow structure recovery
         #[arg(long)]
         no_structure: bool,
-        /// Expand referenced functions inline (recursively decompile closures)
+        // Expand referenced functions inline (recursively decompile closures)
         #[arg(long)]
         expand: bool,
-        /// Maximum depth for function expansion (default: 2)
+        // Maximum depth for function expansion (default: 2)
         #[arg(long, default_value = "2")]
         expand_depth: usize,
-        /// Resolve closure variables across functions (slower but more readable)
+        // Resolve closure variables across functions (slower but more readable)
         #[arg(long)]
         resolve_closures: bool,
-        /// Output as JSON (IR)
+        // Output as JSON (IR)
         #[arg(long)]
         json: bool,
+        // Check for unreachable functions (Dead Code)
+        #[arg(long)]
+        check_dead_code: bool,
+        // Assembly mode: show absolute binary offsets on each line (Binary Ninja style)
+        #[arg(long)]
+        assembly: bool,
     },
-    /// Show closure mappings for a function (what each closure_X refers to)
+    // Show closure mappings for a function (what each closure_X refers to)
     Closures {
         input: PathBuf,
         #[arg(long)]
@@ -101,10 +110,10 @@ pub enum Command {
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
     },
-    /// Show Metro module dependencies
+    // Show Metro module dependencies
     Deps {
         input: PathBuf,
-        /// Module ID (not function ID)
+        // Module ID (not function ID)
         #[arg(long)]
         module: u32,
         #[arg(long)]
@@ -113,11 +122,11 @@ pub enum Command {
         layout: LayoutArg,
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        /// Show dependency tree with this depth
+        // Show dependency tree with this depth
         #[arg(long, default_value = "2")]
         depth: usize,
     },
-    /// List all Metro modules in the bundle
+    // List all Metro modules in the bundle
     Modules {
         input: PathBuf,
         #[arg(long)]
@@ -126,32 +135,31 @@ pub enum Command {
         layout: LayoutArg,
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        /// Show only first N modules
+        // Show only first N modules
         #[arg(long)]
         limit: Option<usize>,
     },
-    /// Show debug info (variable names, scope descriptors, textified callees)
+    // Show debug info (variable names, scope descriptors, textified callees)
     Debug {
         input: PathBuf,
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        /// Show only scopes
+        // Show only scopes
         #[arg(long)]
         scopes: bool,
-        /// Show only callees
+        // Show only callees
         #[arg(long)]
         callees: bool,
-        /// Show only variable names
+        // Show only variable names
         #[arg(long)]
-        #[arg(long)] // Error in original file? repeated.
         vars: bool,
     },
-    /// Extract all Metro modules to separate files
+    // Extract all Metro modules to separate files
     Extract {
         input: PathBuf,
-        /// Output directory
+        // Output directory
         #[arg(long)]
         output: PathBuf,
         #[arg(long)]
@@ -163,7 +171,7 @@ pub enum Command {
         #[arg(long)]
         no_strings: bool,
     },
-    /// Generate a Graphviz DOT file for the Control Flow Graph
+    // Generate a Graphviz DOT file for the Control Flow Graph
     Graphviz {
         input: PathBuf,
         #[arg(long)]
@@ -176,17 +184,17 @@ pub enum Command {
         layout: LayoutArg,
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        /// Open the generated graph immediately (requires xdot or open)
+        // Open the generated graph immediately (requires xdot or open)
         #[arg(long)]
         open: bool,
     },
-    /// Find cross-references (xrefs) to a string or function
+    // Find cross-references (xrefs) to a string or function
     Xref {
         input: PathBuf,
-        /// String or Function ID to search for
+        // String or Function ID to search for
         #[arg(long)]
         query: String,
-        /// Type of query: string | function
+        // Type of query: string | function
         #[arg(long, value_enum, default_value = "string")]
         kind: XrefKind,
         #[arg(long)]
@@ -205,14 +213,14 @@ pub enum Command {
         function_layout: FunctionLayoutArg,
         #[arg(long)]
         format_version: Option<u32>,
-        /// Compare decompiled code for modified functions
+        // Compare decompiled code for modified functions
         #[arg(long)]
         diff_code: bool,
     },
-    /// Dump data from the HBC file (strings, etc.)
+    // Dump data from the HBC file (strings, etc.)
     Dump {
         input: PathBuf,
-        /// What to dump: 'strings', 'functions'
+        // What to dump: 'strings', 'functions'
         #[arg(long, value_enum, default_value = "strings")]
         kind: DumpKind,
         #[arg(long, value_enum, default_value = "auto")]

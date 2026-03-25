@@ -1,5 +1,5 @@
-use crate::ir::{Statement, Expression, Value, AssignTarget, PropertyKey};
 use super::state::VariableNamer;
+use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
 
 pub fn rename_stmt(namer: &VariableNamer, stmt: Statement) -> Statement {
     match stmt {
@@ -15,10 +15,20 @@ pub fn rename_stmt(namer: &VariableNamer, stmt: Statement) -> Statement {
         Statement::Expr(e) => Statement::Expr(rename_expr(namer, e)),
         Statement::Return(Some(e)) => Statement::Return(Some(rename_expr(namer, e))),
         Statement::Throw(e) => Statement::Throw(rename_expr(namer, e)),
-        Statement::If { condition, then_body, else_body } => Statement::If {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::If {
             condition: rename_expr(namer, condition),
-            then_body: then_body.into_iter().map(|s| rename_stmt(namer, s)).collect(),
-            else_body: else_body.into_iter().map(|s| rename_stmt(namer, s)).collect(),
+            then_body: then_body
+                .into_iter()
+                .map(|s| rename_stmt(namer, s))
+                .collect(),
+            else_body: else_body
+                .into_iter()
+                .map(|s| rename_stmt(namer, s))
+                .collect(),
         },
         Statement::While { condition, body } => Statement::While {
             condition: rename_expr(namer, condition),
@@ -28,38 +38,76 @@ pub fn rename_stmt(namer: &VariableNamer, stmt: Statement) -> Statement {
             body: body.into_iter().map(|s| rename_stmt(namer, s)).collect(),
             condition: rename_expr(namer, condition),
         },
-        Statement::For { init, condition, update, body } => Statement::For {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
             init: init.map(|s| Box::new(rename_stmt(namer, *s))),
             condition: condition.map(|e| rename_expr(namer, e)),
             update: update.map(|s| Box::new(rename_stmt(namer, *s))),
             body: body.into_iter().map(|s| rename_stmt(namer, s)).collect(),
         },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => Statement::ForOf {
             variable: maybe_rename_var(namer, &variable),
             iterable: rename_expr(namer, iterable),
             body: body.into_iter().map(|s| rename_stmt(namer, s)).collect(),
         },
-        Statement::ForIn { variable, object, body } => Statement::ForIn {
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => Statement::ForIn {
             variable: maybe_rename_var(namer, &variable),
             object: rename_expr(namer, object),
             body: body.into_iter().map(|s| rename_stmt(namer, s)).collect(),
         },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
-            try_body: try_body.into_iter().map(|s| rename_stmt(namer, s)).collect(),
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
+            try_body: try_body
+                .into_iter()
+                .map(|s| rename_stmt(namer, s))
+                .collect(),
             catch_param: catch_param.map(|p| maybe_rename_var(namer, &p)),
-            catch_body: catch_body.into_iter().map(|s| rename_stmt(namer, s)).collect(),
-            finally_body: finally_body.into_iter().map(|s| rename_stmt(namer, s)).collect(),
+            catch_body: catch_body
+                .into_iter()
+                .map(|s| rename_stmt(namer, s))
+                .collect(),
+            finally_body: finally_body
+                .into_iter()
+                .map(|s| rename_stmt(namer, s))
+                .collect(),
         },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => Statement::Switch {
             discriminant: rename_expr(namer, discriminant),
-            cases: cases.into_iter().map(|(e, stmts)| {
-                (rename_expr(namer, e), stmts.into_iter().map(|s| rename_stmt(namer, s)).collect())
-            }).collect(),
-            default: default.map(|stmts| stmts.into_iter().map(|s| rename_stmt(namer, s)).collect()),
+            cases: cases
+                .into_iter()
+                .map(|(e, stmts)| {
+                    (
+                        rename_expr(namer, e),
+                        stmts.into_iter().map(|s| rename_stmt(namer, s)).collect(),
+                    )
+                })
+                .collect(),
+            default: default
+                .map(|stmts| stmts.into_iter().map(|s| rename_stmt(namer, s)).collect()),
         },
-        Statement::Block(stmts) => Statement::Block(
-            stmts.into_iter().map(|s| rename_stmt(namer, s)).collect()
-        ),
+        Statement::Block(stmts) => {
+            Statement::Block(stmts.into_iter().map(|s| rename_stmt(namer, s)).collect())
+        }
         other => other,
     }
 }
@@ -107,7 +155,7 @@ fn rename_expr(namer: &VariableNamer, expr: Expression) -> Expression {
             if let Some(name) = namer.inferred_names.get(&v) {
                 Expression::Value(Value::Variable(name.clone()))
             } else {
-                 Expression::Value(Value::Variable(v))
+                Expression::Value(Value::Variable(v))
             }
         }
         Expression::Binary { op, left, right } => Expression::Binary {
@@ -121,13 +169,23 @@ fn rename_expr(namer: &VariableNamer, expr: Expression) -> Expression {
         },
         Expression::Call { callee, arguments } => Expression::Call {
             callee: Box::new(rename_expr(namer, *callee)),
-            arguments: arguments.into_iter().map(|a| rename_expr(namer, a)).collect(),
+            arguments: arguments
+                .into_iter()
+                .map(|a| rename_expr(namer, a))
+                .collect(),
         },
         Expression::New { callee, arguments } => Expression::New {
             callee: Box::new(rename_expr(namer, *callee)),
-            arguments: arguments.into_iter().map(|a| rename_expr(namer, a)).collect(),
+            arguments: arguments
+                .into_iter()
+                .map(|a| rename_expr(namer, a))
+                .collect(),
         },
-        Expression::Member { object, property, optional } => Expression::Member {
+        Expression::Member {
+            object,
+            property,
+            optional,
+        } => Expression::Member {
             object: Box::new(rename_expr(namer, *object)),
             property: match property {
                 PropertyKey::Computed(e) => PropertyKey::Computed(Box::new(rename_expr(namer, *e))),
@@ -136,18 +194,30 @@ fn rename_expr(namer: &VariableNamer, expr: Expression) -> Expression {
             optional,
         },
         Expression::Array { elements } => Expression::Array {
-            elements: elements.into_iter().map(|e| e.map(|ex| rename_expr(namer, ex))).collect(),
+            elements: elements
+                .into_iter()
+                .map(|e| e.map(|ex| rename_expr(namer, ex)))
+                .collect(),
         },
         Expression::Object { properties } => Expression::Object {
-            properties: properties.into_iter().map(|p| crate::ir::ObjectProperty {
-                key: match p.key {
-                    PropertyKey::Computed(e) => PropertyKey::Computed(Box::new(rename_expr(namer, *e))),
-                    other => other,
-                },
-                value: rename_expr(namer, p.value),
-            }).collect(),
+            properties: properties
+                .into_iter()
+                .map(|p| crate::ir::ObjectProperty {
+                    key: match p.key {
+                        PropertyKey::Computed(e) => {
+                            PropertyKey::Computed(Box::new(rename_expr(namer, *e)))
+                        }
+                        other => other,
+                    },
+                    value: rename_expr(namer, p.value),
+                })
+                .collect(),
         },
-        Expression::Conditional { condition, then_expr, else_expr } => Expression::Conditional {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => Expression::Conditional {
             condition: Box::new(rename_expr(namer, *condition)),
             then_expr: Box::new(rename_expr(namer, *then_expr)),
             else_expr: Box::new(rename_expr(namer, *else_expr)),

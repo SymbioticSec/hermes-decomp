@@ -1,79 +1,61 @@
-// Expression and statement simplification.
+use crate::ir::{BinaryOp, Constant, Expression, MutVisitor, Statement, UnaryOp, Value};
+use std::mem;
 
-use crate::ir::{Expression, Statement, Constant, Value, BinaryOp, UnaryOp};
-
-// Simplify an expression (constant folding, identity elimination).
-pub fn simplify_expr(expr: &Expression) -> Expression {
-    match expr {
-        Expression::Binary { op, left, right } => {
-            let left = simplify_expr(left);
-            let right = simplify_expr(right);
-            simplify_binary(*op, left, right)
-        }
-        Expression::Unary { op, operand } => {
-            let operand = simplify_expr(operand);
-            simplify_unary(*op, operand)
-        }
-        Expression::Conditional { condition, then_expr, else_expr } => {
-            let cond = simplify_expr(condition);
-            match &cond {
-                Expression::Value(Value::Constant(Constant::Bool(true))) => {
-                    simplify_expr(then_expr)
-                }
-                Expression::Value(Value::Constant(Constant::Bool(false))) => {
-                    simplify_expr(else_expr)
-                }
-                _ => Expression::Conditional {
-                    condition: Box::new(cond),
-                    then_expr: Box::new(simplify_expr(then_expr)),
-                    else_expr: Box::new(simplify_expr(else_expr)),
-                },
-            }
-        }
-        Expression::Yield { value, delegate } => Expression::Yield {
-            value: Box::new(simplify_expr(value)),
-            delegate: *delegate,
-        },
-        Expression::Await(value) => Expression::Await(Box::new(simplify_expr(value))),
-        Expression::Call { callee, arguments } => Expression::Call {
-            callee: Box::new(simplify_expr(callee)),
-            arguments: arguments.iter().map(simplify_expr).collect(),
-        },
-        Expression::Member { object, property, optional } => Expression::Member {
-            object: Box::new(simplify_expr(object)),
-            property: property.clone(),
-            optional: *optional,
-        },
-        _ => expr.clone(),
-    }
+pub fn simplify_expr(mut expr: Expression) -> Expression {
+    let mut simplifier = Simplifier;
+    simplifier.visit_expression(&mut expr);
+    expr
 }
 
-// Simplify a statement.
-pub fn simplify_stmt(stmt: &Statement) -> Statement {
-    match stmt {
-        Statement::Expr(e) => Statement::Expr(simplify_expr(e)),
-        Statement::Let { name, value, kind } => Statement::Let {
-            name: name.clone(),
-            value: simplify_expr(value),
-            kind: *kind,
-        },
-        Statement::Assign { target, value } => Statement::Assign {
-            target: target.clone(),
-            value: simplify_expr(value),
-        },
-        Statement::Return(Some(e)) => Statement::Return(Some(simplify_expr(e))),
-        Statement::Throw(e) => Statement::Throw(simplify_expr(e)),
-        Statement::If { condition, then_body, else_body } => Statement::If {
-            condition: simplify_expr(condition),
-            then_body: then_body.iter().map(simplify_stmt).collect(),
-            else_body: else_body.iter().map(simplify_stmt).collect(),
-        },
-        Statement::While { condition, body } => Statement::While {
-            condition: simplify_expr(condition),
-            body: body.iter().map(simplify_stmt).collect(),
-        },
-        Statement::Block(stmts) => Statement::Block(stmts.iter().map(simplify_stmt).collect()),
-        _ => stmt.clone(),
+pub fn simplify_statements(stmts: &mut Vec<Statement>) {
+    let mut simplifier = Simplifier;
+    simplifier.visit_statement_list(stmts);
+}
+
+pub fn simplify_stmt(mut stmt: Statement) -> Statement {
+    let mut simplifier = Simplifier;
+    simplifier.visit_statement(&mut stmt);
+    stmt
+}
+
+struct Simplifier;
+
+impl MutVisitor for Simplifier {
+    fn visit_expression(&mut self, expr: &mut Expression) {
+        // Post-order: simplify children first
+        self.walk_expression(expr);
+
+        let new_expr = match expr {
+            Expression::Binary { op, left, right } => {
+                let left = mem::replace(&mut **left, Expression::constant(Constant::Undefined));
+                let right = mem::replace(&mut **right, Expression::constant(Constant::Undefined));
+                Some(simplify_binary(*op, left, right))
+            }
+            Expression::Unary { op, operand } => {
+                let operand = mem::replace(&mut **operand, Expression::constant(Constant::Undefined));
+                Some(simplify_unary(*op, operand))
+            }
+            Expression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                match &**condition {
+                    Expression::Value(Value::Constant(Constant::Bool(true))) => {
+                        Some(mem::replace(&mut **then_expr, Expression::constant(Constant::Undefined)))
+                    }
+                    Expression::Value(Value::Constant(Constant::Bool(false))) => {
+                        Some(mem::replace(&mut **else_expr, Expression::constant(Constant::Undefined)))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(new_e) = new_expr {
+            *expr = new_e;
+        }
     }
 }
 
@@ -82,7 +64,8 @@ fn simplify_binary(op: BinaryOp, left: Expression, right: Expression) -> Express
     if let (
         Expression::Value(Value::Constant(Constant::Integer(l))),
         Expression::Value(Value::Constant(Constant::Integer(r))),
-    ) = (&left, &right) {
+    ) = (&left, &right)
+    {
         if let Some(result) = fold_int_binary(op, *l, *r) {
             return Expression::constant(Constant::Integer(result));
         }
@@ -108,7 +91,11 @@ fn simplify_binary(op: BinaryOp, left: Expression, right: Expression) -> Express
 fn simplify_unary(op: UnaryOp, operand: Expression) -> Expression {
     // Double negation
     if op == UnaryOp::Not {
-        if let Expression::Unary { op: UnaryOp::Not, operand: inner } = operand {
+        if let Expression::Unary {
+            op: UnaryOp::Not,
+            operand: inner,
+        } = operand
+        {
             return *inner;
         }
     }
@@ -145,13 +132,7 @@ fn fold_int_binary(op: BinaryOp, l: i32, r: i32) -> Option<i32> {
     }
 }
 
-fn is_zero(expr: &Expression) -> bool {
-    match expr {
-        Expression::Value(Value::Constant(Constant::Integer(0))) => true,
-        Expression::Value(Value::Constant(Constant::Number(n))) => *n == 0.0,
-        _ => false,
-    }
-}
+use super::patterns::utils::is_zero;
 
 fn is_one(expr: &Expression) -> bool {
     match expr {
@@ -172,7 +153,7 @@ mod tests {
             Expression::constant(Constant::Integer(2)),
             Expression::constant(Constant::Integer(3)),
         );
-        let result = simplify_expr(&expr);
+        let result = simplify_expr(expr);
         assert_eq!(result, Expression::constant(Constant::Integer(5)));
     }
 
@@ -183,7 +164,7 @@ mod tests {
             Expression::register(0),
             Expression::constant(Constant::Integer(0)),
         );
-        let result = simplify_expr(&expr);
+        let result = simplify_expr(expr);
         assert_eq!(result, Expression::register(0));
     }
 }

@@ -1,5 +1,7 @@
 use crate::error::{Error, Result};
-use crate::file::structure::{ShapeTableEntry, StringKindEntry, StringKindType, StringTableEntry, TableEntry};
+use crate::file::structure::{
+    ShapeTableEntry, StringKindEntry, StringKindType, StringTableEntry, TableEntry,
+};
 use crate::io::ByteReader;
 
 pub fn parse_string_kinds(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<StringKindEntry>> {
@@ -17,7 +19,10 @@ pub fn parse_string_kinds(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec
     Ok(entries)
 }
 
-pub fn parse_overflow_string_table(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<(u32, u32)>> {
+pub fn parse_overflow_string_table(
+    reader: &mut ByteReader<'_>,
+    count: u32,
+) -> Result<Vec<(u32, u32)>> {
     let mut entries = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let offset = reader.read_u32()?;
@@ -82,10 +87,7 @@ pub fn decode_string_table(
     for _ in 0..string_count {
         if remaining == 0 {
             kind_index += 1;
-            remaining = kinds
-                .get(kind_index)
-                .map(|k| k.count)
-                .unwrap_or(0);
+            remaining = kinds.get(kind_index).map(|k| k.count).unwrap_or(0);
         }
         let kind = kinds
             .get(kind_index)
@@ -123,10 +125,10 @@ pub fn decode_string_table(
             let byte_len = (length as usize) * 2;
             let start = offset as usize;
             let end = start + byte_len;
-            
+
             // Check bounds strictly to safely panic/error if out of bounds
             if start >= storage.len() || end > storage.len() {
-                 "<invalid utf16>".to_string()
+                "<invalid utf16>".to_string()
             } else {
                 let slice = &storage[start..end];
                 let mut units = Vec::with_capacity(length as usize);
@@ -138,7 +140,7 @@ pub fn decode_string_table(
         } else {
             let start = offset as usize;
             let end = start + length as usize;
-             if start >= storage.len() || end > storage.len() {
+            if start >= storage.len() || end > storage.len() {
                 "<invalid utf8>".to_string()
             } else {
                 String::from_utf8_lossy(&storage[start..end]).to_string()

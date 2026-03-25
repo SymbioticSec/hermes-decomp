@@ -1,5 +1,5 @@
-use crate::ir::{Statement, Expression, Value, Constant, BinaryOp};
-use super::utils::{is_null, is_undefined, exprs_equal};
+use super::utils::{exprs_equal, is_null, is_undefined};
+use crate::ir::{BinaryOp, Constant, Expression, Statement, Value};
 
 // Detect string concatenation patterns and convert to template literals.
 // Pattern: "prefix" + x + "suffix" → `prefix${x}suffix`
@@ -8,13 +8,18 @@ use super::utils::{is_null, is_undefined, exprs_equal};
 // We try to reverse this by looking for chains of `BinaryOp::Add`.
 // If we find a chain mixing string constants and expressions, we assume it was a template literal.
 pub fn detect_string_concat(stmts: Vec<Statement>) -> Vec<Statement> {
-    stmts.into_iter().map(|stmt| {
-        match stmt {
+    stmts
+        .into_iter()
+        .map(|stmt| match stmt {
             Statement::Assign { target, value } => Statement::Assign {
                 target,
                 value: transform_string_concat(value),
             },
-            Statement::If { condition, then_body, else_body } => Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => Statement::If {
                 condition: transform_string_concat(condition),
                 then_body: detect_string_concat(then_body),
                 else_body: detect_string_concat(else_body),
@@ -25,13 +30,16 @@ pub fn detect_string_concat(stmts: Vec<Statement>) -> Vec<Statement> {
             },
             Statement::Block(inner) => Statement::Block(detect_string_concat(inner)),
             other => other,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn transform_string_concat(expr: Expression) -> Expression {
     // Only check top-level Add operations for template literal conversion
-    if let Expression::Binary { op: BinaryOp::Add, .. } = &expr {
+    if let Expression::Binary {
+        op: BinaryOp::Add, ..
+    } = &expr
+    {
         if let Some((quasis, exprs)) = try_extract_template_literal(&expr) {
             // Only convert if there's at least one string literal AND at least one expression
             let has_string = quasis.iter().any(|s| !s.is_empty());
@@ -55,7 +63,11 @@ fn transform_string_concat(expr: Expression) -> Expression {
             callee: Box::new(transform_string_concat(*callee)),
             arguments: arguments.into_iter().map(transform_string_concat).collect(),
         },
-        Expression::Member { object, property, optional } => Expression::Member {
+        Expression::Member {
+            object,
+            property,
+            optional,
+        } => Expression::Member {
             object: Box::new(transform_string_concat(*object)),
             property,
             optional,
@@ -80,7 +92,11 @@ fn try_extract_template_literal(expr: &Expression) -> Option<(Vec<String>, Vec<E
         has_string: &mut bool,
     ) -> bool {
         match expr {
-            Expression::Binary { op: BinaryOp::Add, left, right } => {
+            Expression::Binary {
+                op: BinaryOp::Add,
+                left,
+                right,
+            } => {
                 if !collect_parts(left, quasis, expressions, current, has_string) {
                     return false;
                 }
@@ -100,7 +116,13 @@ fn try_extract_template_literal(expr: &Expression) -> Option<(Vec<String>, Vec<E
         }
     }
 
-    if collect_parts(expr, &mut quasis, &mut expressions, &mut current_string, &mut has_string) {
+    if collect_parts(
+        expr,
+        &mut quasis,
+        &mut expressions,
+        &mut current_string,
+        &mut has_string,
+    ) {
         // Push the final string part
         quasis.push(current_string);
 
@@ -120,13 +142,18 @@ fn try_extract_template_literal(expr: &Expression) -> Option<(Vec<String>, Vec<E
 // and the branches correspond to the value itself or a default.
 // Note: In strict nullish coalescing `??`, only null/undefined trigger the default.
 pub fn detect_nullish_coalescing(stmts: Vec<Statement>) -> Vec<Statement> {
-    stmts.into_iter().map(|stmt| {
-        match stmt {
+    stmts
+        .into_iter()
+        .map(|stmt| match stmt {
             Statement::Assign { target, value } => Statement::Assign {
                 target,
                 value: transform_nullish(value),
             },
-            Statement::If { condition, then_body, else_body } => Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => Statement::If {
                 condition: transform_nullish(condition),
                 then_body: detect_nullish_coalescing(then_body),
                 else_body: detect_nullish_coalescing(else_body),
@@ -137,31 +164,38 @@ pub fn detect_nullish_coalescing(stmts: Vec<Statement>) -> Vec<Statement> {
             },
             Statement::Block(inner) => Statement::Block(detect_nullish_coalescing(inner)),
             other => other,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn transform_nullish(expr: Expression) -> Expression {
     match expr {
         // x == null ? default : x  →  x ?? default
-        Expression::Conditional { condition, then_expr, else_expr } => {
-            if let Expression::Binary { op: BinaryOp::Eq, left, right } = condition.as_ref() {
-                if is_null(right)
-                    && exprs_equal(left, &else_expr) {
-                        return Expression::Binary {
-                            op: BinaryOp::NullishCoalesce,
-                            left: Box::new(transform_nullish(*else_expr)),
-                            right: Box::new(transform_nullish(*then_expr)),
-                        };
-                    }
-                if is_null(left)
-                    && exprs_equal(right, &else_expr) {
-                        return Expression::Binary {
-                            op: BinaryOp::NullishCoalesce,
-                            left: Box::new(transform_nullish(*else_expr)),
-                            right: Box::new(transform_nullish(*then_expr)),
-                        };
-                    }
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            if let Expression::Binary {
+                op: BinaryOp::Eq,
+                left,
+                right,
+            } = condition.as_ref()
+            {
+                if is_null(right) && exprs_equal(left, &else_expr) {
+                    return Expression::Binary {
+                        op: BinaryOp::NullishCoalesce,
+                        left: Box::new(transform_nullish(*else_expr)),
+                        right: Box::new(transform_nullish(*then_expr)),
+                    };
+                }
+                if is_null(left) && exprs_equal(right, &else_expr) {
+                    return Expression::Binary {
+                        op: BinaryOp::NullishCoalesce,
+                        left: Box::new(transform_nullish(*else_expr)),
+                        right: Box::new(transform_nullish(*then_expr)),
+                    };
+                }
             }
             Expression::Conditional {
                 condition: Box::new(transform_nullish(*condition)),
@@ -182,7 +216,11 @@ fn transform_nullish(expr: Expression) -> Expression {
             callee: Box::new(transform_nullish(*callee)),
             arguments: arguments.into_iter().map(transform_nullish).collect(),
         },
-        Expression::Member { object, property, optional } => Expression::Member {
+        Expression::Member {
+            object,
+            property,
+            optional,
+        } => Expression::Member {
             object: Box::new(transform_nullish(*object)),
             property,
             optional,
@@ -199,13 +237,18 @@ fn transform_nullish(expr: Expression) -> Expression {
 // - Returning `undefined` if null.
 // - Accessing the property if not null.
 pub fn detect_optional_chaining(stmts: Vec<Statement>) -> Vec<Statement> {
-    stmts.into_iter().map(|stmt| {
-        match stmt {
+    stmts
+        .into_iter()
+        .map(|stmt| match stmt {
             Statement::Assign { target, value } => Statement::Assign {
                 target,
                 value: transform_optional_chain(value),
             },
-            Statement::If { condition, then_body, else_body } => Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => Statement::If {
                 condition: transform_optional_chain(condition),
                 then_body: detect_optional_chaining(then_body),
                 else_body: detect_optional_chaining(else_body),
@@ -216,20 +259,32 @@ pub fn detect_optional_chaining(stmts: Vec<Statement>) -> Vec<Statement> {
             },
             Statement::Block(inner) => Statement::Block(detect_optional_chaining(inner)),
             other => other,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn transform_optional_chain(expr: Expression) -> Expression {
     match expr {
         // x == null ? undefined : x.y  →  x?.y
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             if is_undefined(&then_expr) {
-                if let Expression::Binary { op: BinaryOp::Eq, left, right } = condition.as_ref() {
+                if let Expression::Binary {
+                    op: BinaryOp::Eq,
+                    left,
+                    right,
+                } = condition.as_ref()
+                {
                     if is_null(right) || is_null(left) {
                         let check_var = if is_null(right) { left } else { right };
                         // Check if else_expr is accessing a property of check_var
-                        if let Expression::Member { object, property, .. } = else_expr.as_ref() {
+                        if let Expression::Member {
+                            object, property, ..
+                        } = else_expr.as_ref()
+                        {
                             if exprs_equal(check_var, object) {
                                 return Expression::Member {
                                     object: Box::new(transform_optional_chain(*object.clone())),
@@ -252,14 +307,21 @@ fn transform_optional_chain(expr: Expression) -> Expression {
             left: Box::new(transform_optional_chain(*left)),
             right: Box::new(transform_optional_chain(*right)),
         },
-        Expression::Member { object, property, optional } => Expression::Member {
+        Expression::Member {
+            object,
+            property,
+            optional,
+        } => Expression::Member {
             object: Box::new(transform_optional_chain(*object)),
             property,
             optional,
         },
         Expression::Call { callee, arguments } => Expression::Call {
             callee: Box::new(transform_optional_chain(*callee)),
-            arguments: arguments.into_iter().map(transform_optional_chain).collect(),
+            arguments: arguments
+                .into_iter()
+                .map(transform_optional_chain)
+                .collect(),
         },
         other => other,
     }
@@ -272,13 +334,18 @@ fn transform_optional_chain(expr: Expression) -> Expression {
 // - `x && y` is `x ? y : x`
 // We detect these structural patterns to restore the original operators.
 pub fn detect_logical_patterns(stmts: Vec<Statement>) -> Vec<Statement> {
-    stmts.into_iter().map(|stmt| {
-        match stmt {
+    stmts
+        .into_iter()
+        .map(|stmt| match stmt {
             Statement::Assign { target, value } => Statement::Assign {
                 target,
                 value: transform_logical(value),
             },
-            Statement::If { condition, then_body, else_body } => Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => Statement::If {
                 condition: transform_logical(condition),
                 then_body: detect_logical_patterns(then_body),
                 else_body: detect_logical_patterns(else_body),
@@ -288,14 +355,18 @@ pub fn detect_logical_patterns(stmts: Vec<Statement>) -> Vec<Statement> {
                 body: detect_logical_patterns(body),
             },
             other => other,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn transform_logical(expr: Expression) -> Expression {
     match expr {
         // x ? x : y  →  x || y
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             if exprs_equal(&condition, &then_expr) {
                 return Expression::Binary {
                     op: BinaryOp::LogicalOr,
@@ -339,13 +410,19 @@ mod tests {
                 Expression::Value(Value::Register(0)),
                 Expression::constant(Constant::Null),
             )),
-            then_expr: Box::new(Expression::constant(Constant::String("default".to_string()))),
+            then_expr: Box::new(Expression::constant(Constant::String(
+                "default".to_string(),
+            ))),
             else_expr: Box::new(Expression::Value(Value::Register(0))),
         };
 
         let result = transform_nullish(expr);
 
-        if let Expression::Binary { op: BinaryOp::NullishCoalesce, .. } = result {
+        if let Expression::Binary {
+            op: BinaryOp::NullishCoalesce,
+            ..
+        } = result
+        {
             // Success
         } else {
             panic!("Expected nullish coalescing");

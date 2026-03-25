@@ -1,20 +1,15 @@
-use std::collections::{HashMap, HashSet};
-use crate::ir::{Statement, Expression, AssignTarget, Value, PropertyKey, Constant};
+use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
+use std::collections::{BTreeMap, HashSet};
 
-// Information about a register's usage.
 #[derive(Debug, Clone, Default)]
 pub struct RegisterInfo {
-    // Inferred type/role
     pub role: RegisterRole,
-    // Properties accessed on this register
     pub accessed_props: HashSet<String>,
-    // Methods called on this register
     pub called_methods: HashSet<String>,
-    // If assigned from a parameter
     pub from_param: Option<u32>,
-    // If assigned from a property access
     pub from_property: Option<String>,
-    // Number of uses
+    // If assigned via destructuring: the property key name
+    pub destructuring_key: Option<String>,
     pub use_count: usize,
 }
 
@@ -36,9 +31,8 @@ pub enum RegisterRole {
     Null,
 }
 
-// Analyze statements to infer register roles and generate names.
-pub fn analyze_registers(stmts: &[Statement]) -> HashMap<u32, RegisterInfo> {
-    let mut info: HashMap<u32, RegisterInfo> = HashMap::new();
+pub fn analyze_registers(stmts: &[Statement]) -> BTreeMap<u32, RegisterInfo> {
+    let mut info: BTreeMap<u32, RegisterInfo> = BTreeMap::new();
 
     for stmt in stmts {
         analyze_stmt(stmt, &mut info);
@@ -47,22 +41,24 @@ pub fn analyze_registers(stmts: &[Statement]) -> HashMap<u32, RegisterInfo> {
     info
 }
 
-fn analyze_stmt(stmt: &Statement, info: &mut HashMap<u32, RegisterInfo>) {
+fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
     match stmt {
         Statement::Assign { target, value } => {
-            // Track what's assigned to the register
             if let AssignTarget::Register(r) = target {
                 let entry = info.entry(*r).or_default();
                 infer_role_from_value(value, entry);
             }
-            // Track uses in the value
             analyze_expr(value, info);
             analyze_target(target, info);
         }
         Statement::Expr(e) => analyze_expr(e, info),
         Statement::Return(Some(e)) => analyze_expr(e, info),
         Statement::Throw(e) => analyze_expr(e, info),
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             analyze_expr(condition, info);
             for s in then_body {
                 analyze_stmt(s, info);
@@ -82,27 +78,124 @@ fn analyze_stmt(stmt: &Statement, info: &mut HashMap<u32, RegisterInfo>) {
                 analyze_stmt(s, info);
             }
         }
+        Statement::Let { value, .. } => {
+            analyze_expr(value, info);
+        }
+        Statement::For { init, condition, update, body } => {
+            if let Some(i) = init {
+                analyze_stmt(i, info);
+            }
+            if let Some(c) = condition {
+                analyze_expr(c, info);
+            }
+            if let Some(u) = update {
+                analyze_stmt(u, info);
+            }
+            for s in body {
+                analyze_stmt(s, info);
+            }
+        }
+        Statement::DoWhile { body, condition } => {
+            for s in body {
+                analyze_stmt(s, info);
+            }
+            analyze_expr(condition, info);
+        }
+        Statement::ForIn { object, body, .. } => {
+            analyze_expr(object, info);
+            for s in body {
+                analyze_stmt(s, info);
+            }
+        }
+        Statement::ForOf { iterable, body, .. } => {
+            analyze_expr(iterable, info);
+            for s in body {
+                analyze_stmt(s, info);
+            }
+        }
+        Statement::Switch { discriminant, cases, default } => {
+            analyze_expr(discriminant, info);
+            for (val, body) in cases {
+                analyze_expr(val, info);
+                for s in body {
+                    analyze_stmt(s, info);
+                }
+            }
+            if let Some(d) = default {
+                for s in d {
+                    analyze_stmt(s, info);
+                }
+            }
+        }
+        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+            for s in try_body {
+                analyze_stmt(s, info);
+            }
+            for s in catch_body {
+                analyze_stmt(s, info);
+            }
+            for s in finally_body {
+                analyze_stmt(s, info);
+            }
+        }
         _ => {}
     }
 }
 
-fn analyze_target(target: &AssignTarget, info: &mut HashMap<u32, RegisterInfo>) {
+fn analyze_target(target: &AssignTarget, info: &mut BTreeMap<u32, RegisterInfo>) {
     match target {
         AssignTarget::Member { object, .. } => analyze_expr(object, info),
         AssignTarget::Index { object, key } => {
             analyze_expr(object, info);
             analyze_expr(key, info);
         }
+        AssignTarget::DestructuringObject(props) => {
+            for (key, t, def) in props {
+                // Name register after its destructuring key
+                if let AssignTarget::Register(r) = t {
+                    let entry = info.entry(*r).or_default();
+                    entry.destructuring_key = Some(key.clone());
+                }
+                analyze_target(t, info);
+                if let Some(d) = def { analyze_expr(d, info); }
+            }
+        }
+        AssignTarget::DestructuringObjectRest { properties, rest } => {
+            for (key, t, def) in properties {
+                if let AssignTarget::Register(r) = t {
+                    let entry = info.entry(*r).or_default();
+                    entry.destructuring_key = Some(key.clone());
+                }
+                analyze_target(t, info);
+                if let Some(d) = def { analyze_expr(d, info); }
+            }
+            analyze_target(rest, info);
+        }
+        AssignTarget::DestructuringArray(elements) => {
+            for elem in elements.iter().flatten() {
+                analyze_target(&elem.0, info);
+                if let Some(d) = &elem.1 { analyze_expr(d, info); }
+            }
+        }
+        AssignTarget::DestructuringArrayRest { elements, rest } => {
+            for elem in elements.iter().flatten() {
+                analyze_target(&elem.0, info);
+                if let Some(d) = &elem.1 { analyze_expr(d, info); }
+            }
+            analyze_target(rest, info);
+        }
         _ => {}
     }
 }
 
-fn analyze_expr(expr: &Expression, info: &mut HashMap<u32, RegisterInfo>) {
+fn analyze_expr(expr: &Expression, info: &mut BTreeMap<u32, RegisterInfo>) {
     match expr {
         Expression::Value(Value::Register(r)) => {
             info.entry(*r).or_default().use_count += 1;
         }
-        Expression::Member { object, property, .. } => {
+        Expression::Member {
+            object, property, ..
+        } => {
             // Track property access
             if let Expression::Value(Value::Register(r)) = object.as_ref() {
                 let entry = info.entry(*r).or_default();
@@ -113,12 +206,23 @@ fn analyze_expr(expr: &Expression, info: &mut HashMap<u32, RegisterInfo>) {
                 }
             }
             analyze_expr(object, info);
+            if let PropertyKey::Computed(k) = property {
+                analyze_expr(k, info);
+            }
         }
         Expression::Call { callee, arguments } => {
             // Track method calls
-            if let Expression::Member { object, property: PropertyKey::Ident(method), .. } = callee.as_ref() {
+            if let Expression::Member {
+                object,
+                property: PropertyKey::Ident(method),
+                ..
+            } = callee.as_ref()
+            {
                 if let Expression::Value(Value::Register(r)) = object.as_ref() {
-                    info.entry(*r).or_default().called_methods.insert(method.clone());
+                    info.entry(*r)
+                        .or_default()
+                        .called_methods
+                        .insert(method.clone());
                 }
             }
             analyze_expr(callee, info);
@@ -147,11 +251,27 @@ fn analyze_expr(expr: &Expression, info: &mut HashMap<u32, RegisterInfo>) {
                 analyze_expr(&prop.value, info);
             }
         }
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             analyze_expr(condition, info);
             analyze_expr(then_expr, info);
             analyze_expr(else_expr, info);
         }
+        Expression::Assignment { target, value } => {
+            analyze_expr(target, info);
+            analyze_expr(value, info);
+        }
+        Expression::Spread(inner) => analyze_expr(inner, info),
+        Expression::TemplateLiteral { expressions, .. } => {
+            for e in expressions {
+                analyze_expr(e, info);
+            }
+        }
+        Expression::Yield { value, .. } => analyze_expr(value, info),
+        Expression::Await(inner) => analyze_expr(inner, info),
         _ => {}
     }
 }
@@ -172,7 +292,10 @@ fn infer_role_from_value(value: &Expression, info: &mut RegisterInfo) {
             };
         }
         Expression::Value(Value::This) => info.role = RegisterRole::This,
-        Expression::Member { property: PropertyKey::Ident(name), .. } => {
+        Expression::Member {
+            property: PropertyKey::Ident(name),
+            ..
+        } => {
             info.from_property = Some(name.clone());
         }
         _ => {}
@@ -181,8 +304,8 @@ fn infer_role_from_value(value: &Expression, info: &mut RegisterInfo) {
 
 fn infer_role_from_property(prop: &str, info: &mut RegisterInfo) {
     match prop {
-        "length" | "push" | "pop" | "shift" | "unshift" | "splice" | "slice"
-        | "map" | "filter" | "reduce" | "forEach" | "find" | "indexOf" => {
+        "length" | "push" | "pop" | "shift" | "unshift" | "splice" | "slice" | "map" | "filter"
+        | "reduce" | "forEach" | "find" | "indexOf" => {
             if info.role == RegisterRole::Unknown {
                 info.role = RegisterRole::Array;
             }
@@ -197,8 +320,8 @@ fn infer_role_from_property(prop: &str, info: &mut RegisterInfo) {
                 info.role = RegisterRole::Iterator;
             }
         }
-        "toString" | "charAt" | "substring" | "substr" | "split" | "trim"
-        | "toLowerCase" | "toUpperCase" | "replace" | "match" => {
+        "toString" | "charAt" | "substring" | "substr" | "split" | "trim" | "toLowerCase"
+        | "toUpperCase" | "replace" | "match" => {
             if info.role == RegisterRole::Unknown {
                 info.role = RegisterRole::String;
             }

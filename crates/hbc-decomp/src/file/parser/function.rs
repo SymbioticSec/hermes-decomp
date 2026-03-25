@@ -1,8 +1,14 @@
 use crate::error::Result;
-use crate::format::{BytecodeHeader, FunctionHeader, FunctionHeaderLayout, LegacyFunctionHeader, ModernFunctionHeader};
+use crate::format::{
+    BytecodeHeader, FunctionHeader, FunctionHeaderLayout, LegacyFunctionHeader,
+    ModernFunctionHeader,
+};
 use crate::io::ByteReader;
 
-pub fn parse_function_headers(reader: &mut ByteReader<'_>, header: &BytecodeHeader) -> Result<Vec<FunctionHeader>> {
+pub fn parse_function_headers(
+    reader: &mut ByteReader<'_>,
+    header: &BytecodeHeader,
+) -> Result<Vec<FunctionHeader>> {
     let mut headers = Vec::with_capacity(header.function_count as usize);
     for function_id in 0..header.function_count {
         let current_pos = reader.position();
@@ -29,7 +35,8 @@ pub fn parse_function_headers(reader: &mut ByteReader<'_>, header: &BytecodeHead
 
                 if flags & 0x20 != 0 {
                     let large_offset = ((info_offset as u64) << 16) | (offset as u64);
-                    let large_header = parse_large_header_legacy(reader, large_offset as usize, function_id)?;
+                    let large_header =
+                        parse_large_header_legacy(reader, large_offset as usize, function_id)?;
                     reader.seek(current_pos + 16)?;
                     FunctionHeader::Legacy(large_header)
                 } else {
@@ -74,8 +81,10 @@ pub fn parse_function_headers(reader: &mut ByteReader<'_>, header: &BytecodeHead
                 let flags = ((raw >> 88) & 0xff) as u8;
 
                 if flags & 0x20 != 0 {
-                    let large_offset = ((function_name as u64) << 24) | (offset as u64 & 0x00ff_ffff);
-                    let large_header = parse_large_header_modern(reader, large_offset as usize, function_id)?;
+                    let large_offset =
+                        ((function_name as u64) << 24) | (offset as u64 & 0x00ff_ffff);
+                    let large_header =
+                        parse_large_header_modern(reader, large_offset as usize, function_id)?;
                     reader.seek(current_pos + 12)?;
                     FunctionHeader::Modern(large_header)
                 } else {

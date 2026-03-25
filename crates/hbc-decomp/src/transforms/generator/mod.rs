@@ -1,25 +1,22 @@
-use crate::ir::{Statement, Expression};
-use std::collections::HashMap;
+use crate::ir::{Expression, Statement};
+use std::collections::BTreeMap;
 
 pub mod analysis;
 pub mod cleanup;
 pub mod state_machine;
 pub mod transform;
 
+pub use analysis::*;
 pub use cleanup::cleanup_generator_comments;
 pub use state_machine::simplify_state_machine;
-pub use analysis::*;
 
 use transform::*;
 
-// Analyze and transform generator patterns.
 pub fn detect_generator_patterns(stmts: Vec<Statement>, is_async: bool) -> Vec<Statement> {
-    // First, check if this looks like a generator
     if !has_generator_patterns(&stmts) {
         return stmts;
     }
 
-    // Collect all yield points and resume points
     let yield_points = collect_yield_points(&stmts);
     let resume_points = collect_resume_points(&stmts);
 
@@ -27,9 +24,7 @@ pub fn detect_generator_patterns(stmts: Vec<Statement>, is_async: bool) -> Vec<S
         return stmts;
     }
 
-    // Build mapping: resume_state -> (yield_value, result_register)
-    // This lets us create `result = yield value` expressions
-    let mut yield_info: HashMap<u32, (Option<Expression>, Option<u32>)> = HashMap::new();
+    let mut yield_info: BTreeMap<u32, (Option<Expression>, Option<u32>)> = BTreeMap::new();
 
     for yp in &yield_points {
         yield_info.insert(yp.resume_state, (yp.yield_value.clone(), None));
@@ -46,14 +41,13 @@ pub fn detect_generator_patterns(stmts: Vec<Statement>, is_async: bool) -> Vec<S
     // `transform_generator_stmts` re-implements the resume matching logic.
     // So I can skip the `yield_info` logic here as it doesn't affect `transform_generator_stmts`.
 
-    // Now transform the statements
     transform_generator_stmts(stmts, &yield_points, &resume_points, is_async)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{AssignTarget, Value, Constant, PropertyKey};
+    use crate::ir::{AssignTarget, Constant, PropertyKey, Value};
     use crate::transforms::generator::analysis::has_generator_patterns;
 
     #[test]
@@ -80,7 +74,9 @@ mod tests {
         //   result = gen.resume()
         let stmts = vec![
             Statement::Comment("__yield_point__:100".to_string()),
-            Statement::Return(Some(Expression::Value(Value::Constant(Constant::Integer(42))))),
+            Statement::Return(Some(Expression::Value(Value::Constant(Constant::Integer(
+                42,
+            ))))),
             Statement::Assign {
                 target: AssignTarget::Register(5),
                 value: Expression::Call {
@@ -98,7 +94,11 @@ mod tests {
 
         // Should have: r5 = yield 42
         let has_yield_assign = result.iter().any(|s| {
-            if let Statement::Assign { target: AssignTarget::Register(5), value } = s {
+            if let Statement::Assign {
+                target: AssignTarget::Register(5),
+                value,
+            } = s
+            {
                 matches!(value, Expression::Yield { .. })
             } else {
                 false
@@ -113,7 +113,9 @@ mod tests {
             Statement::Comment("__yield_point__:100".to_string()),
             Statement::Return(Some(Expression::Call {
                 callee: Box::new(Expression::Value(Value::Variable("fetch".to_string()))),
-                arguments: vec![Expression::Value(Value::Constant(Constant::String("url".to_string())))],
+                arguments: vec![Expression::Value(Value::Constant(Constant::String(
+                    "url".to_string(),
+                )))],
             })),
             Statement::Assign {
                 target: AssignTarget::Register(3),
@@ -132,13 +134,20 @@ mod tests {
 
         // Should have: r3 = await fetch("url")
         let has_await_assign = result.iter().any(|s| {
-            if let Statement::Assign { target: AssignTarget::Register(3), value } = s {
+            if let Statement::Assign {
+                target: AssignTarget::Register(3),
+                value,
+            } = s
+            {
                 matches!(value, Expression::Await(_))
             } else {
                 false
             }
         });
-        assert!(has_await_assign, "Expected r3 = await fetch(...), got: {result:?}");
+        assert!(
+            has_await_assign,
+            "Expected r3 = await fetch(...), got: {result:?}"
+        );
     }
 
     #[test]
@@ -184,9 +193,15 @@ mod tests {
 
         let result = cleanup_generator_comments(stmts);
 
-        assert!(!result.iter().any(|s| matches!(s, Statement::Comment(c) if c == "StartGenerator")));
-        assert!(!result.iter().any(|s| matches!(s, Statement::Comment(c) if c.starts_with("__yield_point__"))));
-        assert!(result.iter().any(|s| matches!(s, Statement::Comment(c) if c == "Some other comment")));
+        assert!(!result
+            .iter()
+            .any(|s| matches!(s, Statement::Comment(c) if c == "StartGenerator")));
+        assert!(!result
+            .iter()
+            .any(|s| matches!(s, Statement::Comment(c) if c.starts_with("__yield_point__"))));
+        assert!(result
+            .iter()
+            .any(|s| matches!(s, Statement::Comment(c) if c == "Some other comment")));
     }
 
     #[test]
@@ -197,7 +212,9 @@ mod tests {
         let stmts = vec![
             Statement::Comment("StartGenerator".to_string()),
             Statement::Comment("__yield_point__:100".to_string()),
-            Statement::Return(Some(Expression::Value(Value::Constant(Constant::Integer(1))))),
+            Statement::Return(Some(Expression::Value(Value::Constant(Constant::Integer(
+                1,
+            ))))),
             Statement::Assign {
                 target: AssignTarget::Register(1),
                 value: Expression::Call {
@@ -210,7 +227,9 @@ mod tests {
                 },
             },
             Statement::Comment("__yield_point__:200".to_string()),
-            Statement::Return(Some(Expression::Value(Value::Constant(Constant::Integer(2))))),
+            Statement::Return(Some(Expression::Value(Value::Constant(Constant::Integer(
+                2,
+            ))))),
             Statement::Assign {
                 target: AssignTarget::Register(2),
                 value: Expression::Call {
@@ -227,12 +246,22 @@ mod tests {
         let result = detect_generator_patterns(stmts, false);
 
         // Count yield assignments
-        let yield_count = result.iter().filter(|s| {
-            matches!(s, Statement::Assign { value: Expression::Yield { .. }, .. })
-        }).count();
+        let yield_count = result
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s,
+                    Statement::Assign {
+                        value: Expression::Yield { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
 
-        assert_eq!(yield_count, 2, "Expected 2 yield assignments, got: {result:?}");
+        assert_eq!(
+            yield_count, 2,
+            "Expected 2 yield assignments, got: {result:?}"
+        );
     }
-
-
 }

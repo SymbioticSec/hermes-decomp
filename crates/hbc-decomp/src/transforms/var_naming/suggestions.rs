@@ -1,9 +1,40 @@
-use crate::ir::{Expression, Value, PropertyKey};
+use crate::ir::{Expression, PropertyKey, Value};
 
 pub fn get_function_name(expr: &Expression) -> Option<String> {
     match expr {
         Expression::Value(Value::Variable(name)) => Some(name.clone()),
-        Expression::Member { property: PropertyKey::Ident(name), .. } => Some(name.clone()),
+        Expression::Member {
+            property: PropertyKey::Ident(name),
+            ..
+        } => Some(name.clone()),
+        _ => None,
+    }
+}
+
+// Name for qualified calls like `StyleSheet.create()`, `Object.keys()`, etc.
+pub fn name_for_qualified_call(qualified: &str) -> Option<String> {
+    match qualified.to_lowercase().as_str() {
+        "stylesheet.create" => Some("styles".to_string()),
+        "stylesheet.flatten" => Some("flatStyles".to_string()),
+        "object.keys" => Some("keys".to_string()),
+        "object.values" => Some("values".to_string()),
+        "object.entries" => Some("entries".to_string()),
+        "object.assign" => Some("merged".to_string()),
+        "object.create" => Some("obj".to_string()),
+        "object.freeze" => Some("frozen".to_string()),
+        "json.parse" => Some("parsed".to_string()),
+        "json.stringify" => Some("json".to_string()),
+        "array.from" => Some("arr".to_string()),
+        "array.isarray" => Some("isArray".to_string()),
+        "promise.all" => Some("allPromises".to_string()),
+        "promise.race" => Some("racePromise".to_string()),
+        "promise.resolve" => Some("resolved".to_string()),
+        "date.now" => Some("timestamp".to_string()),
+        "math.floor" | "math.ceil" | "math.round" => Some("rounded".to_string()),
+        "math.max" | "math.min" => Some("bound".to_string()),
+        "math.abs" => Some("absolute".to_string()),
+        "math.random" => Some("random".to_string()),
+        "regexp" => Some("regex".to_string()),
         _ => None,
     }
 }
@@ -50,7 +81,9 @@ pub fn name_for_call(func_name: &str) -> String {
         "require" => "module".to_string(),
         "createelement" => "element".to_string(),
         "getelementbyid" | "queryselector" => "element".to_string(),
-        "queryselectorall" | "getelementsbytagname" | "getelementsbyclassname" => "elements".to_string(),
+        "queryselectorall" | "getelementsbytagname" | "getelementsbyclassname" => {
+            "elements".to_string()
+        }
         "addeventlistener" => "listener".to_string(),
         "removeeventlistener" => "removed".to_string(),
         "classlist" => "classes".to_string(),
@@ -59,7 +92,7 @@ pub fn name_for_call(func_name: &str) -> String {
         _ => {
             // Use function name as base if it's reasonable
             if func_name.len() <= 20 && func_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                format!("{}Result", func_name)
+                format!("{func_name}Result")
             } else {
                 "result".to_string()
             }
@@ -131,7 +164,7 @@ pub fn name_for_instance(class_name: &str) -> String {
         Some(first) => {
             let lower_first = first.to_lowercase().to_string();
             let rest: String = chars.collect();
-            let base = format!("{}{}", lower_first, rest);
+            let base = format!("{lower_first}{rest}");
             sanitize_name(&base)
         }
         None => "instance".to_string(),
@@ -150,27 +183,25 @@ pub fn sanitize_name(name: &str) -> String {
     }
 
     // Ensure doesn't start with a digit
-    if cleaned.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-        return format!("v{}", cleaned);
+    if cleaned
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+    {
+        return format!("v{cleaned}");
     }
 
     // Check for reserved words
-    if is_reserved_word(&cleaned) {
-        return format!("_{}", cleaned);
+    if crate::constants::is_reserved_word(&cleaned) {
+        return format!("_{cleaned}");
+    }
+
+    // Check for builtin global names (Object, String, Number, Array, etc.)
+    // to avoid collisions like String.String(), Object.Object()
+    if crate::ir::expr::display::is_builtin_global(&cleaned) {
+        return format!("_{cleaned}");
     }
 
     cleaned
-}
-
-fn is_reserved_word(name: &str) -> bool {
-    matches!(
-        name,
-        "break" | "case" | "catch" | "continue" | "debugger" | "default" | "delete"
-            | "do" | "else" | "finally" | "for" | "function" | "if" | "in" | "instanceof"
-            | "new" | "return" | "switch" | "this" | "throw" | "try" | "typeof" | "var"
-            | "void" | "while" | "with" | "class" | "const" | "enum" | "export" | "extends"
-            | "import" | "super" | "implements" | "interface" | "let" | "package" | "private"
-            | "protected" | "public" | "static" | "yield" | "null" | "true" | "false"
-            | "undefined" | "NaN" | "Infinity" | "arguments" | "eval"
-    )
 }

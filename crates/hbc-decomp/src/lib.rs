@@ -26,8 +26,9 @@
 // println!("{}", output);
 // ```
 
-// Core modules
-pub mod decompile;
+// Suppress collapsible_match/collapsible_if: fixing these requires unstable let-chains (RFC #53667)
+#![allow(clippy::collapsible_match, clippy::collapsible_if)]
+
 pub mod debug;
 pub mod disasm;
 pub mod error;
@@ -38,52 +39,39 @@ pub mod opcode;
 pub mod pipeline;
 pub mod util;
 
-// New architecture modules
-pub mod ir;
 pub mod analysis;
+pub mod constants;
+pub mod ir;
 pub mod transforms;
 
-// Re-export legacy API
-pub use decompile::{decompile_all, decompile_function, DecompileOptions};
-pub use disasm::{disassemble_all, disassemble_function, DisasmOptions, collect_label_offsets};
+pub use disasm::{collect_label_offsets, disassemble_all, disassemble_function, DisasmOptions};
 pub use error::{Error, Result};
-pub use file::{BytecodeFile, Instruction};
+pub use file::{BytecodeFile, Instruction, SectionInfo};
 pub use format::{BytecodeHeader, FunctionHeader, FunctionHeaderLayout, HeaderLayout};
 pub use opcode::{BytecodeFormat, Operand, OperandType, OperandValue};
 pub use util::{escape_js_string, is_valid_identifier};
 
-// Re-export new IR types
 pub use ir::{
-    BasicBlock, BlockId, CFG, Constant, Expression, Statement, Terminator,
-    BinaryOp, UnaryOp, Value, FunctionId, AssignTarget,
-    IRBuilder, IRBuilderOptions,
+    AssignTarget, BasicBlock, BinaryOp, BlockId, Constant, Expression, FunctionId, IRBuilder,
+    IRBuilderOptions, Statement, Terminator, UnaryOp, Value, CFG,
 };
 
-// Re-export analysis types
 pub use analysis::{
-    LivenessInfo, ReachingDefs, StructureAnalysis, Structure, LoopInfo,
-    analyze_registers, generate_name, rename_registers, RegisterInfo, RegisterRole,
-    ClosureInfo, ClosureSlotValue, ClosureContext, resolve_closures,
-    MetroRegistry, MetroModule, DependencyTree,
+    analyze_registers, generate_name, rename_registers, resolve_closures, ClosureContext,
+    ClosureInfo, ClosureSlotValue, DependencyTree, MetroModule, MetroRegistry, Structure,
+    StructureAnalysis,
 };
 
-// Re-export transform types
 pub use transforms::{
-    simplify_expr, simplify_stmt,
-    propagate, PropagationConfig,
-    Codegen, CodegenOptions,
-    optimize_statements, inline_expressions,
-    cleanup_statements, detect_patterns,
-    detect_class_patterns, detect_destructuring,
+    cleanup_statements, detect_class_patterns, detect_destructuring, detect_patterns,
+    inline_expressions, optimize_statements, propagate, simplify_expr, simplify_stmt, Codegen,
+    CodegenOptions, PropagationConfig,
 };
 
-// Re-export debug info types
 pub use debug::{DebugInfo, ScopeDescriptor, SourceLocation};
 
-// Re-export pipeline types
 pub use pipeline::{
-    Decompiler, DecompileOptionsV2, 
-    decompile_function_v2, decompile_function_v2_with_context,
-    decompile_all_v2, decompile_all_v2_with_closures,
-    generate_ir, build_closure_context_from_file as build_closure_context,
+    analyze_module, build_closure_context_from_file as build_closure_context,
+    decompile_all_v2_with_closures, decompile_function_v2, decompile_function_v2_with_context,
+    generate_ir, DecompileOptionsV2, Decompiler, PipelineContext,
 };

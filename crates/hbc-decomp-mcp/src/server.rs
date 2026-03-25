@@ -1,25 +1,27 @@
-use std::sync::Mutex;
-use rmcp::{
-    ServerHandler,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{ServerCapabilities, ServerInfo, CallToolResult, Content},
-    schemars, tool, tool_router, tool_handler,
-};
 use rmcp::ErrorData as McpError;
+use rmcp::{
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
+    schemars, tool, tool_handler, tool_router, ServerHandler,
+};
 use serde::Deserialize;
+use std::sync::Mutex;
 
-use hbc_decomp::{BytecodeFile, DecompileOptionsV2, Decompiler, IRBuilder, IRBuilderOptions, StructureAnalysis, MetroRegistry};
 use hbc_decomp::opcode::BytecodeFormat;
+use hbc_decomp::{
+    BytecodeFile, ClosureInfo, DecompileOptionsV2, DebugInfo, IRBuilder, IRBuilderOptions,
+    MetroRegistry, PipelineContext, StructureAnalysis,
+};
 
-#[derive(Debug)]
 struct LoadedFile {
     file: BytecodeFile,
     format: BytecodeFormat,
-    #[allow(dead_code)]
     path: String,
+    bytes: Vec<u8>,
+    registry: Option<MetroRegistry>,
+    pipeline_ctx: Option<PipelineContext>,
 }
 
-#[derive(Debug)]
 pub struct HermesService {
     loaded: Mutex<Option<LoadedFile>>,
     tool_router: ToolRouter<Self>,
@@ -35,31 +37,59 @@ impl HermesService {
 
     fn with_file<F, T>(&self, f: F) -> Result<T, McpError>
     where
-        F: FnOnce(&BytecodeFile, &BytecodeFormat) -> Result<T, McpError>,
+        F: FnOnce(&LoadedFile) -> Result<T, McpError>,
     {
-        let guard = self.loaded.lock().map_err(|e| McpError::internal_error(format!("lock: {e}"), None))?;
-        let loaded = guard.as_ref().ok_or_else(|| McpError::invalid_params("No file loaded. Use load_file first.", None))?;
-        f(&loaded.file, &loaded.format)
+        let guard = self
+            .loaded
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("lock: {e}"), None))?;
+        let loaded = guard.as_ref().ok_or_else(|| {
+            McpError::invalid_params("No file loaded. Use load_file first.", None)
+        })?;
+        f(loaded)
     }
 
-    fn default_options() -> DecompileOptionsV2 {
-        DecompileOptionsV2 {
-            resolve_strings: true,
-            include_offsets: false,
-            propagate: true,
-            simplify: true,
-            recover_structures: true,
+    fn with_file_mut<F, T>(&self, f: F) -> Result<T, McpError>
+    where
+        F: FnOnce(&mut LoadedFile) -> Result<T, McpError>,
+    {
+        let mut guard = self
+            .loaded
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("lock: {e}"), None))?;
+        let loaded = guard.as_mut().ok_or_else(|| {
+            McpError::invalid_params("No file loaded. Use load_file first.", None)
+        })?;
+        f(loaded)
+    }
+}
+
+impl LoadedFile {
+    fn ensure_registry(&mut self) -> Result<(), McpError> {
+        if self.registry.is_none() {
+            let options = IRBuilderOptions {
+                resolve_strings: true,
+                include_offsets: false,
+                ..Default::default()
+            };
+            let mut builder = IRBuilder::new(&self.file, &self.format, options);
+            let cfg = builder
+                .build_function(0)
+                .map_err(|e| McpError::internal_error(format!("IR build error: {e}"), None))?;
+            let analysis = StructureAnalysis::analyze(&cfg);
+            let statements = analysis.root.to_statements(&cfg);
+            self.registry = Some(MetroRegistry::analyze(&statements));
         }
+        Ok(())
     }
 
-    fn build_registry(file: &BytecodeFile, format: &BytecodeFormat) -> Result<MetroRegistry, McpError> {
-        let options = IRBuilderOptions { resolve_strings: true, include_offsets: false };
-        let mut builder = IRBuilder::new(file, format, options);
-        let cfg = builder.build_function(0)
-            .map_err(|e| McpError::internal_error(format!("IR build error: {e}"), None))?;
-        let analysis = StructureAnalysis::analyze(&cfg);
-        let statements = analysis.root.to_statements(&cfg);
-        Ok(MetroRegistry::analyze(&statements))
+    fn ensure_pipeline(&mut self) -> Result<(), McpError> {
+        if self.pipeline_ctx.is_none() {
+            let ctx = PipelineContext::build(&self.file, &self.format)
+                .map_err(|e| McpError::internal_error(format!("Pipeline build error: {e}"), None))?;
+            self.pipeline_ctx = Some(ctx);
+        }
+        Ok(())
     }
 }
 
@@ -84,6 +114,25 @@ pub struct DecompileFunctionParams {
     #[schemars(description = "Include bytecode offsets as comments")]
     #[serde(default)]
     pub show_offsets: bool,
+    #[schemars(description = "Assembly mode: emit absolute file offsets (Binary Ninja style)")]
+    #[serde(default)]
+    pub assembly: bool,
+    #[schemars(description = "Apply constant/copy propagation (default: true)")]
+    #[serde(default = "default_true")]
+    pub propagate: bool,
+    #[schemars(description = "Apply expression simplification (default: true)")]
+    #[serde(default = "default_true")]
+    pub simplify: bool,
+    #[schemars(description = "Recover control flow structures: if/while/for (default: true)")]
+    #[serde(default = "default_true")]
+    pub recover_structures: bool,
+    #[schemars(description = "Use closure context for cross-function variable resolution")]
+    #[serde(default)]
+    pub resolve_closures: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -95,7 +144,9 @@ pub struct XrefParams {
     pub kind: String,
 }
 
-fn default_string() -> String { "string".to_string() }
+fn default_string() -> String {
+    "string".to_string()
+}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ModuleDepsParams {
@@ -106,7 +157,9 @@ pub struct ModuleDepsParams {
     pub depth: usize,
 }
 
-fn default_depth() -> usize { 2 }
+fn default_depth() -> usize {
+    2
+}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListModulesParams {
@@ -116,12 +169,14 @@ pub struct ListModulesParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DumpParams {
-    #[schemars(description = "What to dump: 'strings' or 'functions'")]
+    #[schemars(description = "What to dump: 'strings', 'functions', 'identifiers', or 'all'")]
     #[serde(default = "default_strings")]
     pub kind: String,
 }
 
-fn default_strings() -> String { "strings".to_string() }
+fn default_strings() -> String {
+    "strings".to_string()
+}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DisasmParams {
@@ -132,12 +187,29 @@ pub struct DisasmParams {
     pub show_offsets: bool,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DecompileModuleParams {
+    #[schemars(description = "Metro module ID")]
+    pub module_id: u32,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ModuleExportsParams {
+    #[schemars(description = "Metro module ID")]
+    pub module_id: u32,
+}
+
 // --- Tool implementations ---
 
 #[tool_router(router = tool_router)]
 impl HermesService {
-    #[tool(description = "Load a Hermes bytecode (.hbc) file for analysis. Must be called before any other tool.")]
-    fn load_file(&self, Parameters(params): Parameters<LoadFileParams>) -> Result<CallToolResult, McpError> {
+    #[tool(
+        description = "Load a Hermes bytecode (.hbc) file for analysis. Must be called before any other tool."
+    )]
+    fn load_file(
+        &self,
+        Parameters(params): Parameters<LoadFileParams>,
+    ) -> Result<CallToolResult, McpError> {
         let bytes = std::fs::read(&params.path)
             .map_err(|e| McpError::internal_error(format!("Failed to read file: {e}"), None))?;
         let file = BytecodeFile::parse_auto(&bytes)
@@ -150,52 +222,124 @@ impl HermesService {
             params.path, file.header.version, file.header.function_count, file.header.string_count,
         );
 
-        let mut guard = self.loaded.lock().map_err(|e| McpError::internal_error(format!("{e}"), None))?;
-        *guard = Some(LoadedFile { file, format, path: params.path });
+        let mut guard = self
+            .loaded
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+        *guard = Some(LoadedFile {
+            file,
+            format,
+            path: params.path,
+            bytes,
+            registry: None,
+            pipeline_ctx: None,
+        });
         Ok(CallToolResult::success(vec![Content::text(info)]))
     }
 
-    #[tool(description = "Get file header info: version, function count, string count.")]
+    #[tool(description = "Get file header info: version, function count, string count, file path.")]
     fn file_info(&self) -> Result<CallToolResult, McpError> {
-        self.with_file(|file, _| {
+        self.with_file(|loaded| {
+            let file = &loaded.file;
             let info = format!(
-                "Version: {}\nFunctions: {}\nStrings: {}\nGlobal code: function 0",
-                file.header.version, file.header.function_count, file.header.string_count,
+                "Path: {}\nVersion: {}\nFunctions: {}\nStrings: {}\nGlobal code: function 0",
+                loaded.path,
+                file.header.version,
+                file.header.function_count,
+                file.header.string_count,
             );
             Ok(CallToolResult::success(vec![Content::text(info)]))
         })
     }
 
-    #[tool(description = "Decompile a function to readable JavaScript with full structure recovery (if/while/for).")]
-    fn decompile_function(&self, Parameters(params): Parameters<DecompileFunctionParams>) -> Result<CallToolResult, McpError> {
-        self.with_file(|file, format| {
-            let mut opts = Self::default_options();
-            opts.include_offsets = params.show_offsets;
-            let decomp = Decompiler::from_parts(file.clone(), format.clone());
-            let code = decomp.decompile_function(params.function_id, &opts)
-                .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+    #[tool(
+        description = "Decompile a function to JavaScript (light mode: fast, single-function). For full quality with IPA naming, closures and ESM, use decompile_function_full."
+    )]
+    fn decompile_function(
+        &self,
+        Parameters(params): Parameters<DecompileFunctionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let opts = DecompileOptionsV2 {
+                resolve_strings: true,
+                include_offsets: params.show_offsets || params.assembly,
+                propagate: params.propagate,
+                simplify: params.simplify,
+                recover_structures: params.recover_structures,
+                assembly_mode: params.assembly,
+            };
+            let code = if params.resolve_closures {
+                let closure_ctx =
+                    hbc_decomp::build_closure_context(&loaded.file, &loaded.format)
+                        .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+                hbc_decomp::decompile_function_v2_with_context(
+                    &loaded.file,
+                    &loaded.format,
+                    params.function_id,
+                    &opts,
+                    Some(&closure_ctx),
+                )
+                .map_err(|e| McpError::internal_error(format!("{e}"), None))?
+            } else {
+                hbc_decomp::decompile_function_v2(
+                    &loaded.file,
+                    &loaded.format,
+                    params.function_id,
+                    &opts,
+                )
+                .map_err(|e| McpError::internal_error(format!("{e}"), None))?
+            };
             Ok(CallToolResult::success(vec![Content::text(code)]))
         })
     }
 
-    #[tool(description = "Decompile all functions in the file to JavaScript.")]
+    #[tool(
+        description = "Decompile a function with the full pipeline (IPA naming, closures, ESM imports/exports, async detection). Higher quality but builds the full pipeline on first use."
+    )]
+    fn decompile_function_full(
+        &self,
+        Parameters(params): Parameters<FunctionIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file_mut(|loaded| {
+            loaded.ensure_pipeline()?;
+            let pipeline = loaded.pipeline_ctx.as_ref().unwrap();
+            let code = pipeline.generate_function_code(&loaded.file, params.function_id);
+            Ok(CallToolResult::success(vec![Content::text(code)]))
+        })
+    }
+
+    #[tool(
+        description = "Decompile all functions with full pipeline (IPA, closures, ESM). Groups output by Metro module. May take several seconds for large bundles."
+    )]
     fn decompile_all(&self) -> Result<CallToolResult, McpError> {
-        self.with_file(|file, format| {
-            let opts = Self::default_options();
-            let decomp = Decompiler::from_parts(file.clone(), format.clone());
-            let code = decomp.decompile_all(&opts)
-                .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+        self.with_file(|loaded| {
+            let opts = DecompileOptionsV2::optimized();
+            let code = hbc_decomp::decompile_all_v2_with_closures(
+                &loaded.file,
+                &loaded.format,
+                &opts,
+            )
+            .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
             Ok(CallToolResult::success(vec![Content::text(code)]))
         })
     }
 
     #[tool(description = "Get structured JSON IR of a function. Useful for programmatic analysis.")]
-    fn get_ir_json(&self, Parameters(params): Parameters<FunctionIdParams>) -> Result<CallToolResult, McpError> {
-        self.with_file(|file, format| {
-            let opts = Self::default_options();
-            let decomp = Decompiler::from_parts(file.clone(), format.clone());
-            let ir = decomp.decompile_to_ir(params.function_id, &opts)
-                .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+    fn get_ir_json(
+        &self,
+        Parameters(params): Parameters<FunctionIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let opts = DecompileOptionsV2::optimized();
+            let ir = hbc_decomp::generate_ir(
+                &loaded.file,
+                &loaded.format,
+                params.function_id,
+                &opts,
+                None,
+                true,
+            )
+            .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
             let json = serde_json::to_string_pretty(&ir)
                 .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
             Ok(CallToolResult::success(vec![Content::text(json)]))
@@ -203,84 +347,175 @@ impl HermesService {
     }
 
     #[tool(description = "Disassemble a function to raw Hermes bytecode instructions.")]
-    fn disassemble(&self, Parameters(params): Parameters<DisasmParams>) -> Result<CallToolResult, McpError> {
-        self.with_file(|file, format| {
+    fn disassemble(
+        &self,
+        Parameters(params): Parameters<DisasmParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
             let options = hbc_decomp::DisasmOptions {
                 show_offsets: params.show_offsets,
                 show_labels: true,
                 resolve_strings: true,
                 enable_color: false,
             };
-            let asm = hbc_decomp::disassemble_function(file, format, params.function_id, &options)
-                .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+            let asm = hbc_decomp::disassemble_function(
+                &loaded.file,
+                &loaded.format,
+                params.function_id,
+                &options,
+            )
+            .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
             Ok(CallToolResult::success(vec![Content::text(asm)]))
         })
     }
 
     #[tool(description = "Search for cross-references to a string or function ID in the bytecode.")]
-    fn xref_search(&self, Parameters(params): Parameters<XrefParams>) -> Result<CallToolResult, McpError> {
-        self.with_file(|file, format| {
+    fn xref_search(
+        &self,
+        Parameters(params): Parameters<XrefParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let file = &loaded.file;
+            let format = &loaded.format;
             let results = if params.kind == "function" {
-                let fid = params.query.parse::<u32>()
+                let fid = params
+                    .query
+                    .parse::<u32>()
                     .map_err(|_| McpError::invalid_params("Invalid function ID", None))?;
                 hbc_decomp::analysis::find_function_refs(file, format, fid)
             } else {
                 hbc_decomp::analysis::find_string_xrefs(file, format, &params.query)
             };
 
-            let mut output = format!("Found {} cross-references for '{}':\n", results.len(), params.query);
+            let mut output = format!(
+                "Found {} cross-references for '{}':\n",
+                results.len(),
+                params.query
+            );
             for xref in &results {
-                let name = file.string_at(file.function_headers[xref.function_id as usize].function_name())
-                    .map(|e| e.value.as_str()).unwrap_or("<anonymous>");
-                output.push_str(&format!("  Function {} ({}) at offset {:04x}: {}\n",
-                    xref.function_id, name, xref.offset, xref.opcode));
+                let name = file
+                    .string_at(file.function_headers[xref.function_id as usize].function_name())
+                    .map(|e| e.value.as_str())
+                    .unwrap_or("<anonymous>");
+                output.push_str(&format!(
+                    "  Function {} ({}) at offset {:04x}: {}\n",
+                    xref.function_id, name, xref.offset, xref.opcode
+                ));
             }
             Ok(CallToolResult::success(vec![Content::text(output)]))
         })
     }
 
     #[tool(description = "List all Metro modules in the React Native bundle.")]
-    fn list_modules(&self, Parameters(params): Parameters<ListModulesParams>) -> Result<CallToolResult, McpError> {
-        self.with_file(|file, format| {
-            let registry = Self::build_registry(file, format)?;
+    fn list_modules(
+        &self,
+        Parameters(params): Parameters<ListModulesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file_mut(|loaded| {
+            loaded.ensure_registry()?;
+            let registry = loaded.registry.as_ref().unwrap();
             let mut modules: Vec<_> = registry.modules.values().collect();
             modules.sort_by_key(|m| m.module_id);
             let limit = params.limit.unwrap_or(modules.len()).min(modules.len());
 
             let mut output = format!("Found {} Metro modules:\n", modules.len());
             for m in modules.iter().take(limit) {
-                let name_str = m.name.as_deref().map(|n| format!(" - {n}")).unwrap_or_default();
-                output.push_str(&format!("  Module {} (F{}){} deps: {:?}\n",
-                    m.module_id, m.function_id, name_str, m.dependencies));
+                let name_str = m
+                    .name
+                    .as_deref()
+                    .map(|n| format!(" - {n}"))
+                    .unwrap_or_default();
+                let export_count = m.exports.len();
+                output.push_str(&format!(
+                    "  Module {} (F{}){} deps: {:?} exports: {}\n",
+                    m.module_id, m.function_id, name_str, m.dependencies, export_count
+                ));
             }
             Ok(CallToolResult::success(vec![Content::text(output)]))
         })
     }
 
     #[tool(description = "Show dependency tree for a Metro module.")]
-    fn module_deps(&self, Parameters(params): Parameters<ModuleDepsParams>) -> Result<CallToolResult, McpError> {
-        self.with_file(|file, format| {
-            let registry = Self::build_registry(file, format)?;
+    fn module_deps(
+        &self,
+        Parameters(params): Parameters<ModuleDepsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file_mut(|loaded| {
+            loaded.ensure_registry()?;
+            let registry = loaded.registry.as_ref().unwrap();
             let tree = registry.get_dependency_tree(params.module_id, params.depth);
             Ok(CallToolResult::success(vec![Content::text(tree.format(0))]))
         })
     }
 
-    #[tool(description = "Dump strings or function headers from the HBC file. Useful for finding API keys, endpoints, secrets.")]
+    #[tool(
+        description = "Dump strings, function headers, or identifiers from the HBC file. Useful for finding API keys, endpoints, secrets."
+    )]
     fn dump(&self, Parameters(params): Parameters<DumpParams>) -> Result<CallToolResult, McpError> {
-        self.with_file(|file, _| {
+        self.with_file(|loaded| {
+            let file = &loaded.file;
             let mut output = String::new();
-            if params.kind == "functions" {
-                for (i, fh) in file.function_headers.iter().enumerate() {
-                    let name = file.string_at(fh.function_name())
-                        .map(|e| e.value.clone()).unwrap_or_default();
-                    output.push_str(&format!("Function {}: name=\"{}\" params={} regs={} size={}\n",
-                        i, name, fh.param_count(), fh.frame_size(), fh.bytecode_size_in_bytes()));
+            match params.kind.as_str() {
+                "functions" => {
+                    for (i, fh) in file.function_headers.iter().enumerate() {
+                        let name = file
+                            .string_at(fh.function_name())
+                            .map(|e| e.value.clone())
+                            .unwrap_or_default();
+                        output.push_str(&format!(
+                            "Function {}: name=\"{}\" params={} regs={} size={}\n",
+                            i,
+                            name,
+                            fh.param_count(),
+                            fh.frame_size(),
+                            fh.bytecode_size_in_bytes()
+                        ));
+                    }
                 }
-            } else {
-                for i in 0..file.header.string_count {
-                    if let Some(s) = file.string_at(i) {
-                        output.push_str(&format!("{}: {}\n", i, s.value));
+                "identifiers" => {
+                    // Dump identifier hash entries
+                    for (i, entry) in file.identifier_hashes.iter().enumerate() {
+                        output.push_str(&format!("Identifier {i}: hash=0x{entry:08x}\n"));
+                    }
+                    if file.identifier_hashes.is_empty() {
+                        output.push_str("No identifier hash table found.\n");
+                    }
+                }
+                "all" => {
+                    output.push_str(&format!(
+                        "=== {} strings ===\n",
+                        file.header.string_count
+                    ));
+                    for i in 0..file.header.string_count {
+                        if let Some(s) = file.string_at(i) {
+                            output.push_str(&format!("{}: {}\n", i, s.value));
+                        }
+                    }
+                    output.push_str(&format!(
+                        "\n=== {} functions ===\n",
+                        file.header.function_count
+                    ));
+                    for (i, fh) in file.function_headers.iter().enumerate() {
+                        let name = file
+                            .string_at(fh.function_name())
+                            .map(|e| e.value.clone())
+                            .unwrap_or_default();
+                        output.push_str(&format!(
+                            "Function {}: name=\"{}\" params={} regs={} size={}\n",
+                            i,
+                            name,
+                            fh.param_count(),
+                            fh.frame_size(),
+                            fh.bytecode_size_in_bytes()
+                        ));
+                    }
+                }
+                _ => {
+                    // Default: strings
+                    for i in 0..file.header.string_count {
+                        if let Some(s) = file.string_at(i) {
+                            output.push_str(&format!("{}: {}\n", i, s.value));
+                        }
                     }
                 }
             }
@@ -291,8 +526,293 @@ impl HermesService {
     #[tool(description = "List supported Hermes bytecode versions.")]
     fn list_versions(&self) -> Result<CallToolResult, McpError> {
         let versions = hbc_decomp::opcode::available_versions();
-        let list = versions.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
-        Ok(CallToolResult::success(vec![Content::text(format!("Supported versions: {list}"))]))
+        let list = versions
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Supported versions: {list}"
+        ))]))
+    }
+
+    // --- New tools ---
+
+    #[tool(
+        description = "Analyze closure variable slots for a function. Shows what parent variables are captured via the environment chain."
+    )]
+    fn closures(
+        &self,
+        Parameters(params): Parameters<FunctionIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let opts = DecompileOptionsV2::optimized();
+            let stmts = hbc_decomp::generate_ir(
+                &loaded.file,
+                &loaded.format,
+                params.function_id,
+                &opts,
+                None,
+                true,
+            )
+            .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+
+            let info = ClosureInfo::analyze(&stmts);
+            if info.slots.is_empty() {
+                return Ok(CallToolResult::success(vec![Content::text(format!(
+                    "Function {} has no closure variable slots.",
+                    params.function_id
+                ))]));
+            }
+
+            let mut output = format!(
+                "Function {} closure slots ({} total):\n",
+                params.function_id,
+                info.slots.len()
+            );
+            for (slot, value) in &info.slots {
+                let desc = match value {
+                    hbc_decomp::ClosureSlotValue::Function { id, name } => {
+                        let name_str = name
+                            .as_deref()
+                            .map(|n| format!(" name=\"{n}\""))
+                            .unwrap_or_default();
+                        format!("Function(id={id}{name_str})")
+                    }
+                    hbc_decomp::ClosureSlotValue::Constant(s) => format!("Constant(\"{s}\")"),
+                    hbc_decomp::ClosureSlotValue::Variable(s) => format!("Variable(\"{s}\")"),
+                    hbc_decomp::ClosureSlotValue::Unknown => "Unknown".to_string(),
+                };
+                output.push_str(&format!("  slot {slot}: {desc}\n"));
+            }
+            Ok(CallToolResult::success(vec![Content::text(output)]))
+        })
+    }
+
+    #[tool(
+        description = "Analyze dead code in the bundle. Returns unreachable functions not called from any Metro module entry point."
+    )]
+    fn dead_code(&self) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let analysis = hbc_decomp::analyze_module(&loaded.file, &loaded.format)
+                .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+
+            let total = loaded.file.header.function_count;
+            let dead_count = analysis.dead_code.len();
+            let pct = if total > 0 {
+                (dead_count as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            let mut output = format!(
+                "Dead code analysis: {dead_count} dead functions out of {total} total ({pct:.1}%)\n\n"
+            );
+
+            if dead_count > 0 {
+                let mut dead_ids: Vec<_> = analysis.dead_code.iter().copied().collect();
+                dead_ids.sort();
+                for &fid in dead_ids.iter().take(200) {
+                    let name = loaded
+                        .file
+                        .function_headers
+                        .get(fid as usize)
+                        .and_then(|h| loaded.file.string_at(h.function_name()))
+                        .map(|e| e.value.as_str())
+                        .unwrap_or("<anonymous>");
+                    output.push_str(&format!("  Function {fid} ({name})\n"));
+                }
+                if dead_count > 200 {
+                    output.push_str(&format!("  ... and {} more\n", dead_count - 200));
+                }
+            }
+            Ok(CallToolResult::success(vec![Content::text(output)]))
+        })
+    }
+
+    #[tool(
+        description = "Show debug info (source locations, variable names, scope chain) for a function, if available in the bytecode."
+    )]
+    fn debug_info(
+        &self,
+        Parameters(params): Parameters<FunctionIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let offset = loaded.file.header.debug_info_offset;
+            if offset == 0 || offset == u32::MAX {
+                return Ok(CallToolResult::success(vec![Content::text(
+                    "No debug info available in this bytecode file.",
+                )]));
+            }
+
+            let debug = DebugInfo::parse(&loaded.bytes, offset)
+                .map_err(|e| McpError::internal_error(format!("Debug parse error: {e}"), None))?;
+
+            let mut output = String::new();
+
+            // Source locations for this function
+            if let Some(locations) = debug.source_locations.get(&params.function_id) {
+                output.push_str(&format!(
+                    "Source locations for function {} ({} entries):\n",
+                    params.function_id,
+                    locations.len()
+                ));
+                for loc in locations {
+                    output.push_str(&format!(
+                        "  offset {:04x}: line {} col {}",
+                        loc.bytecode_offset, loc.line, loc.column
+                    ));
+                    if let Some(scope) = loc.scope_offset {
+                        output.push_str(&format!(" scope={scope}"));
+                    }
+                    output.push('\n');
+                }
+            } else {
+                output.push_str(&format!(
+                    "No source locations for function {}.\n",
+                    params.function_id
+                ));
+            }
+
+            // Scope descriptors
+            if !debug.scope_descriptors.is_empty() {
+                output.push_str(&format!(
+                    "\nScope descriptors ({} total):\n",
+                    debug.scope_descriptors.len()
+                ));
+                for scope in &debug.scope_descriptors {
+                    output.push_str(&format!("  offset {}: ", scope.offset));
+                    if let Some(parent) = scope.parent_offset {
+                        output.push_str(&format!("parent={parent} "));
+                    }
+                    if !scope.names.is_empty() {
+                        output.push_str(&format!("vars=[{}]", scope.names.join(", ")));
+                    }
+                    output.push('\n');
+                }
+            }
+
+            if output.is_empty() {
+                output.push_str("Debug info section exists but contains no data for this function.");
+            }
+
+            Ok(CallToolResult::success(vec![Content::text(output)]))
+        })
+    }
+
+    #[tool(
+        description = "Generate Graphviz DOT representation of a function's control flow graph. Paste output into graphviz.org to visualize."
+    )]
+    fn graphviz(
+        &self,
+        Parameters(params): Parameters<FunctionIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let options = IRBuilderOptions {
+                resolve_strings: true,
+                include_offsets: false,
+                ..Default::default()
+            };
+            let mut builder = IRBuilder::new(&loaded.file, &loaded.format, options);
+            let cfg = builder
+                .build_function(params.function_id)
+                .map_err(|e| McpError::internal_error(format!("IR build error: {e}"), None))?;
+
+            let function_name = loaded
+                .file
+                .function_headers
+                .get(params.function_id as usize)
+                .and_then(|h| loaded.file.string_at(h.function_name()))
+                .map(|e| e.value.clone())
+                .unwrap_or_else(|| format!("f{}", params.function_id));
+
+            let dot = hbc_decomp::ir::generate_dot(&cfg, &function_name);
+            Ok(CallToolResult::success(vec![Content::text(dot)]))
+        })
+    }
+
+    #[tool(
+        description = "Decompile a Metro module with full analysis (IPA, closures, ESM imports/exports). Builds the full pipeline on first use."
+    )]
+    fn decompile_module(
+        &self,
+        Parameters(params): Parameters<DecompileModuleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file_mut(|loaded| {
+            loaded.ensure_pipeline()?;
+            let pipeline = loaded.pipeline_ctx.as_ref().unwrap();
+            let module = pipeline
+                .registry
+                .modules
+                .get(&params.module_id)
+                .ok_or_else(|| {
+                    McpError::invalid_params(
+                        format!("Module {} not found", params.module_id),
+                        None,
+                    )
+                })?;
+            let function_id = module.function_id;
+            let code = pipeline.generate_function_code(&loaded.file, function_id);
+            Ok(CallToolResult::success(vec![Content::text(code)]))
+        })
+    }
+
+    #[tool(description = "List exports of a Metro module (exported names and their function IDs).")]
+    fn module_exports(
+        &self,
+        Parameters(params): Parameters<ModuleExportsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file_mut(|loaded| {
+            // Use the full pipeline for exports (basic registry may have empty exports
+            // since export analysis needs full IR)
+            loaded.ensure_pipeline()?;
+            let pipeline = loaded.pipeline_ctx.as_ref().unwrap();
+            let module = pipeline
+                .registry
+                .modules
+                .get(&params.module_id)
+                .ok_or_else(|| {
+                    McpError::invalid_params(
+                        format!("Module {} not found", params.module_id),
+                        None,
+                    )
+                })?;
+
+            let name_str = module
+                .name
+                .as_deref()
+                .map(|n| format!(" ({n})"))
+                .unwrap_or_default();
+
+            if module.exports.is_empty() {
+                return Ok(CallToolResult::success(vec![Content::text(format!(
+                    "Module {}{} has no detected exports.",
+                    params.module_id, name_str
+                ))]));
+            }
+
+            let mut output = format!(
+                "Module {}{} exports ({} total):\n",
+                params.module_id,
+                name_str,
+                module.exports.len()
+            );
+            let mut exports: Vec<_> = module.exports.iter().collect();
+            exports.sort_by_key(|(name, _)| (*name).clone());
+            for (name, &func_id) in &exports {
+                let func_name = loaded
+                    .file
+                    .function_headers
+                    .get(func_id as usize)
+                    .and_then(|h| loaded.file.string_at(h.function_name()))
+                    .map(|e| e.value.as_str())
+                    .unwrap_or("<anonymous>");
+                output.push_str(&format!(
+                    "  export \"{name}\" -> function {func_id} ({func_name})\n"
+                ));
+            }
+            Ok(CallToolResult::success(vec![Content::text(output)]))
+        })
     }
 }
 
@@ -301,7 +821,7 @@ impl ServerHandler for HermesService {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Hermes bytecode decompiler. Load a .hbc file with load_file, then use decompile/disassemble/xref tools to analyze React Native apps.".into()
+                "Hermes bytecode decompiler for React Native apps. Load a .hbc file with load_file, then use decompile/disassemble/xref/module tools to analyze. Use decompile_function for quick single-function output, or decompile_function_full/decompile_module for full-quality analysis with IPA naming and ESM imports/exports.".into()
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()

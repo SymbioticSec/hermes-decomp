@@ -1,153 +1,264 @@
-use std::collections::HashMap;
-use crate::ir::{Statement, Expression, Value, AssignTarget, PropertyKey};
 use super::registry::MetroModule;
+use crate::ir::{extract_function_id, AssignTarget, Expression, PropertyKey, Statement, Value};
+use std::collections::{BTreeMap, HashMap};
 
-/// Analyzes the exports of a Metro module to find exported functions.
-///
-/// Metro modules are wrapped in a factory:
-/// `function(global, require, module, exports) { ... }`
-///
-/// Analyzes the exports of a Metro module to find exported functions.
-///
-/// Metro modules are typically wrapped in a factory function:
-/// `function(global, require, module, exports) { ... }`
-///
-/// Our goal is to find which internal functions (IDs) are exposed as exports.
-/// This allows us to link calls from other modules (via `require`) to these functions.
-///
-/// We look for several patterns:
-/// 1. `exports.foo = function_id`  (Direct export assignment)
-/// 2. `module.exports = { foo: function_id }` (Module exports object literal)
-/// 3. `module.exports.foo = function_id` (Member assignment)
-/// 4. `Object.defineProperty(exports, "default", { get: function() { return internal_func; } })` (ESM default export pattern)
+// Analyzes the exports of a Metro module to find exported functions.
+//
+// Uses expression tracing to handle:
+// 1. Direct assignments: `exports.foo = func`
+// 2. Module exports: `module.exports = { ... }`
+// 3. ESM Getters: `Object.defineProperty(exports, "foo", { get: () => internal_func })`
 pub struct ExportAnalyzer;
 
 impl ExportAnalyzer {
-    pub fn analyze(module: &mut MetroModule, functions: &HashMap<u32, Vec<Statement>>) {
+    pub fn analyze(module: &mut MetroModule, functions: &BTreeMap<u32, Vec<Statement>>) {
         let stmts = match functions.get(&module.function_id) {
             Some(s) => s,
             None => return,
         };
-        
-        let exports_aliases = vec!["p3".to_string(), "exports".to_string()];
-        let module_aliases = vec!["p2".to_string(), "module".to_string()];
-        
-        // Track variable definitions (simple constant/object propagation)
-        let mut definitions: HashMap<String, Expression> = HashMap::new();
 
-        // Scan statements
+        // 1. Build a map of definitions in the factory scope
+        // This is a simplified "Reaching Definitions" that assumes single definition or last definition dominates.
+        // For accurate analysis we would need the full CFG/DataFlow, but for top-level factory exports,
+        // a linear scan is usually sufficient as exports are defined sequentially.
+        let mut definitions = HashMap::new();
         for stmt in stmts {
-            // Update definitions
             if let Statement::Assign { target, value } = stmt {
                 if let AssignTarget::Variable(name) = target {
-                    definitions.insert(name.clone(), value.clone());
+                    definitions.insert(name.clone(), value);
+                } else if let AssignTarget::Register(r) = target {
+                    definitions.insert(format!("r{r}"), value);
                 }
-                 // registers?
             }
-            
-            analyze_stmt(stmt, &mut module.exports, &exports_aliases, &module_aliases, functions, stmts, &definitions);
+        }
+
+        let tracer = ExpressionTracer {
+            definitions: &definitions,
+            functions,
+        };
+
+        for stmt in stmts {
+            analyze_stmt(stmt, module, &tracer);
         }
     }
 }
 
-fn analyze_stmt(
-    stmt: &Statement,
-    exports: &mut HashMap<String, u32>,
-    exports_aliases: &[String],
-    module_aliases: &[String],
-    functions: &HashMap<u32, Vec<Statement>>,
-    factory_stmts: &[Statement], 
-    definitions: &HashMap<String, Expression>,
-) {
+struct ExpressionTracer<'a> {
+    definitions: &'a HashMap<String, &'a Expression>,
+    functions: &'a BTreeMap<u32, Vec<Statement>>,
+}
+
+impl<'a> ExpressionTracer<'a> {
+    fn resolve(&self, expr: &'a Expression) -> &'a Expression {
+        // Depth limit prevents infinite loops from definition cycles (e.g., r5 = r6; r6 = r5)
+        self.resolve_bounded(expr, 8)
+    }
+
+    fn resolve_bounded(&self, expr: &'a Expression, depth: u8) -> &'a Expression {
+        if depth == 0 {
+            return expr;
+        }
+        match expr {
+            Expression::Value(Value::Variable(name)) => {
+                if let Some(def) = self.definitions.get(name) {
+                    self.resolve_bounded(def, depth - 1)
+                } else {
+                    expr
+                }
+            }
+            Expression::Value(Value::Register(r)) => {
+                let key = format!("r{r}");
+                if let Some(def) = self.definitions.get(&key) {
+                    self.resolve_bounded(def, depth - 1)
+                } else {
+                    expr
+                }
+            }
+            _ => expr,
+        }
+    }
+
+    fn find_function_id(&self, expr: &'a Expression) -> Option<u32> {
+        let resolved = self.resolve(expr);
+        if let Expression::Function { id, .. } = resolved {
+            Some(id.0)
+        } else {
+            None
+        }
+    }
+}
+
+fn analyze_stmt(stmt: &Statement, module: &mut MetroModule, tracer: &ExpressionTracer) {
     match stmt {
         Statement::Assign { target, value } => {
-            // Check for Object.defineProperty(exports, "default", { get: ... })
+            // Pattern: Object.defineProperty(exports, "name", { get: ... })
             if let Expression::Call { callee, arguments } = value {
                 if is_define_property(callee) && arguments.len() >= 3 {
-                    // This pattern detects:
-                    // Object.defineProperty(exports, "default", { enumerable: true, get: function() { return ...; } });
-                    
-                    // Arg 0: Exports object
-                    if let Some(arg0_name) = get_var_name(&arguments[0]) {
-                        if exports_aliases.contains(&arg0_name) {
-                             // Arg 1: "default"
-                             if let Expression::Value(Value::Constant(crate::ir::Constant::String(prop))) = &arguments[1] {
-                                 if prop == "default" {
-                                     // Arg 2: Descriptor
-                                     // Resolve argument 2 if it's a variable
-                                     let descriptor_expr = if let Expression::Value(Value::Variable(v)) = &arguments[2] {
-                                         definitions.get(v).unwrap_or(&arguments[2])
-                                     } else {
-                                         &arguments[2]
-                                     };
+                    // Start from exports object (Arg 0)
+                    let arg0 = tracer.resolve(&arguments[0]);
+                    if is_exports_object(arg0) {
+                        // Property Name (Arg 1)
+                        let prop_name = if let Expression::Value(Value::Constant(
+                            crate::ir::Constant::String(s),
+                        )) = tracer.resolve(&arguments[1])
+                        {
+                            Some(s.clone())
+                        } else {
+                            None
+                        };
 
-                                     if let Expression::Object { properties } = descriptor_expr {
-                                          analyze_descriptor(properties, exports, functions, factory_stmts);
-                                     }
-                                 }
-                             }
+                        if let Some(name) = prop_name {
+                            // Descriptor (Arg 2)
+                            let descriptor = tracer.resolve(&arguments[2]);
+                            if let Expression::Object { properties } = descriptor {
+                                analyze_descriptor(properties, name, &mut module.exports, tracer);
+                            }
                         }
                     }
                 }
             }
 
-            // Check for exports.prop = func
+            // Pattern: exports.name = value
             if let Some((base, prop)) = get_base_and_prop(target) {
-                if exports_aliases.contains(&base) {
-                    if let Some(func_id) = extract_func_id(value) {
-                         exports.insert(prop, func_id);
+                // Check if base is exports
+                // We don't have easy tracing for *targets*, so we check name heuristics
+                if is_exports_name(&base) {
+                    if let Some(fid) = tracer.find_function_id(value) {
+                        module.exports.insert(prop, fid);
                     }
-                } else if module_aliases.contains(&base) && prop == "exports" {
-                    // module.exports = ...
-                    analyze_module_exports_assign(value, exports);
+                } else if is_module_name(&base) && prop == "exports" {
+                    // Pattern: module.exports = { ... }
+                    analyze_module_exports_assign(value, &mut module.exports, tracer);
                 }
-            } else if let AssignTarget::Member { object, property } = target {
-                 // Handle module.exports.prop = func
-                 // object must be module.exports
-                 if let Expression::Member { object: inner_obj, property: inner_prop, .. } = object {
-                      if let Some(base) = get_var_name(inner_obj) {
-                          if module_aliases.contains(&base) {
-                               if let PropertyKey::String(s) = inner_prop {
-                                    if s == "exports" {
-                                         // property is already &String
-                                          if let Some(func_id) = extract_func_id(value) {
-                                               eprintln!("[ExportAnalyzer] Found export via property assignment: {} -> {}", property, func_id);
-                                               exports.insert(property.clone(), func_id);
-                                          }
+            }
+
+            // Pattern: module.exports.name = value
+            if let AssignTarget::Member { object, property } = target {
+                if let Expression::Member {
+                    object: inner_obj,
+                    property: inner_prop,
+                    ..
+                } = object
+                {
+                    // Check for module.exports
+                    if let Some(base) = get_var_name(inner_obj) {
+                        if is_module_name(&base) {
+                            if let PropertyKey::String(s) = inner_prop {
+                                if s == "exports" {
+                                    if let Some(fid) = tracer.find_function_id(value) {
+                                        module.exports.insert(property.clone(), fid);
                                     }
-                               }
-                          }
-                      }
-                 }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         Statement::Block(inner) => {
             for s in inner {
-                analyze_stmt(s, exports, exports_aliases, module_aliases, functions, factory_stmts, definitions);
+                analyze_stmt(s, module, tracer);
             }
-        }
-        Statement::If { then_body, else_body, .. } => {
-            for s in then_body { analyze_stmt(s, exports, exports_aliases, module_aliases, functions, factory_stmts, definitions); }
-            for s in else_body { analyze_stmt(s, exports, exports_aliases, module_aliases, functions, factory_stmts, definitions); }
         }
         _ => {}
     }
 }
 
-fn analyze_module_exports_assign(value: &Expression, exports: &mut HashMap<String, u32>) {
-     match value {
-         Expression::Object { properties } => {
-             for prop in properties {
-                 if let PropertyKey::String(key) = &prop.key {
-                      if let Some(func_id) = extract_func_id(&prop.value) {
-                          eprintln!("[ExportAnalyzer] Found export in object literal: {} -> {}", key, func_id);
-                          exports.insert(key.clone(), func_id);
-                      }
-                 }
-             }
-         }
-         _ => {}
-     }
+fn analyze_descriptor(
+    properties: &[crate::ir::ObjectProperty],
+    export_name: String,
+    exports: &mut HashMap<String, u32>,
+    tracer: &ExpressionTracer,
+) {
+    for prop in properties {
+        if let PropertyKey::String(key) = &prop.key {
+            if key == "get" {
+                // Found getter. Needs to be a function.
+                if let Some(func_id) = extract_function_id(&prop.value) {
+                    if let Some(getter_stmts) = tracer.functions.get(&func_id) {
+                        // Analyze getter body for return statement
+                        if let Some(returned_expr) = find_returned_expression(getter_stmts) {
+                            // Trace the returned expression in the *factory* scope?
+                            // No, the getter usually returns a variable captured from factory scope.
+                            // Or it returns a property of a variable.
+
+                            // Step 1: Identify the variable returned by getter
+                            if let Some(var_name) = get_var_name(&returned_expr) {
+                                // Step 2: Resolve this variable in the *Factory* definitions
+                                if let Some(def) = tracer.definitions.get(&var_name) {
+                                    if let Some(fid) = tracer.find_function_id(def) {
+                                        exports.insert(export_name.clone(), fid);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn find_returned_expression(stmts: &[Statement]) -> Option<Expression> {
+    for stmt in stmts {
+        match stmt {
+            Statement::Return(Some(expr)) => return Some(expr.clone()),
+            Statement::Block(inner) => {
+                if let Some(e) = find_returned_expression(inner) {
+                    return Some(e);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn analyze_module_exports_assign(
+    value: &Expression,
+    exports: &mut HashMap<String, u32>,
+    tracer: &ExpressionTracer,
+) {
+    let resolved = tracer.resolve(value);
+    if let Expression::Object { properties } = resolved {
+        for prop in properties {
+            if let PropertyKey::String(key) = &prop.key {
+                if let Some(fid) = tracer.find_function_id(&prop.value) {
+                    exports.insert(key.clone(), fid);
+                }
+            }
+        }
+    }
+}
+
+// -- Helpers --
+
+fn is_define_property(expr: &Expression) -> bool {
+    if let Expression::Member {
+        property: PropertyKey::String(s),
+        ..
+    } = expr
+    {
+        s == "defineProperty"
+    } else {
+        false
+    }
+}
+
+fn is_exports_object(expr: &Expression) -> bool {
+    if let Some(name) = get_var_name(expr) {
+        is_exports_name(&name)
+    } else {
+        false
+    }
+}
+
+fn is_exports_name(name: &str) -> bool {
+    super::registry::FactoryRoles::standard().is_exports_param(name)
+}
+
+fn is_module_name(name: &str) -> bool {
+    super::registry::FactoryRoles::standard().is_module_param(name)
 }
 
 fn get_base_and_prop(target: &AssignTarget) -> Option<(String, String)> {
@@ -163,107 +274,30 @@ fn get_var_name(expr: &Expression) -> Option<String> {
     match expr {
         Expression::Value(Value::Variable(n)) => Some(n.clone()),
         Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
-        Expression::Value(Value::Parameter(idx)) => Some(format!("p{idx}")),
-        _ => None
+        Expression::Value(Value::Parameter(idx)) => Some(format!("p{idx}")), // Normalized param name?
+        // Note: Earlier pipeline/propagation normalization might have changed "argN" to "pN" or kept "argN".
+        // We should check both or assume standard format. Old code checked "p2", "module".
+        // Let's support "arg" prefix too just in case.
+        _ => None,
     }
 }
 
-fn is_define_property(callee: &Expression) -> bool {
-    // Matches Object.defineProperty or var.defineProperty
-    if let Expression::Member { property, .. } = callee {
-        if let PropertyKey::String(name) = property {
-            return name == "defineProperty";
-        }
-    }
-    false
-}
-
-fn analyze_descriptor(
-    properties: &[crate::ir::ObjectProperty],
-    exports: &mut HashMap<String, u32>,
-    functions: &HashMap<u32, Vec<Statement>>,
-    factory_stmts: &[Statement],
-) {
-    for prop in properties {
-        if let PropertyKey::String(key) = &prop.key {
-            if key == "get" {
-                if let Some(getter_id) = extract_func_id(&prop.value) {
-                    if let Some(getter_stmts) = functions.get(&getter_id) {
-                         // The getter usually looks like: `function() { return internal_var; }`
-                         if let Some(returned_var) = find_returned_variable(getter_stmts) {
-                             // Now we need to find what `internal_var` points to.
-                             // It is often assigned earlier in the factory: `internal_var = function_id;`
-                             eprintln!("[ExportAnalyzer] Found getter returning variable: {}", returned_var);
-                             scan_for_object_assignment(&returned_var, factory_stmts, exports);
-                         }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn find_returned_variable(stmts: &[Statement]) -> Option<String> {
-    for stmt in stmts {
-        match stmt {
-            Statement::Return(Some(Expression::Value(Value::Variable(name)))) => return Some(name.clone()),
-            Statement::Block(inner) => {
-                if let Some(n) = find_returned_variable(inner) { return Some(n); }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn scan_for_object_assignment(var_name: &str, stmts: &[Statement], exports: &mut HashMap<String, u32>) {
-    for stmt in stmts {
-        match stmt {
-            Statement::Assign { target, value } => {
-                if let Some(name) = get_var_name_from_target(target) {
-                    if name == var_name {
-                        analyze_module_exports_assign(value, exports);
-                    }
-                }
-            }
-             Statement::Block(inner) => scan_for_object_assignment(var_name, inner, exports),
-             Statement::If { then_body, else_body, .. } => {
-                 scan_for_object_assignment(var_name, then_body, exports);
-                 scan_for_object_assignment(var_name, else_body, exports);
-             }
-             _ => {}
-        }
-    }
-}
-
-fn get_var_name_from_target(target: &AssignTarget) -> Option<String> {
-    match target {
-        AssignTarget::Variable(n) => Some(n.clone()),
-        _ => None
-    }
-}
-
-fn extract_func_id(expr: &Expression) -> Option<u32> {
-    match expr {
-        Expression::Function { id, .. } => Some(id.0),
-        _ => None
-    }
-}
+// extract_func_id moved to crate::ir::extract_function_id
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{Expression, Statement, Value, AssignTarget, PropertyKey};
     use crate::ir::FunctionId;
-    use std::collections::HashMap;
+    use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+    use std::collections::{HashMap, BTreeMap};
 
     fn make_func_expr(id: u32) -> Expression {
-        Expression::Function { 
-            id: FunctionId(id), 
-            name: None, 
-            is_arrow: false, 
-            is_async: false, 
-            is_generator: false 
+        Expression::Function {
+            id: FunctionId(id),
+            name: None,
+            is_arrow: false,
+            is_async: false,
+            is_generator: false,
         }
     }
 
@@ -275,38 +309,36 @@ mod tests {
         stmts.push(Statement::Assign {
             target: AssignTarget::Member {
                 object: Expression::Value(Value::Variable("exports".into())),
-                property: "foo".into()
+                property: "foo".into(),
             },
-            value: make_func_expr(10)
+            value: make_func_expr(10),
         });
 
-        // module.exports.bar = func(20)
+        // module.exports.bar = func(20) - This pattern is now handled by the general member assignment
         stmts.push(Statement::Assign {
             target: AssignTarget::Member {
                 object: Expression::Member {
                     object: Box::new(Expression::Value(Value::Variable("module".into()))),
                     property: PropertyKey::String("exports".into()),
-                    optional: false
+                    optional: false,
                 },
-                property: "bar".into()
+                property: "bar".into(),
             },
-            value: make_func_expr(20)
+            value: make_func_expr(20),
         });
-        
+
         // module.exports = { baz: func(30) }
         stmts.push(Statement::Assign {
             target: AssignTarget::Member {
                 object: Expression::Value(Value::Variable("module".into())),
-                property: "exports".into()
+                property: "exports".into(),
             },
             value: Expression::Object {
-                properties: vec![
-                    crate::ir::ObjectProperty {
-                        key: PropertyKey::String("baz".into()),
-                        value: make_func_expr(30)
-                    }
-                ]
-            }
+                properties: vec![crate::ir::ObjectProperty {
+                    key: PropertyKey::String("baz".into()),
+                    value: make_func_expr(30),
+                }],
+            },
         });
 
         let mut module = MetroModule {
@@ -314,10 +346,11 @@ mod tests {
             function_id: 100,
             name: None,
             dependencies: vec![],
-            exports: HashMap::new()
+            exports: HashMap::new(),
+            roles: crate::analysis::metro::registry::FactoryRoles::standard(),
         };
 
-        let mut functions = HashMap::new();
+        let mut functions = BTreeMap::new();
         functions.insert(100, stmts);
 
         ExportAnalyzer::analyze(&mut module, &functions);

@@ -9,9 +9,8 @@
 //   if (c) { return a; }
 //   return b;
 
-use crate::ir::{Statement, Expression};
+use crate::ir::{Expression, Statement};
 
-/// Optimize if-else blocks with return statements into ternary returns.
 pub fn optimize_ternary_returns(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut result = Vec::with_capacity(stmts.len());
     let mut i = 0;
@@ -33,7 +32,6 @@ pub fn optimize_ternary_returns(stmts: Vec<Statement>) -> Vec<Statement> {
             }
         }
 
-        // No optimization, keep the statement and process nested
         result.push(process_nested(stmts[i].clone()));
         i += 1;
     }
@@ -41,13 +39,18 @@ pub fn optimize_ternary_returns(stmts: Vec<Statement>) -> Vec<Statement> {
     result
 }
 
-/// Try to convert `if (c) { return a; } else { return b; }` to `return c ? a : b;`
-///
-/// Heuristic:
-/// We check `is_reasonable_complexity` to avoid creating unreadable nested ternaries.
-/// If the expressions are too deep (e.g. nested calls), we keep the `if/else` structure for readability.
+// Try to convert `if (c) { return a; } else { return b; }` to `return c ? a : b;`
+//
+// Heuristic:
+// We check `is_reasonable_complexity` to avoid creating unreadable nested ternaries.
+// If the expressions are too deep (e.g. nested calls), we keep the `if/else` structure for readability.
 fn try_if_else_return(stmt: &Statement) -> Option<Statement> {
-    if let Statement::If { condition, then_body, else_body } = stmt {
+    if let Statement::If {
+        condition,
+        then_body,
+        else_body,
+    } = stmt
+    {
         // Both branches must have exactly one return statement
         if then_body.len() == 1 && else_body.len() == 1 {
             if let (Statement::Return(Some(then_val)), Statement::Return(Some(else_val))) =
@@ -88,9 +91,14 @@ fn try_if_else_return(stmt: &Statement) -> Option<Statement> {
     None
 }
 
-/// Try to convert `if (c) { return a; } return b;` to `return c ? a : b;`
+// Try to convert `if (c) { return a; } return b;` to `return c ? a : b;`
 fn try_if_return_fallthrough(if_stmt: &Statement, next_stmt: &Statement) -> Option<Statement> {
-    if let Statement::If { condition, then_body, else_body } = if_stmt {
+    if let Statement::If {
+        condition,
+        then_body,
+        else_body,
+    } = if_stmt
+    {
         // Else body must be empty
         if !else_body.is_empty() {
             return None;
@@ -134,12 +142,12 @@ fn try_if_return_fallthrough(if_stmt: &Statement, next_stmt: &Statement) -> Opti
     None
 }
 
-/// Check if an expression is simple enough for a ternary.
+// Check if an expression is simple enough for a ternary.
 fn is_reasonable_complexity(expr: &Expression) -> bool {
     complexity(expr) <= 5
 }
 
-/// Calculate expression complexity score.
+// Calculate expression complexity score.
 fn complexity(expr: &Expression) -> u32 {
     match expr {
         Expression::Value(_) => 1,
@@ -152,9 +160,11 @@ fn complexity(expr: &Expression) -> u32 {
         }
         Expression::Binary { left, right, .. } => 1 + complexity(left) + complexity(right),
         Expression::Unary { operand, .. } => 1 + complexity(operand),
-        Expression::Conditional { condition, then_expr, else_expr } => {
-            2 + complexity(condition) + complexity(then_expr) + complexity(else_expr)
-        }
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => 2 + complexity(condition) + complexity(then_expr) + complexity(else_expr),
         Expression::Array { elements } => {
             1 + elements.iter().flatten().map(complexity).sum::<u32>()
         }
@@ -165,65 +175,25 @@ fn complexity(expr: &Expression) -> u32 {
     }
 }
 
-/// Process nested statements recursively.
 fn process_nested(stmt: Statement) -> Statement {
-    match stmt {
-        Statement::If { condition, then_body, else_body } => Statement::If {
-            condition,
-            then_body: optimize_ternary_returns(then_body),
-            else_body: optimize_ternary_returns(else_body),
-        },
-        Statement::While { condition, body } => Statement::While {
-            condition,
-            body: optimize_ternary_returns(body),
-        },
-        Statement::DoWhile { body, condition } => Statement::DoWhile {
-            body: optimize_ternary_returns(body),
-            condition,
-        },
-        Statement::For { init, condition, update, body } => Statement::For {
-            init: init.map(|s| Box::new(process_nested(*s))),
-            condition,
-            update: update.map(|s| Box::new(process_nested(*s))),
-            body: optimize_ternary_returns(body),
-        },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
-            variable,
-            iterable,
-            body: optimize_ternary_returns(body),
-        },
-        Statement::ForIn { variable, object, body } => Statement::ForIn {
-            variable,
-            object,
-            body: optimize_ternary_returns(body),
-        },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
-            try_body: optimize_ternary_returns(try_body),
-            catch_param,
-            catch_body: optimize_ternary_returns(catch_body),
-            finally_body: optimize_ternary_returns(finally_body),
-        },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
-            discriminant,
-            cases: cases.into_iter().map(|(e, stmts)| (e, optimize_ternary_returns(stmts))).collect(),
-            default: default.map(optimize_ternary_returns),
-        },
-        Statement::Block(stmts) => Statement::Block(optimize_ternary_returns(stmts)),
-        other => other,
-    }
+    crate::ir::map_nested_bodies(stmt, optimize_ternary_returns)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{Value, Constant};
+    use crate::ir::{Constant, Value};
 
     #[test]
     fn test_if_else_return_to_ternary() {
         let stmts = vec![Statement::If {
             condition: Expression::Value(Value::Variable("x".to_string())),
-            then_body: vec![Statement::Return(Some(Expression::constant(Constant::Integer(1))))],
-            else_body: vec![Statement::Return(Some(Expression::constant(Constant::Integer(2))))],
+            then_body: vec![Statement::Return(Some(Expression::constant(
+                Constant::Integer(1),
+            )))],
+            else_body: vec![Statement::Return(Some(Expression::constant(
+                Constant::Integer(2),
+            )))],
         }];
 
         let result = optimize_ternary_returns(stmts);
@@ -241,7 +211,9 @@ mod tests {
         let stmts = vec![
             Statement::If {
                 condition: Expression::Value(Value::Variable("x".to_string())),
-                then_body: vec![Statement::Return(Some(Expression::constant(Constant::Integer(1))))],
+                then_body: vec![Statement::Return(Some(Expression::constant(
+                    Constant::Integer(1),
+                )))],
                 else_body: vec![],
             },
             Statement::Return(Some(Expression::constant(Constant::Integer(2)))),
@@ -263,12 +235,10 @@ mod tests {
         let complex_expr = Expression::Call {
             callee: Box::new(Expression::Call {
                 callee: Box::new(Expression::Value(Value::Variable("f".to_string()))),
-                arguments: vec![
-                    Expression::Call {
-                        callee: Box::new(Expression::Value(Value::Variable("g".to_string()))),
-                        arguments: vec![Expression::constant(Constant::Integer(1))],
-                    },
-                ],
+                arguments: vec![Expression::Call {
+                    callee: Box::new(Expression::Value(Value::Variable("g".to_string()))),
+                    arguments: vec![Expression::constant(Constant::Integer(1))],
+                }],
             }),
             arguments: vec![],
         };

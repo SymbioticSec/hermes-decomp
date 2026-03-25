@@ -1,18 +1,18 @@
-use crate::ir::{Statement, Expression, Value, AssignTarget, Constant};
 use super::analysis::*;
+use crate::ir::{AssignTarget, Constant, Expression, Statement, Value};
 use std::collections::{HashMap, HashSet};
 
 // Transform generator statements into clean yield/await expressions.
-/// 
-/// This is the final reconstruction step.
-/// 1. We have `YieldPoints` (where execution stops).
-/// 2. We have `ResumePoints` (where execution continues).
-/// 3. We have `yield_to_resume` mapping (which yield feeds into which resume).
-///
-/// We traverse the statements. When we hit a `marker_index` corresponding to a yield point:
-/// - We inject a high-level `Expression::Yield` or `Expression::Await`.
-/// - If there is a corresponding resume point, we emit an assignment: `r0 = await ...`.
-/// - We delete the low-level machinery (markers, state switching boilerplate).
+//
+// This is the final reconstruction step.
+// 1. We have `YieldPoints` (where execution stops).
+// 2. We have `ResumePoints` (where execution continues).
+// 3. We have `yield_to_resume` mapping (which yield feeds into which resume).
+//
+// We traverse the statements. When we hit a `marker_index` corresponding to a yield point:
+// - We inject a high-level `Expression::Yield` or `Expression::Await`.
+// - If there is a corresponding resume point, we emit an assignment: `r0 = await ...`.
+// - We delete the low-level machinery (markers, state switching boilerplate).
 pub fn transform_generator_stmts(
     stmts: Vec<Statement>,
     yield_points: &[YieldPoint],
@@ -21,7 +21,10 @@ pub fn transform_generator_stmts(
 ) -> Vec<Statement> {
     // Build sets of indices to skip/transform
     let yield_markers: HashSet<usize> = yield_points.iter().map(|yp| yp.marker_index).collect();
-    let yield_returns: HashSet<usize> = yield_points.iter().filter_map(|yp| yp.return_index).collect();
+    let yield_returns: HashSet<usize> = yield_points
+        .iter()
+        .filter_map(|yp| yp.return_index)
+        .collect();
     let resume_indices: HashSet<usize> = resume_points.iter().map(|rp| rp.index).collect();
 
     // Build mapping from yield marker index to resume register
@@ -118,7 +121,11 @@ fn transform_nested_stmt(
     is_async: bool,
 ) -> Statement {
     match stmt {
-        Statement::If { condition, then_body, else_body } => Statement::If {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::If {
             condition: transform_expr(condition, is_async),
             then_body: transform_generator_stmts(then_body, yield_points, resume_points, is_async),
             else_body: transform_generator_stmts(else_body, yield_points, resume_points, is_async),
@@ -127,21 +134,58 @@ fn transform_nested_stmt(
             condition: transform_expr(condition, is_async),
             body: transform_generator_stmts(body, yield_points, resume_points, is_async),
         },
-        Statement::For { init, condition, update, body } => Statement::For {
-            init: init.map(|s| Box::new(transform_nested_stmt(*s, yield_points, resume_points, is_async))),
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
+            init: init.map(|s| {
+                Box::new(transform_nested_stmt(
+                    *s,
+                    yield_points,
+                    resume_points,
+                    is_async,
+                ))
+            }),
             condition: condition.map(|c| transform_expr(c, is_async)),
-            update: update.map(|s| Box::new(transform_nested_stmt(*s, yield_points, resume_points, is_async))),
+            update: update.map(|s| {
+                Box::new(transform_nested_stmt(
+                    *s,
+                    yield_points,
+                    resume_points,
+                    is_async,
+                ))
+            }),
             body: transform_generator_stmts(body, yield_points, resume_points, is_async),
         },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
             try_body: transform_generator_stmts(try_body, yield_points, resume_points, is_async),
             catch_param,
-            catch_body: transform_generator_stmts(catch_body, yield_points, resume_points, is_async),
-            finally_body: transform_generator_stmts(finally_body, yield_points, resume_points, is_async),
+            catch_body: transform_generator_stmts(
+                catch_body,
+                yield_points,
+                resume_points,
+                is_async,
+            ),
+            finally_body: transform_generator_stmts(
+                finally_body,
+                yield_points,
+                resume_points,
+                is_async,
+            ),
         },
-        Statement::Block(inner) => {
-            Statement::Block(transform_generator_stmts(inner, yield_points, resume_points, is_async))
-        }
+        Statement::Block(inner) => Statement::Block(transform_generator_stmts(
+            inner,
+            yield_points,
+            resume_points,
+            is_async,
+        )),
         Statement::Assign { target, value } => Statement::Assign {
             target,
             value: transform_expr(value, is_async),
@@ -156,10 +200,17 @@ fn transform_nested_stmt(
 // Transform expressions, converting any remaining resume calls.
 fn transform_expr(expr: Expression, is_async: bool) -> Expression {
     match expr {
-        Expression::Call { callee, arguments } if is_resume_call(&Expression::Call { callee: callee.clone(), arguments: arguments.clone() }) => {
+        Expression::Call { callee, arguments }
+            if is_resume_call(&Expression::Call {
+                callee: callee.clone(),
+                arguments: arguments.clone(),
+            }) =>
+        {
             // Orphan resume call - shouldn't happen but handle gracefully
             if is_async {
-                Expression::Await(Box::new(Expression::Value(Value::Constant(Constant::Undefined))))
+                Expression::Await(Box::new(Expression::Value(Value::Constant(
+                    Constant::Undefined,
+                ))))
             } else {
                 Expression::Yield {
                     value: Box::new(Expression::Value(Value::Constant(Constant::Undefined))),
@@ -169,7 +220,10 @@ fn transform_expr(expr: Expression, is_async: bool) -> Expression {
         }
         Expression::Call { callee, arguments } => Expression::Call {
             callee: Box::new(transform_expr(*callee, is_async)),
-            arguments: arguments.into_iter().map(|a| transform_expr(a, is_async)).collect(),
+            arguments: arguments
+                .into_iter()
+                .map(|a| transform_expr(a, is_async))
+                .collect(),
         },
         Expression::Binary { op, left, right } => Expression::Binary {
             op,
@@ -180,28 +234,45 @@ fn transform_expr(expr: Expression, is_async: bool) -> Expression {
             op,
             operand: Box::new(transform_expr(*operand, is_async)),
         },
-        Expression::Conditional { condition, then_expr, else_expr } => Expression::Conditional {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => Expression::Conditional {
             condition: Box::new(transform_expr(*condition, is_async)),
             then_expr: Box::new(transform_expr(*then_expr, is_async)),
             else_expr: Box::new(transform_expr(*else_expr, is_async)),
         },
-        Expression::Member { object, property, optional } => Expression::Member {
+        Expression::Member {
+            object,
+            property,
+            optional,
+        } => Expression::Member {
             object: Box::new(transform_expr(*object, is_async)),
             property,
             optional,
         },
         Expression::New { callee, arguments } => Expression::New {
             callee: Box::new(transform_expr(*callee, is_async)),
-            arguments: arguments.into_iter().map(|a| transform_expr(a, is_async)).collect(),
+            arguments: arguments
+                .into_iter()
+                .map(|a| transform_expr(a, is_async))
+                .collect(),
         },
         Expression::Array { elements } => Expression::Array {
-            elements: elements.into_iter().map(|e| e.map(|ex| transform_expr(ex, is_async))).collect(),
+            elements: elements
+                .into_iter()
+                .map(|e| e.map(|ex| transform_expr(ex, is_async)))
+                .collect(),
         },
         Expression::Object { properties } => Expression::Object {
-            properties: properties.into_iter().map(|p| crate::ir::ObjectProperty {
-                key: p.key,
-                value: transform_expr(p.value, is_async),
-            }).collect(),
+            properties: properties
+                .into_iter()
+                .map(|p| crate::ir::ObjectProperty {
+                    key: p.key,
+                    value: transform_expr(p.value, is_async),
+                })
+                .collect(),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
             target: Box::new(transform_expr(*target, is_async)),

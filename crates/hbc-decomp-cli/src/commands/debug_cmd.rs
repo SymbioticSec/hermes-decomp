@@ -5,7 +5,10 @@ pub fn print_info(file: &BytecodeFile) {
     println!("Hermes Bytecode Info");
     println!("  Version: {}", file.header.version);
     println!("  Layout: {:?}", file.header.layout);
-    println!("  Function header layout: {:?}", file.header.function_header_layout);
+    println!(
+        "  Function header layout: {:?}",
+        file.header.function_header_layout
+    );
     println!("  Functions: {}", file.header.function_count);
     println!("  Strings: {}", file.header.string_count);
     println!("  Identifiers: {}", file.header.identifier_count);
@@ -50,7 +53,10 @@ pub fn print_debug_info(
 
     // Show scope descriptors
     if show_all || scopes {
-        println!("=== Scope Descriptors ({}) ===", debug_info.scope_descriptors.len());
+        println!(
+            "=== Scope Descriptors ({}) ===",
+            debug_info.scope_descriptors.len()
+        );
         for scope in &debug_info.scope_descriptors {
             println!("  Scope at offset {}:", scope.offset);
             if let Some(parent) = scope.parent_offset {
@@ -58,8 +64,12 @@ pub fn print_debug_info(
             } else {
                 println!("    Parent: (none - root scope)");
             }
-            println!("    Flags: {} (inner={}, dynamic={})",
-                scope.flags, scope.is_inner_scope(), scope.is_dynamic());
+            println!(
+                "    Flags: {} (inner={}, dynamic={})",
+                scope.flags,
+                scope.is_inner_scope(),
+                scope.is_dynamic()
+            );
             if !scope.names.is_empty() {
                 println!("    Variables ({}):", scope.names.len());
                 for (i, name) in scope.names.iter().enumerate() {
@@ -74,7 +84,10 @@ pub fn print_debug_info(
 
     // Show textified callees
     if show_all || callees {
-        println!("=== Textified Callees ({}) ===", debug_info.textified_callees.len());
+        println!(
+            "=== Textified Callees ({}) ===",
+            debug_info.textified_callees.len()
+        );
         let mut callees_vec: Vec<_> = debug_info.textified_callees.iter().collect();
         callees_vec.sort_by_key(|(addr, _)| *addr);
         for (addr, name) in callees_vec {
@@ -101,7 +114,10 @@ pub fn print_debug_info(
 
     // Show string table
     if show_all && !debug_info.string_table.is_empty() {
-        println!("=== Debug String Table ({}) ===", debug_info.string_table.len());
+        println!(
+            "=== Debug String Table ({}) ===",
+            debug_info.string_table.len()
+        );
         for (i, s) in debug_info.string_table.iter().enumerate().take(50) {
             println!("  [{i}] {s}");
         }

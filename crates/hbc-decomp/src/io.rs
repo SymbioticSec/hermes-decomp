@@ -94,7 +94,6 @@ impl<'a> ByteReader<'a> {
         Ok(&self.data[start..start + len])
     }
 
-    // Read an unsigned LEB128 encoded integer.
     pub fn read_uleb128(&mut self) -> Result<u64> {
         let mut result: u64 = 0;
         let mut shift = 0;
@@ -116,7 +115,6 @@ impl<'a> ByteReader<'a> {
         Ok(result)
     }
 
-    // Read a signed LEB128 encoded integer.
     pub fn read_sleb128(&mut self) -> Result<i64> {
         let mut result: i64 = 0;
         let mut shift = 0;
@@ -136,14 +134,12 @@ impl<'a> ByteReader<'a> {
                 return Err(Error::Parse("SLEB128 overflow".to_string()));
             }
         }
-        // Sign extend if needed
         if shift < 64 && (byte & 0x40) != 0 {
             result |= !0i64 << shift;
         }
         Ok(result)
     }
 
-    // Read a null-terminated UTF-8 string.
     pub fn read_cstring(&mut self) -> Result<String> {
         let start = self.pos;
         while self.pos < self.data.len() && self.data[self.pos] != 0 {
@@ -153,11 +149,10 @@ impl<'a> ByteReader<'a> {
             return Err(Error::Parse("unterminated string".to_string()));
         }
         let bytes = &self.data[start..self.pos];
-        self.pos += 1; // skip null terminator
+        self.pos += 1;
         Ok(String::from_utf8_lossy(bytes).into_owned())
     }
 
-    // Read a length-prefixed string (LEB128 length, then UTF-8 bytes).
     pub fn read_length_prefixed_string(&mut self) -> Result<String> {
         let len = self.read_uleb128()? as usize;
         if len == 0 {

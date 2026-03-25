@@ -1,9 +1,22 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
+use std::collections::BTreeMap;
 
-/// Global analysis result containing inferred information for all functions.
+// A link between two function parameters, used for cross-function name propagation.
+// When function A passes its parameter `src_param` to function B's parameter `dst_param`,
+// the name inferred for one can propagate to the other.
+#[derive(Clone, Copy, Debug)]
+pub struct ParamLink {
+    pub src_func: u32,
+    pub src_param: u32,
+    pub dst_func: u32,
+    pub dst_param: u32,
+}
+
 pub struct GlobalAnalysis {
-    pub param_names: HashMap<u32, Vec<Option<String>>>, // FunctionID -> [Param Names]
-    pub param_links: Vec<((u32, u32), (u32, u32))>,
+    pub param_names: BTreeMap<u32, Vec<Option<String>>>, // FunctionID -> [Param Names]
+    pub param_links: Vec<ParamLink>,
+    pub graph: crate::analysis::ipa::graph::CallGraph,
+    pub dead_code: HashSet<u32>,
 }
 
 impl Default for GlobalAnalysis {
@@ -15,8 +28,10 @@ impl Default for GlobalAnalysis {
 impl GlobalAnalysis {
     pub fn new() -> Self {
         Self {
-            param_names: HashMap::new(),
+            param_names: BTreeMap::new(),
             param_links: Vec::new(),
+            graph: crate::analysis::ipa::graph::CallGraph::new(),
+            dead_code: HashSet::new(),
         }
     }
 }

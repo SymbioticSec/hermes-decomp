@@ -1,7 +1,7 @@
-use crate::ir::{Statement, Expression, Value, Constant};
 use super::expressions::simplify_expr;
+use crate::ir::{Constant, Expression, Statement, Value};
 
-/// Apply advanced logic simplifications to statements.
+// Apply advanced logic simplifications to statements.
 pub fn simplify_logic_advanced(stmts: Vec<Statement>) -> Vec<Statement> {
     stmts.into_iter().map(simplify_stmt).collect()
 }
@@ -20,7 +20,11 @@ fn simplify_stmt(stmt: Statement) -> Statement {
         },
         Statement::Return(Some(e)) => Statement::Return(Some(simplify_expr(e))),
         Statement::Throw(e) => Statement::Throw(simplify_expr(e)),
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             let simplified_cond = simplify_expr(condition);
 
             // If condition is constant, we can eliminate the branch
@@ -59,31 +63,56 @@ fn simplify_stmt(stmt: Statement) -> Statement {
             body: simplify_logic_advanced(body),
             condition: simplify_expr(condition),
         },
-        Statement::For { init, condition, update, body } => Statement::For {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
             init: init.map(|s| Box::new(simplify_stmt(*s))),
             condition: condition.map(simplify_expr),
             update: update.map(|s| Box::new(simplify_stmt(*s))),
             body: simplify_logic_advanced(body),
         },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => Statement::ForOf {
             variable,
             iterable: simplify_expr(iterable),
             body: simplify_logic_advanced(body),
         },
-        Statement::ForIn { variable, object, body } => Statement::ForIn {
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => Statement::ForIn {
             variable,
             object: simplify_expr(object),
             body: simplify_logic_advanced(body),
         },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
             try_body: simplify_logic_advanced(try_body),
             catch_param,
             catch_body: simplify_logic_advanced(catch_body),
             finally_body: simplify_logic_advanced(finally_body),
         },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => Statement::Switch {
             discriminant: simplify_expr(discriminant),
-            cases: cases.into_iter().map(|(e, stmts)| (simplify_expr(e), simplify_logic_advanced(stmts))).collect(),
+            cases: cases
+                .into_iter()
+                .map(|(e, stmts)| (simplify_expr(e), simplify_logic_advanced(stmts)))
+                .collect(),
             default: default.map(simplify_logic_advanced),
         },
         Statement::Block(stmts) => Statement::Block(simplify_logic_advanced(stmts)),

@@ -1,7 +1,7 @@
+use crate::cli_args::{FunctionLayoutArg, LayoutArg};
+use hbc_decomp::{BytecodeFile, BytecodeFormat, FunctionHeaderLayout, HeaderLayout};
 use std::fs;
 use std::path::PathBuf;
-use hbc_decomp::{BytecodeFile, BytecodeFormat, FunctionHeaderLayout, HeaderLayout};
-use crate::cli_args::{LayoutArg, FunctionLayoutArg};
 
 pub fn load_file(
     input: &PathBuf,
@@ -32,7 +32,10 @@ pub fn load_file_with_bytes(
     Ok((file, bytes))
 }
 
-pub fn resolve_function_layout(layout: LayoutArg, function_layout: FunctionLayoutArg) -> FunctionHeaderLayout {
+pub fn resolve_function_layout(
+    layout: LayoutArg,
+    function_layout: FunctionLayoutArg,
+) -> FunctionHeaderLayout {
     match function_layout {
         FunctionLayoutArg::Legacy16 => FunctionHeaderLayout::Legacy16,
         FunctionLayoutArg::Modern12 => FunctionHeaderLayout::Modern12,
@@ -58,7 +61,10 @@ pub fn load_format(
     Ok(format)
 }
 
-pub fn write_output(output: Option<PathBuf>, content: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn write_output(
+    output: Option<PathBuf>,
+    content: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = output {
         fs::write(path, content)?;
     } else {

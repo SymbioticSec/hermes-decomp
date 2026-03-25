@@ -1,7 +1,7 @@
 // Opcode handlers for load/store operations.
 
+use crate::ir::{AssignTarget, Constant, Expression, Statement, Value};
 use crate::{BytecodeFile, Instruction};
-use crate::ir::{Expression, Value, Constant, Statement, AssignTarget};
 
 // Handle load constant opcodes.
 pub fn handle_load_const(
@@ -37,7 +37,10 @@ pub fn handle_load_const(
         "LoadConstString" | "LoadConstStringLongIndex" => {
             let idx = inst.operands.get(1)?.value.as_u32()?;
             if resolve_strings {
-                let s = file.string_at(idx).map(|e| e.value.clone()).unwrap_or_default();
+                let s = file
+                    .string_at(idx)
+                    .map(|e| e.value.clone())
+                    .unwrap_or_default();
                 Expression::constant(Constant::String(s))
             } else {
                 Expression::constant(Constant::String(format!("<string:{idx}>")))
@@ -113,12 +116,17 @@ pub fn handle_declare_global(
 ) -> Option<Statement> {
     let idx = inst.operands.first()?.value.as_u32()?;
     let name = if resolve_strings {
-        file.string_at(idx).map(|e| e.value.clone()).unwrap_or_else(|| format!("var{idx}"))
+        file.string_at(idx)
+            .map(|e| e.value.clone())
+            .unwrap_or_else(|| format!("var{idx}"))
     } else {
         format!("var{idx}")
     };
 
-    Some(Statement::var_stmt(name, Expression::constant(Constant::Undefined)))
+    Some(Statement::var_stmt(
+        name,
+        Expression::constant(Constant::Undefined),
+    ))
 }
 
 // Helper to get register number from operand.

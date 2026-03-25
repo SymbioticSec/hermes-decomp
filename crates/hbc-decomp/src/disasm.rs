@@ -64,15 +64,11 @@ pub fn disassemble_all(
             .string_at(header.function_name())
             .map(|entry| entry.value.as_str())
             .unwrap_or("");
-            
+
         let header_str = if name.is_empty() {
             format!("function {function_id}:")
         } else {
-            format!(
-                "function {} ({}):",
-                function_id,
-                escape_js_string(name)
-            )
+            format!("function {} ({}):", function_id, escape_js_string(name))
         };
 
         if options.enable_color {
@@ -92,7 +88,10 @@ pub fn disassemble_all(
     Ok(out)
 }
 
-pub fn collect_label_offsets(instructions: &[Instruction], format: &BytecodeFormat) -> BTreeSet<u32> {
+pub fn collect_label_offsets(
+    instructions: &[Instruction],
+    format: &BytecodeFormat,
+) -> BTreeSet<u32> {
     let mut labels = BTreeSet::new();
     for insn in instructions {
         let def = match format.definitions.get(insn.opcode as usize) {
@@ -140,7 +139,7 @@ fn format_instruction(
             line.push_str(&offset_str);
         }
     }
-    
+
     if options.enable_color {
         line.push_str(&def.name.blue().to_string());
     } else {
@@ -174,8 +173,12 @@ fn format_operand(
                 OperandValue::U32(v) => format!("r{v}"),
                 _ => "r?".to_string(),
             };
-            if options.enable_color { s.red().to_string() } else { s }
-        },
+            if options.enable_color {
+                s.red().to_string()
+            } else {
+                s
+            }
+        }
         OperandType::Addr8 | OperandType::Addr32 => {
             let s = match operand.value.as_i32() {
                 Some(rel) => {
@@ -184,24 +187,39 @@ fn format_operand(
                 }
                 None => "L?".to_string(),
             };
-            if options.enable_color { s.yellow().to_string() } else { s }
-        },
+            if options.enable_color {
+                s.yellow().to_string()
+            } else {
+                s
+            }
+        }
         OperandType::UInt8S | OperandType::UInt16S | OperandType::UInt32S => {
             if options.resolve_strings {
                 if let Some(id) = operand.value.as_u32() {
                     if let Some(entry) = file.string_at(id) {
-                         let s = escape_js_string(&entry.value);
-                         let quoted = format!("\"{s}\"");
-                         if options.enable_color { return quoted.green().to_string(); } else { return quoted; }
+                        let quoted = escape_js_string(&entry.value);
+                        if options.enable_color {
+                            return quoted.green().to_string();
+                        } else {
+                            return quoted;
+                        }
                     }
                 }
             }
             let s = format_operand_value(&operand.value);
-            if options.enable_color { s.purple().to_string() } else { s }
+            if options.enable_color {
+                s.purple().to_string()
+            } else {
+                s
+            }
         }
         _ => {
             let s = format_operand_value(&operand.value);
-            if options.enable_color { s.purple().to_string() } else { s }
+            if options.enable_color {
+                s.purple().to_string()
+            } else {
+                s
+            }
         }
     }
 }

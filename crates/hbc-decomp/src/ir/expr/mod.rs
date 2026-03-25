@@ -1,13 +1,10 @@
-// Expression types for the IR.
-
+pub mod display;
 mod ops;
-mod display;
 
 pub use ops::*;
 
 use super::types::{Constant, FunctionId, Value};
 
-// Property access key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PropertyKey {
     Ident(String),
@@ -16,36 +13,80 @@ pub enum PropertyKey {
     Index(i64),
 }
 
-// An expression in the IR.
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expression {
     Value(Value),
-    Binary { op: BinaryOp, left: Box<Expression>, right: Box<Expression> },
-    Unary { op: UnaryOp, operand: Box<Expression> },
-    Conditional { condition: Box<Expression>, then_expr: Box<Expression>, else_expr: Box<Expression> },
-    Member { object: Box<Expression>, property: PropertyKey, optional: bool },
-    Call { callee: Box<Expression>, arguments: Vec<Expression> },
-    New { callee: Box<Expression>, arguments: Vec<Expression> },
-    Array { elements: Vec<Option<Expression>> },
-    Object { properties: Vec<ObjectProperty> },
-    Function { id: FunctionId, name: Option<String>, is_arrow: bool, is_async: bool, is_generator: bool },
-    Assignment { target: Box<Expression>, value: Box<Expression> },
-    // Spread operator: ...expr
+    Binary {
+        op: BinaryOp,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    Unary {
+        op: UnaryOp,
+        operand: Box<Expression>,
+    },
+    Conditional {
+        condition: Box<Expression>,
+        then_expr: Box<Expression>,
+        else_expr: Box<Expression>,
+    },
+    Member {
+        object: Box<Expression>,
+        property: PropertyKey,
+        optional: bool,
+    },
+    Call {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
+    New {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
+    Array {
+        elements: Vec<Option<Expression>>,
+    },
+    Object {
+        properties: Vec<ObjectProperty>,
+    },
+    Function {
+        id: FunctionId,
+        name: Option<String>,
+        is_arrow: bool,
+        is_async: bool,
+        is_generator: bool,
+    },
+    Assignment {
+        target: Box<Expression>,
+        value: Box<Expression>,
+    },
     Spread(Box<Expression>),
-    // Template literal: `str1 ${expr1} str2 ${expr2}`
-    TemplateLiteral { quasis: Vec<String>, expressions: Vec<Expression> },
-    // Regular expression literal
-    RegExp { pattern: String, flags: String },
-    // Yield expression: yield value (in generators)
-    Yield { value: Box<Expression>, delegate: bool },
-    // Await expression: await promise (in async functions)
+    TemplateLiteral {
+        quasis: Vec<String>,
+        expressions: Vec<Expression>,
+    },
+    RegExp {
+        pattern: String,
+        flags: String,
+    },
+    Yield {
+        value: Box<Expression>,
+        delegate: bool,
+    },
     Await(Box<Expression>),
-    Unknown { opcode: String, operands: Vec<String> },
+    JSXElement {
+        tag: String,
+        attributes: Vec<(String, Expression)>,
+        children: Vec<Expression>,
+    },
+    Unknown {
+        opcode: String,
+        operands: Vec<String>,
+    },
 }
 
-// Object property.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ObjectProperty {
     pub key: PropertyKey,
@@ -62,11 +103,18 @@ impl Expression {
     }
 
     pub fn binary(op: BinaryOp, left: Expression, right: Expression) -> Self {
-        Expression::Binary { op, left: Box::new(left), right: Box::new(right) }
+        Expression::Binary {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+        }
     }
 
     pub fn unary(op: UnaryOp, operand: Expression) -> Self {
-        Expression::Unary { op, operand: Box::new(operand) }
+        Expression::Unary {
+            op,
+            operand: Box::new(operand),
+        }
     }
 
     pub fn member(object: Expression, prop: &str) -> Self {
@@ -86,7 +134,10 @@ impl Expression {
     }
 
     pub fn call(callee: Expression, arguments: Vec<Expression>) -> Self {
-        Expression::Call { callee: Box::new(callee), arguments }
+        Expression::Call {
+            callee: Box::new(callee),
+            arguments,
+        }
     }
 
     pub fn is_simple(&self) -> bool {
@@ -100,29 +151,43 @@ impl Expression {
                 left.has_side_effects() || right.has_side_effects()
             }
             Expression::Unary { operand, .. } => operand.has_side_effects(),
-            Expression::Member { object, property, .. } => {
-                object.has_side_effects() || match property {
-                    PropertyKey::Computed(k) => k.has_side_effects(),
-                    _ => false,
-                }
+            Expression::Member {
+                object, property, ..
+            } => {
+                object.has_side_effects()
+                    || match property {
+                        PropertyKey::Computed(k) => k.has_side_effects(),
+                        _ => false,
+                    }
             }
             Expression::Array { elements } => {
                 elements.iter().flatten().any(|e| e.has_side_effects())
             }
-             Expression::Object { properties } => {
-                properties.iter().any(|p| p.value.has_side_effects() || match &p.key {
-                    PropertyKey::Computed(k) => k.has_side_effects(),
-                    _ => false
-                })
-            }
-            Expression::Conditional { condition, then_expr, else_expr } => {
-                condition.has_side_effects() || then_expr.has_side_effects() || else_expr.has_side_effects()
+            Expression::Object { properties } => properties.iter().any(|p| {
+                p.value.has_side_effects()
+                    || match &p.key {
+                        PropertyKey::Computed(k) => k.has_side_effects(),
+                        _ => false,
+                    }
+            }),
+            Expression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                condition.has_side_effects()
+                    || then_expr.has_side_effects()
+                    || else_expr.has_side_effects()
             }
             Expression::TemplateLiteral { expressions, .. } => {
                 expressions.iter().any(|e| e.has_side_effects())
             }
-            Expression::Call { .. } | Expression::New { .. } | Expression::Assignment { .. } 
-            | Expression::Yield { .. } | Expression::Await(_) | Expression::Unknown { .. } => true,
+            Expression::Call { .. }
+            | Expression::New { .. }
+            | Expression::Assignment { .. }
+            | Expression::Yield { .. }
+            | Expression::Await(_)
+            | Expression::Unknown { .. } => true,
             _ => false,
         }
     }

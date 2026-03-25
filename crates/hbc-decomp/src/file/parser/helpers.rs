@@ -1,9 +1,9 @@
-use crate::error::Result;
-use crate::file::{LiteralValue, BytecodeFile};
 use super::buffer::read_buffer_series;
+use crate::error::Result;
+use crate::file::{BytecodeFile, LiteralValue};
 
-/// Get BigInt value at the given index.
-/// Returns the string representation of the BigInt.
+// Get BigInt value at the given index.
+// Returns the string representation of the BigInt.
 pub fn bigint_at(file: &BytecodeFile, bigint_id: u32) -> Option<String> {
     let entry = file.big_int_table.get(bigint_id as usize)?;
     let start = entry.offset as usize;
@@ -15,7 +15,7 @@ pub fn bigint_at(file: &BytecodeFile, bigint_id: u32) -> Option<String> {
 
     let bytes = &file.big_int_storage[start..end];
     // BigInt is stored as a sequence of bytes representing the value
-    
+
     if bytes.is_empty() {
         return Some("0".to_string());
     }
@@ -43,7 +43,11 @@ pub fn bigint_at(file: &BytecodeFile, bigint_id: u32) -> Option<String> {
     Some(format!("0x{hex}"))
 }
 
-pub fn read_array_buffer_series(file: &BytecodeFile, offset: u32, count: u32) -> Result<Vec<LiteralValue>> {
+pub fn read_array_buffer_series(
+    file: &BytecodeFile,
+    offset: u32,
+    count: u32,
+) -> Result<Vec<LiteralValue>> {
     if !file.array_buffer.is_empty() {
         read_buffer_series(file, &file.array_buffer, offset, count)
     } else {
@@ -51,11 +55,19 @@ pub fn read_array_buffer_series(file: &BytecodeFile, offset: u32, count: u32) ->
     }
 }
 
-pub fn read_key_buffer_series(file: &BytecodeFile, offset: u32, count: u32) -> Result<Vec<LiteralValue>> {
+pub fn read_key_buffer_series(
+    file: &BytecodeFile,
+    offset: u32,
+    count: u32,
+) -> Result<Vec<LiteralValue>> {
     read_buffer_series(file, &file.obj_key_buffer, offset, count)
 }
 
-pub fn read_value_buffer_series(file: &BytecodeFile, offset: u32, count: u32) -> Result<Vec<LiteralValue>> {
+pub fn read_value_buffer_series(
+    file: &BytecodeFile,
+    offset: u32,
+    count: u32,
+) -> Result<Vec<LiteralValue>> {
     if !file.obj_value_buffer.is_empty() {
         read_buffer_series(file, &file.obj_value_buffer, offset, count)
     } else {

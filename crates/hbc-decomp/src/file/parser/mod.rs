@@ -1,17 +1,15 @@
 use crate::error::Result;
-use crate::format::{
-    FunctionHeaderLayout, HeaderLayout,
-};
-use crate::opcode::BytecodeFormat;
 use crate::file::{BytecodeFile, Instruction, LiteralValue, ShapeTableEntry, StringTableEntry};
+use crate::format::{FunctionHeaderLayout, HeaderLayout};
+use crate::opcode::BytecodeFormat;
 
 pub mod buffer;
 pub mod function;
 pub mod header;
-pub mod table;
+mod helpers;
 mod instructions;
 mod parsing;
-mod helpers;
+pub mod table;
 
 impl BytecodeFile {
     pub fn parse_auto(bytes: &[u8]) -> Result<Self> {
@@ -42,7 +40,7 @@ impl BytecodeFile {
         self.obj_shape_table.get(shape_id as usize).copied()
     }
 
-    /// Get BigInt value at the given index.
+    // Get BigInt value at the given index.
     pub fn bigint_at(&self, bigint_id: u32) -> Option<String> {
         helpers::bigint_at(self, bigint_id)
     }

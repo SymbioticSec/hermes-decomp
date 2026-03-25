@@ -1,12 +1,10 @@
-// Control Flow Graph (CFG) for the IR.
-
-use std::collections::HashMap;
+use std::collections::HashSet;
 use super::{BlockId, Statement, Terminator};
+use std::collections::BTreeMap;
 
 pub mod dot;
 pub use dot::generate_dot;
 
-// A basic block in the CFG.
 #[derive(Debug, Clone)]
 pub struct BasicBlock {
     pub id: BlockId,
@@ -36,24 +34,33 @@ impl BasicBlock {
     }
 }
 
-// Control Flow Graph.
+#[derive(Debug, Clone)]
+pub struct CfgExceptionHandler {
+    pub try_block_start: BlockId,
+    pub catch_block: BlockId,
+}
+
 #[derive(Debug)]
 pub struct CFG {
     pub entry: BlockId,
-    blocks: HashMap<BlockId, BasicBlock>,
+    blocks: BTreeMap<BlockId, BasicBlock>,
     next_id: u32,
+    pub exception_handlers: Vec<CfgExceptionHandler>,
+    pub offset_to_block: BTreeMap<u32, BlockId>,
 }
 
 impl CFG {
     pub fn new() -> Self {
         let entry = BlockId(0);
-        let mut blocks = HashMap::new();
+        let mut blocks = BTreeMap::new();
         blocks.insert(entry, BasicBlock::new(entry));
 
         CFG {
             entry,
             blocks,
             next_id: 1,
+            exception_handlers: Vec::new(),
+            offset_to_block: BTreeMap::new(),
         }
     }
 
@@ -73,11 +80,15 @@ impl CFG {
     }
 
     pub fn entry_block(&self) -> &BasicBlock {
-        self.blocks.get(&self.entry).expect("entry block must exist")
+        self.blocks
+            .get(&self.entry)
+            .expect("entry block must exist")
     }
 
     pub fn entry_block_mut(&mut self) -> &mut BasicBlock {
-        self.blocks.get_mut(&self.entry).expect("entry block must exist")
+        self.blocks
+            .get_mut(&self.entry)
+            .expect("entry block must exist")
     }
 
     pub fn blocks(&self) -> impl Iterator<Item = &BasicBlock> {
@@ -109,7 +120,7 @@ impl CFG {
     }
 
     pub fn postorder(&self) -> Vec<BlockId> {
-        let mut visited = std::collections::HashSet::new();
+        let mut visited = HashSet::new();
         let mut result = Vec::new();
         self.postorder_visit(self.entry, &mut visited, &mut result);
         result
@@ -118,7 +129,7 @@ impl CFG {
     fn postorder_visit(
         &self,
         block: BlockId,
-        visited: &mut std::collections::HashSet<BlockId>,
+        visited: &mut HashSet<BlockId>,
         result: &mut Vec<BlockId>,
     ) {
         if !visited.insert(block) {

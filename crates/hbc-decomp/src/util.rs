@@ -1,6 +1,5 @@
-pub fn escape_js_string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
+pub fn escape_js_string_bare(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
     for ch in value.chars() {
         match ch {
             '"' => out.push_str("\\\""),
@@ -20,8 +19,11 @@ pub fn escape_js_string(value: &str) -> String {
             }
         }
     }
-    out.push('"');
     out
+}
+
+pub fn escape_js_string(value: &str) -> String {
+    format!("\"{}\"", escape_js_string_bare(value))
 }
 
 pub fn is_valid_identifier(value: &str) -> bool {
@@ -50,4 +52,42 @@ fn is_identifier_start(ch: char) -> bool {
 
 fn is_identifier_part(ch: char) -> bool {
     is_identifier_start(ch) || ch.is_ascii_digit()
+}
+
+// Sanitize a string to be a valid JavaScript identifier:
+// - `@@symbol` -> `Symbol_symbol` (Hermes internal symbols)
+// - Invalid characters -> replaced with `_`
+// - Leading digits -> prefixed with `_`
+pub fn sanitize_identifier(name: &str) -> String {
+    if let Some(symbol_name) = name.strip_prefix("@@") {
+        return format!("Symbol_{symbol_name}");
+    }
+
+    if is_valid_identifier(name) {
+        return name.to_string();
+    }
+
+    let mut result = String::with_capacity(name.len());
+    for (i, ch) in name.chars().enumerate() {
+        if i == 0 {
+            if is_identifier_start(ch) {
+                result.push(ch);
+            } else if ch.is_ascii_digit() {
+                result.push('_');
+                result.push(ch);
+            } else {
+                result.push('_');
+            }
+        } else if is_identifier_part(ch) {
+            result.push(ch);
+        } else {
+            result.push('_');
+        }
+    }
+
+    if result.is_empty() {
+        result.push_str("_unnamed");
+    }
+
+    result
 }

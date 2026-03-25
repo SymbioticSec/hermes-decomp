@@ -64,9 +64,7 @@ impl OperandType {
             OperandType::Reg32 | OperandType::UInt32 | OperandType::UInt32S => {
                 OperandValue::U32(reader.read_u32()?)
             }
-            OperandType::UInt16 | OperandType::UInt16S => {
-                OperandValue::U16(reader.read_u16()?)
-            }
+            OperandType::UInt16 | OperandType::UInt16S => OperandValue::U16(reader.read_u16()?),
             OperandType::Addr8 => OperandValue::I8(reader.read_i8()?),
             OperandType::Addr32 => OperandValue::I32(reader.read_i32()?),
             OperandType::Imm32 => OperandValue::I32(reader.read_i32()?),

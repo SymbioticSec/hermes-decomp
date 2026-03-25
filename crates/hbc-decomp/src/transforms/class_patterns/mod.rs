@@ -1,11 +1,10 @@
-mod utils;
-mod builder;
 mod analyzer;
+mod builder;
+mod utils;
 
 use crate::ir::Statement;
 use analyzer::ClassAnalyzer;
 
-/// Main entry point for class pattern detection.
 pub fn detect_class_patterns(
     stmts: Vec<Statement>,
     file: &crate::BytecodeFile,

@@ -2,7 +2,6 @@ use crate::error::{Error, Result};
 use crate::format::{BytecodeHeader, FunctionHeaderLayout, HeaderLayout};
 use crate::io::ByteReader;
 
-
 pub const MAGIC: u64 = 0x1F1903C103BC1FC6;
 pub const HEADER_SIZE: usize = 128;
 pub const LEGACY_BIGINT_MIN_VERSION: u32 = 87;

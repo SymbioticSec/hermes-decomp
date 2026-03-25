@@ -1,11 +1,18 @@
 // Jump target analysis for basic block construction.
 
-use std::collections::BTreeSet;
-use crate::{BytecodeFormat, Instruction, BytecodeFile};
+use crate::file::ExceptionHandler;
 use crate::opcode::OperandType;
+use crate::{BytecodeFile, BytecodeFormat, Instruction};
+use std::collections::BTreeSet;
 
-// Analyze instructions to find all jump targets (block boundaries).
-pub fn find_block_starts(insts: &[Instruction], format: &BytecodeFormat, file: &BytecodeFile) -> BTreeSet<u32> {
+// Find block starts, including exception handler targets as block boundaries.
+pub fn find_block_starts_with_handlers(
+    insts: &[Instruction],
+    format: &BytecodeFormat,
+    file: &BytecodeFile,
+    exception_handlers: &[ExceptionHandler],
+    func_bytecode_offset: u32,
+) -> BTreeSet<u32> {
     let mut targets = BTreeSet::new();
 
     // First instruction is always a block start
@@ -46,32 +53,69 @@ pub fn find_block_starts(insts: &[Instruction], format: &BytecodeFormat, file: &
             }
         }
 
-        // Handle SwitchImm specially
-        if name == "SwitchImm" {
-             if let (Some(default_op), Some(min_op), Some(max_op)) = (
+        // Handle SwitchImm/UIntSwitchImm specially (same operand layout)
+        if name == "SwitchImm" || name == "UIntSwitchImm" {
+            // Operands: Reg8 val, UInt32 jmpTableIdx, Addr32 defaultAddr, UInt32 minVal, UInt32 maxVal
+            if let (Some(jmp_table_op), Some(default_op), Some(min_op), Some(max_op)) = (
                 inst.operands.get(1),
                 inst.operands.get(2),
-                inst.operands.get(3)
+                inst.operands.get(3),
+                inst.operands.get(4),
             ) {
-                if let (Some(default_offset), Some(min_val), Some(max_val)) = (
+                if let (Some(jmp_table_idx), Some(default_offset), Some(min_val), Some(max_val)) = (
+                    jmp_table_op.value.as_u32(),
                     default_op.value.as_i32(),
                     min_op.value.as_u32(),
-                    max_op.value.as_u32()
+                    max_op.value.as_u32(),
                 ) {
                     // Default target
                     let default_target = (inst.offset as i32 + default_offset) as u32;
                     targets.insert(default_target);
 
-                    // Read jump table
-                    let end_of_inst = inst.offset as usize + inst.length as usize;
-                    let table_start = (end_of_inst + 3) & !3;
+                    // Read jump table: jmpTableIdx is a byte offset from the SwitchImm instruction
+                    let table_start_local = inst.offset as usize + jmp_table_idx as usize;
+                    let table_start_global = table_start_local + func_bytecode_offset as usize;
                     let count = (max_val - min_val + 1) as usize;
 
-                    if table_start + count * 4 <= file.instructions.len() {
+                    if table_start_global + count * 4 <= file.instructions.len() {
                         use crate::io::ByteReader;
-                        let mut reader = ByteReader::new(&file.instructions[table_start..]);
+                        let mut reader = ByteReader::new(&file.instructions[table_start_global..]);
                         for _ in 0..count {
-                             if let Ok(rel_offset) = reader.read_i32() {
+                            if let Ok(rel_offset) = reader.read_i32() {
+                                let target = (inst.offset as i32 + rel_offset) as u32;
+                                targets.insert(target);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Handle StringSwitchImm (different operand layout: numCases instead of min/max)
+        if name == "StringSwitchImm" {
+            // Operands: Reg8 val, UInt32 jmpTableIdx, UInt32 numCases, Addr32 defaultAddr, UInt32 stringTableOffset
+            if let (Some(jmp_table_op), Some(num_cases_op), Some(default_op)) = (
+                inst.operands.get(1),
+                inst.operands.get(2),
+                inst.operands.get(3),
+            ) {
+                if let (Some(jmp_table_idx), Some(num_cases), Some(default_offset)) = (
+                    jmp_table_op.value.as_u32(),
+                    num_cases_op.value.as_u32(),
+                    default_op.value.as_i32(),
+                ) {
+                    let default_target = (inst.offset as i32 + default_offset) as u32;
+                    targets.insert(default_target);
+
+                    let table_start_local = inst.offset as usize + jmp_table_idx as usize;
+                    let table_start_global = table_start_local + func_bytecode_offset as usize;
+                    let count = num_cases as usize;
+
+                    if table_start_global + count * 4 <= file.instructions.len() {
+                        use crate::io::ByteReader;
+                        let mut reader = ByteReader::new(&file.instructions[table_start_global..]);
+                        for _ in 0..count {
+                            if let Ok(rel_offset) = reader.read_i32() {
                                 let target = (inst.offset as i32 + rel_offset) as u32;
                                 targets.insert(target);
                             }
@@ -82,6 +126,16 @@ pub fn find_block_starts(insts: &[Instruction], format: &BytecodeFormat, file: &
         }
     }
 
+    // Add exception handler targets as block starts
+    for handler in exception_handlers {
+        targets.insert(handler.target);
+        // Also mark try region start and end as block boundaries
+        targets.insert(handler.start);
+        if handler.end > 0 {
+            targets.insert(handler.end);
+        }
+    }
+
     targets
 }
 
@@ -89,15 +143,32 @@ pub fn find_block_starts(insts: &[Instruction], format: &BytecodeFormat, file: &
 pub fn is_conditional_jump(name: &str) -> bool {
     matches!(
         name,
-        "JmpTrue" | "JmpTrueLong" | "JmpFalse" | "JmpFalseLong"
-            | "JEqual" | "JNotEqual" | "JStrictEqual" | "JStrictNotEqual"
-            | "JLess" | "JLessEqual" | "JGreater" | "JGreaterEqual"
-            | "JLessN" | "JLessEqualN" | "JGreaterN" | "JGreaterEqualN"
-            | "JNotLess" | "JNotLessEqual" | "JNotGreater" | "JNotGreaterEqual"
-            | "JNotLessN" | "JNotLessEqualN" | "JNotGreaterN" | "JNotGreaterEqualN"
+        "JmpTrue"
+            | "JmpTrueLong"
+            | "JmpFalse"
+            | "JmpFalseLong"
+            | "JEqual"
+            | "JNotEqual"
+            | "JStrictEqual"
+            | "JStrictNotEqual"
+            | "JLess"
+            | "JLessEqual"
+            | "JGreater"
+            | "JGreaterEqual"
+            | "JLessN"
+            | "JLessEqualN"
+            | "JGreaterN"
+            | "JGreaterEqualN"
+            | "JNotLess"
+            | "JNotLessEqual"
+            | "JNotGreater"
+            | "JNotGreaterEqual"
+            | "JNotLessN"
+            | "JNotLessEqualN"
+            | "JNotGreaterN"
+            | "JNotGreaterEqualN"
     )
 }
-
 
 #[cfg(test)]
 mod tests {

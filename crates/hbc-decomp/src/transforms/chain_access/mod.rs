@@ -1,33 +1,31 @@
-mod usage;
 mod inlining;
+mod usage;
 
-use crate::ir::{Statement, Expression, AssignTarget};
-use std::collections::HashMap;
-use usage::{count_register_uses, is_chain_candidate};
+use std::collections::HashSet;
+use crate::ir::{map_nested_bodies, AssignTarget, Expression, Statement};
 use inlining::inline_chains_in_stmt;
+use std::collections::BTreeMap;
+use usage::{count_register_uses, is_chain_candidate};
 
-/// Optimize member access chains by inlining single-use intermediate registers.
 pub fn optimize_chain_access(stmts: Vec<Statement>) -> Vec<Statement> {
-    // First pass: count uses of each register
-    let mut use_count: HashMap<u32, usize> = HashMap::new();
-    let mut def_map: HashMap<u32, (usize, Expression)> = HashMap::new();
+    let mut use_count: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut def_map: BTreeMap<u32, (usize, Expression)> = BTreeMap::new();
 
     for (idx, stmt) in stmts.iter().enumerate() {
         count_register_uses(stmt, &mut use_count);
 
-        // Track member access definitions
-        if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
+        if let Statement::Assign {
+            target: AssignTarget::Register(r),
+            value,
+        } = stmt
+        {
             if is_chain_candidate(value) {
                 def_map.insert(*r, (idx, value.clone()));
             }
         }
     }
 
-    // Find registers that are:
-    // 1. Defined with a member access
-    // 2. Used exactly once
-    // 3. The use is also a member access or a return/expression
-    let mut to_inline: HashMap<u32, Expression> = HashMap::new();
+    let mut to_inline: BTreeMap<u32, Expression> = BTreeMap::new();
 
     for (reg, (_, expr)) in &def_map {
         if use_count.get(reg).copied().unwrap_or(0) == 1 {
@@ -35,11 +33,9 @@ pub fn optimize_chain_access(stmts: Vec<Statement>) -> Vec<Statement> {
         }
     }
 
-    // Second pass: inline the chains
     let mut result: Vec<Statement> = Vec::with_capacity(stmts.len());
-    let mut to_remove: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut to_remove: HashSet<usize> = HashSet::new();
 
-    // Mark definitions for removal if they will be inlined
     for (reg, (idx, _)) in &def_map {
         if to_inline.contains_key(reg) {
             to_remove.insert(*idx);
@@ -55,61 +51,17 @@ pub fn optimize_chain_access(stmts: Vec<Statement>) -> Vec<Statement> {
         result.push(new_stmt);
     }
 
-    // Recursively process nested statements
     result.into_iter().map(process_nested_chains).collect()
 }
 
 fn process_nested_chains(stmt: Statement) -> Statement {
-    match stmt {
-        Statement::If { condition, then_body, else_body } => Statement::If {
-            condition,
-            then_body: optimize_chain_access(then_body),
-            else_body: optimize_chain_access(else_body),
-        },
-        Statement::While { condition, body } => Statement::While {
-            condition,
-            body: optimize_chain_access(body),
-        },
-        Statement::DoWhile { body, condition } => Statement::DoWhile {
-            body: optimize_chain_access(body),
-            condition,
-        },
-        Statement::For { init, condition, update, body } => Statement::For {
-            init: init.map(|s| Box::new(process_nested_chains(*s))),
-            condition,
-            update: update.map(|s| Box::new(process_nested_chains(*s))),
-            body: optimize_chain_access(body),
-        },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
-            variable,
-            iterable,
-            body: optimize_chain_access(body),
-        },
-        Statement::ForIn { variable, object, body } => Statement::ForIn {
-            variable,
-            object,
-            body: optimize_chain_access(body),
-        },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
-            try_body: optimize_chain_access(try_body),
-            catch_param,
-            catch_body: optimize_chain_access(catch_body),
-            finally_body: optimize_chain_access(finally_body),
-        },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
-            discriminant,
-            cases: cases.into_iter().map(|(e, stmts)| (e, optimize_chain_access(stmts))).collect(),
-            default: default.map(optimize_chain_access),
-        },
-        Statement::Block(stmts) => Statement::Block(optimize_chain_access(stmts)),
-        other => other,
-    }
+    map_nested_bodies(stmt, optimize_chain_access)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{Statement, Expression, Value, AssignTarget, PropertyKey};
+    use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
 
     #[test]
     fn test_chain_access_inline() {
@@ -139,11 +91,23 @@ mod tests {
 
         // Should be: return obj.a.b;
         assert_eq!(result.len(), 1);
-        if let Statement::Return(Some(Expression::Member { object, property: PropertyKey::Ident(prop), .. })) = &result[0] {
+        if let Statement::Return(Some(Expression::Member {
+            object,
+            property: PropertyKey::Ident(prop),
+            ..
+        })) = &result[0]
+        {
             assert_eq!(prop, "b");
-            if let Expression::Member { object: inner, property: PropertyKey::Ident(inner_prop), .. } = object.as_ref() {
+            if let Expression::Member {
+                object: inner,
+                property: PropertyKey::Ident(inner_prop),
+                ..
+            } = object.as_ref()
+            {
                 assert_eq!(inner_prop, "a");
-                assert!(matches!(inner.as_ref(), Expression::Value(Value::Variable(v)) if v == "obj"));
+                assert!(
+                    matches!(inner.as_ref(), Expression::Value(Value::Variable(v)) if v == "obj")
+                );
             } else {
                 panic!("Expected nested member access");
             }

@@ -1,12 +1,8 @@
-// Copy and constant propagation.
+use crate::ir::{AssignTarget, BlockId, Constant, Expression, PropertyKey, Statement, Value, CFG};
+use std::collections::BTreeMap;
 
-use std::collections::HashMap;
-use crate::ir::{CFG, BlockId, Statement, Expression, Value, AssignTarget, PropertyKey, Constant};
-
-// Configuration for propagation.
 #[derive(Debug, Clone, Default)]
 pub struct PropagationConfig {
-    // Maximum propagation iterations.
     pub max_iterations: usize,
 }
 
@@ -16,9 +12,12 @@ impl PropagationConfig {
     }
 }
 
-// Apply copy and constant propagation to a CFG.
 pub fn propagate(cfg: &mut CFG, config: &PropagationConfig) {
-    let max_iter = if config.max_iterations == 0 { 10 } else { config.max_iterations };
+    let max_iter = if config.max_iterations == 0 {
+        10
+    } else {
+        config.max_iterations
+    };
 
     for _ in 0..max_iter {
         let mut changed = false;
@@ -42,7 +41,7 @@ fn propagate_block(cfg: &mut CFG, block_id: BlockId) -> bool {
     };
 
     // Build map of simple assignments: reg -> value
-    let mut copies: HashMap<u32, Expression> = HashMap::with_capacity(16);
+    let mut copies: BTreeMap<u32, Expression> = BTreeMap::new();
     let mut changed = false;
 
     // Take ownership instead of cloning
@@ -57,7 +56,11 @@ fn propagate_block(cfg: &mut CFG, block_id: BlockId) -> bool {
         }
 
         // Track definitions
-        if let Statement::Assign { target: AssignTarget::Register(r), value } = &substituted {
+        if let Statement::Assign {
+            target: AssignTarget::Register(r),
+            value,
+        } = &substituted
+        {
             if is_propagatable(value) {
                 copies.insert(*r, value.clone());
             } else {
@@ -77,10 +80,24 @@ fn propagate_block(cfg: &mut CFG, block_id: BlockId) -> bool {
 }
 
 fn is_propagatable(expr: &Expression) -> bool {
-    matches!(expr, Expression::Value(_))
+    match expr {
+        Expression::Value(_) => true,
+        // Allow propagation of simple member access on known safe objects
+        // e.g., `Object = globalThis.Object` → inline `globalThis.Object`
+        Expression::Member {
+            object,
+            property: PropertyKey::Ident(_),
+            optional: false,
+        } => matches!(
+            object.as_ref(),
+            Expression::Value(Value::Global)
+                | Expression::Value(Value::Constant(Constant::String(_)))
+        ),
+        _ => false,
+    }
 }
 
-fn substitute_stmt(stmt: &Statement, copies: &HashMap<u32, Expression>) -> Statement {
+fn substitute_stmt(stmt: &Statement, copies: &BTreeMap<u32, Expression>) -> Statement {
     match stmt {
         Statement::Expr(e) => Statement::Expr(substitute_expr(e, copies)),
         Statement::Let { name, value, kind } => Statement::Let {
@@ -98,7 +115,7 @@ fn substitute_stmt(stmt: &Statement, copies: &HashMap<u32, Expression>) -> State
     }
 }
 
-fn substitute_target(target: &AssignTarget, copies: &HashMap<u32, Expression>) -> AssignTarget {
+fn substitute_target(target: &AssignTarget, copies: &BTreeMap<u32, Expression>) -> AssignTarget {
     match target {
         AssignTarget::Index { object, key } => AssignTarget::Index {
             object: substitute_expr(object, copies),
@@ -112,7 +129,7 @@ fn substitute_target(target: &AssignTarget, copies: &HashMap<u32, Expression>) -
     }
 }
 
-fn substitute_expr(expr: &Expression, copies: &HashMap<u32, Expression>) -> Expression {
+fn substitute_expr(expr: &Expression, copies: &BTreeMap<u32, Expression>) -> Expression {
     match expr {
         Expression::Value(Value::Register(r)) => {
             copies.get(r).cloned().unwrap_or_else(|| expr.clone())
@@ -127,13 +144,23 @@ fn substitute_expr(expr: &Expression, copies: &HashMap<u32, Expression>) -> Expr
         }
         Expression::Call { callee, arguments } => Expression::Call {
             callee: Box::new(substitute_expr(callee, copies)),
-            arguments: arguments.iter().map(|a| substitute_expr(a, copies)).collect(),
+            arguments: arguments
+                .iter()
+                .map(|a| substitute_expr(a, copies))
+                .collect(),
         },
         Expression::New { callee, arguments } => Expression::New {
             callee: Box::new(substitute_expr(callee, copies)),
-            arguments: arguments.iter().map(|a| substitute_expr(a, copies)).collect(),
+            arguments: arguments
+                .iter()
+                .map(|a| substitute_expr(a, copies))
+                .collect(),
         },
-        Expression::Member { object, property, optional } => {
+        Expression::Member {
+            object,
+            property,
+            optional,
+        } => {
             let new_obj = substitute_expr(object, copies);
             let new_prop = substitute_property_key(property, copies);
             Expression::Member {
@@ -143,15 +170,25 @@ fn substitute_expr(expr: &Expression, copies: &HashMap<u32, Expression>) -> Expr
             }
         }
         Expression::Array { elements } => Expression::Array {
-            elements: elements.iter().map(|e| e.as_ref().map(|ex| substitute_expr(ex, copies))).collect(),
+            elements: elements
+                .iter()
+                .map(|e| e.as_ref().map(|ex| substitute_expr(ex, copies)))
+                .collect(),
         },
         Expression::Object { properties } => Expression::Object {
-            properties: properties.iter().map(|p| crate::ir::ObjectProperty {
-                key: substitute_property_key(&p.key, copies),
-                value: substitute_expr(&p.value, copies),
-            }).collect(),
+            properties: properties
+                .iter()
+                .map(|p| crate::ir::ObjectProperty {
+                    key: substitute_property_key(&p.key, copies),
+                    value: substitute_expr(&p.value, copies),
+                })
+                .collect(),
         },
-        Expression::Conditional { condition, then_expr, else_expr } => Expression::Conditional {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => Expression::Conditional {
             condition: Box::new(substitute_expr(condition, copies)),
             then_expr: Box::new(substitute_expr(then_expr, copies)),
             else_expr: Box::new(substitute_expr(else_expr, copies)),
@@ -165,7 +202,7 @@ fn substitute_expr(expr: &Expression, copies: &HashMap<u32, Expression>) -> Expr
     }
 }
 
-fn substitute_property_key(key: &PropertyKey, copies: &HashMap<u32, Expression>) -> PropertyKey {
+fn substitute_property_key(key: &PropertyKey, copies: &BTreeMap<u32, Expression>) -> PropertyKey {
     match key {
         PropertyKey::Computed(expr) => {
             let subst = substitute_expr(expr, copies);
@@ -192,8 +229,14 @@ mod tests {
     #[test]
     fn test_constant_propagation() {
         let mut builder = CFGBuilder::new();
-        builder.emit(Statement::assign_reg(0, Expression::constant(Constant::Integer(42))));
-        builder.emit(Statement::assign_reg(1, Expression::Value(Value::Register(0))));
+        builder.emit(Statement::assign_reg(
+            0,
+            Expression::constant(Constant::Integer(42)),
+        ));
+        builder.emit(Statement::assign_reg(
+            1,
+            Expression::Value(Value::Register(0)),
+        ));
         builder.emit_return(Some(Expression::Value(Value::Register(1))));
 
         let mut cfg = builder.finish();

@@ -1,8 +1,8 @@
 // Opcode handlers for arithmetic and binary operations.
 
-use crate::Instruction;
-use crate::ir::{Expression, Value, Statement, AssignTarget, BinaryOp, UnaryOp};
 use super::opcodes_load::{get_reg, reg_expr};
+use crate::ir::{AssignTarget, BinaryOp, Expression, Statement, UnaryOp};
+use crate::Instruction;
 
 // Handle binary arithmetic opcodes.
 pub fn handle_binary_op(name: &str, inst: &Instruction) -> Option<Statement> {
@@ -11,7 +11,7 @@ pub fn handle_binary_op(name: &str, inst: &Instruction) -> Option<Statement> {
     let right = reg_expr(&inst.operands, 2)?;
 
     let op = match name {
-        "Add" | "AddN" => BinaryOp::Add,
+        "Add" | "AddN" | "AddS" => BinaryOp::Add,
         "Sub" | "SubN" => BinaryOp::Sub,
         "Mul" | "MulN" => BinaryOp::Mul,
         "Div" | "DivN" => BinaryOp::Div,
@@ -80,7 +80,11 @@ pub fn handle_inc_dec(name: &str, inst: &Instruction) -> Option<Statement> {
     let src = reg_expr(&inst.operands, 1)?;
 
     let one = Expression::constant(crate::ir::Constant::Integer(1));
-    let op = if name.contains("Inc") { BinaryOp::Add } else { BinaryOp::Sub };
+    let op = if name.contains("Inc") {
+        BinaryOp::Add
+    } else {
+        BinaryOp::Sub
+    };
 
     Some(Statement::Assign {
         target: AssignTarget::Register(dst),
@@ -95,19 +99,27 @@ pub fn handle_coercion(name: &str, inst: &Instruction) -> Option<Statement> {
 
     let value = match name {
         "ToNumber" | "ToNumeric" => {
-            // Number(x)
-            Expression::Call {
-                callee: Box::new(Expression::Value(Value::Global)),
-                arguments: vec![src], // Simplified - should be Number(src)
+            // +x (unary plus coerces to number)
+            Expression::Unary {
+                op: crate::ir::UnaryOp::Plus,
+                operand: Box::new(src),
             }
         }
         "ToInt32" => {
             // (x | 0)
-            Expression::binary(BinaryOp::BitOr, src, Expression::constant(crate::ir::Constant::Integer(0)))
+            Expression::binary(
+                BinaryOp::BitOr,
+                src,
+                Expression::constant(crate::ir::Constant::Integer(0)),
+            )
         }
         "ToUint32" => {
             // (x >>> 0)
-            Expression::binary(BinaryOp::UShr, src, Expression::constant(crate::ir::Constant::Integer(0)))
+            Expression::binary(
+                BinaryOp::UShr,
+                src,
+                Expression::constant(crate::ir::Constant::Integer(0)),
+            )
         }
         "AddEmptyString" => {
             // "" + x

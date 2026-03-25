@@ -1,4 +1,4 @@
-use crate::ir::{Expression, Value, AssignTarget, PropertyKey, MethodKind, Constant};
+use crate::ir::{AssignTarget, Constant, Expression, MethodKind, PropertyKey, Value};
 
 pub fn extract_name(expr: &Expression) -> Option<String> {
     match expr {
@@ -18,23 +18,31 @@ pub fn get_target_name(target: &AssignTarget) -> Option<String> {
 
 pub fn is_likely_class_name(name: &str) -> bool {
     // Class names typically start with uppercase and don't start with 'r' (register)
-    name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && !name.starts_with('r')
+    name.chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false)
+        && !name.starts_with('r')
 }
 
 pub fn is_create_class_call(callee: &Expression) -> bool {
     match callee {
-        Expression::Value(Value::Variable(name)) => {
-            name == "_createClass" || name == "createClass"
-        }
-        Expression::Member { property: PropertyKey::Ident(name), .. } => {
-            name == "_createClass" || name == "createClass"
-        }
+        Expression::Value(Value::Variable(name)) => name == "_createClass" || name == "createClass",
+        Expression::Member {
+            property: PropertyKey::Ident(name),
+            ..
+        } => name == "_createClass" || name == "createClass",
         _ => false,
     }
 }
 
 pub fn is_set_prototype_of_call(callee: &Expression) -> bool {
-    if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } = callee {
+    if let Expression::Member {
+        object,
+        property: PropertyKey::Ident(prop),
+        ..
+    } = callee
+    {
         if prop == "setPrototypeOf" {
             if let Expression::Value(Value::Variable(obj_name)) = object.as_ref() {
                 return obj_name == "Object";
@@ -49,7 +57,12 @@ pub fn is_set_prototype_of_call(callee: &Expression) -> bool {
 }
 
 pub fn is_define_property_call(callee: &Expression) -> bool {
-    if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } = callee {
+    if let Expression::Member {
+        object,
+        property: PropertyKey::Ident(prop),
+        ..
+    } = callee
+    {
         if prop == "defineProperty" {
             if let Expression::Value(Value::Variable(obj_name)) = object.as_ref() {
                 return obj_name == "Object";
@@ -59,7 +72,7 @@ pub fn is_define_property_call(callee: &Expression) -> bool {
     false
 }
 
-/// Extract methods from an array of { key, value } objects
+// Extract methods from an array of { key, value } objects
 pub fn extract_method_array(expr: &Expression) -> Option<Vec<(String, Expression, MethodKind)>> {
     if let Expression::Array { elements } = expr {
         let mut methods = Vec::new();
@@ -73,7 +86,9 @@ pub fn extract_method_array(expr: &Expression) -> Option<Vec<(String, Expression
                     match &prop.key {
                         PropertyKey::Ident(k) | PropertyKey::String(k) => {
                             if k == "key" {
-                                if let Expression::Value(Value::Constant(Constant::String(s))) = &prop.value {
+                                if let Expression::Value(Value::Constant(Constant::String(s))) =
+                                    &prop.value
+                                {
                                     key = Some(s.clone());
                                 } else if let Expression::Value(Value::Variable(s)) = &prop.value {
                                     key = Some(s.clone());
@@ -104,14 +119,24 @@ pub fn extract_method_array(expr: &Expression) -> Option<Vec<(String, Expression
     None
 }
 
-/// Extract inheritance info from setPrototypeOf(Foo.prototype, Bar.prototype)
+// Extract inheritance info from setPrototypeOf(Foo.prototype, Bar.prototype)
 pub fn extract_inheritance(target: &Expression, source: &Expression) -> Option<(String, String)> {
     // target should be Foo.prototype
-    if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } = target {
+    if let Expression::Member {
+        object,
+        property: PropertyKey::Ident(prop),
+        ..
+    } = target
+    {
         if prop == "prototype" {
             if let Some(class_name) = extract_name(object) {
                 // source should be Bar.prototype
-                if let Expression::Member { object: super_obj, property: PropertyKey::Ident(super_prop), .. } = source {
+                if let Expression::Member {
+                    object: super_obj,
+                    property: PropertyKey::Ident(super_prop),
+                    ..
+                } = source
+                {
                     if super_prop == "prototype" {
                         if let Some(super_name) = extract_name(super_obj) {
                             return Some((class_name, super_name));
@@ -124,14 +149,19 @@ pub fn extract_inheritance(target: &Expression, source: &Expression) -> Option<(
     None
 }
 
-/// Extract getter/setter from defineProperty(Foo.prototype, "prop", { get: fn, set: fn })
+// Extract getter/setter from defineProperty(Foo.prototype, "prop", { get: fn, set: fn })
 pub fn extract_accessor_definition(
     target: &Expression,
     prop_name: &Expression,
     descriptor: &Expression,
 ) -> Option<(String, String, Option<Expression>, Option<Expression>)> {
     // target should be Foo.prototype
-    let class_name = if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } = target {
+    let class_name = if let Expression::Member {
+        object,
+        property: PropertyKey::Ident(prop),
+        ..
+    } = target
+    {
         if prop == "prototype" {
             extract_name(object)
         } else {

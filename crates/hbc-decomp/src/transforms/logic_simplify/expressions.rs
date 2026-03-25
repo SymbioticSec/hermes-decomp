@@ -1,149 +1,30 @@
-use crate::ir::{Expression, Value, Constant, UnaryOp, BinaryOp};
-use super::utils::{negate_expr, is_truthy, is_falsy, is_boolean_expr, is_simple_value, exprs_equal};
+use super::utils::{
+    exprs_equal, is_boolean_expr, is_falsy, is_simple_value, is_truthy, negate_expr,
+};
+use crate::ir::{BinaryOp, Constant, Expression, UnaryOp, Value};
 
 pub fn simplify_expr(expr: Expression) -> Expression {
     match expr {
-        // Double negation: !!x → x
-        Expression::Unary { op: UnaryOp::Not, operand } => {
-            let simplified_operand = simplify_expr(*operand);
+        Expression::Unary {
+            op: UnaryOp::Not,
+            operand,
+        } => simplify_unary_not(simplify_expr(*operand)),
 
-            // Check for double negation
-            if let Expression::Unary { op: UnaryOp::Not, operand: inner } = &simplified_operand {
-                // !!x → x (but be careful with non-boolean values)
-                // For safety, only simplify if we know it's boolean
-                if is_boolean_expr(inner) {
-                    return *inner.clone();
-                }
-                // For non-booleans, !!x coerces to boolean, so we keep it
-            }
-
-            // De Morgan's Law: !(a || b) → !a && !b
-            if let Expression::Binary { op: BinaryOp::Or, left, right } = &simplified_operand {
-                return Expression::Binary {
-                    op: BinaryOp::And,
-                    left: Box::new(negate_expr(*left.clone())),
-                    right: Box::new(negate_expr(*right.clone())),
-                };
-            }
-
-            // De Morgan's Law: !(a && b) → !a || !b
-            if let Expression::Binary { op: BinaryOp::And, left, right } = &simplified_operand {
-                return Expression::Binary {
-                    op: BinaryOp::Or,
-                    left: Box::new(negate_expr(*left.clone())),
-                    right: Box::new(negate_expr(*right.clone())),
-                };
-            }
-
-            // !true → false, !false → true
-            if let Expression::Value(Value::Constant(Constant::Bool(b))) = &simplified_operand {
-                return Expression::Value(Value::Constant(Constant::Bool(!b)));
-            }
-
-            Expression::Unary {
-                op: UnaryOp::Not,
-                operand: Box::new(simplified_operand),
-            }
-        }
-
-        // Binary operations
         Expression::Binary { op, left, right } => {
-            let left = simplify_expr(*left);
-            let right = simplify_expr(*right);
-
-            match op {
-                // x || false → x, false || x → x
-                BinaryOp::Or => {
-                    if is_falsy(&right) {
-                        return left;
-                    }
-                    if is_falsy(&left) {
-                        return right;
-                    }
-                    // x || true → true (short-circuit)
-                    if is_truthy(&right) || is_truthy(&left) {
-                        return Expression::Value(Value::Constant(Constant::Bool(true)));
-                    }
-                    // x || x → x
-                    if exprs_equal(&left, &right) {
-                        return left;
-                    }
-                }
-                // x && true → x, true && x → x
-                BinaryOp::And => {
-                    if is_truthy(&right) {
-                        return left;
-                    }
-                    if is_truthy(&left) {
-                        return right;
-                    }
-                    // x && false → false (short-circuit)
-                    if is_falsy(&right) || is_falsy(&left) {
-                        return Expression::Value(Value::Constant(Constant::Bool(false)));
-                    }
-                    // x && x → x
-                    if exprs_equal(&left, &right) {
-                        return left;
-                    }
-                }
-                // x === x → true (for simple values)
-                BinaryOp::StrictEq => {
-                    if is_simple_value(&left) && exprs_equal(&left, &right) {
-                        return Expression::Value(Value::Constant(Constant::Bool(true)));
-                    }
-                }
-                // x !== x → false (for simple values)
-                BinaryOp::StrictNeq => {
-                    if is_simple_value(&left) && exprs_equal(&left, &right) {
-                        return Expression::Value(Value::Constant(Constant::Bool(false)));
-                    }
-                }
-                _ => {}
-            }
-
-            Expression::Binary {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-            }
+            simplify_binary(op, simplify_expr(*left), simplify_expr(*right))
         }
 
-        // Conditional: true ? a : b → a, false ? a : b → b
-        Expression::Conditional { condition, then_expr, else_expr } => {
-            let condition = simplify_expr(*condition);
-            let then_expr = simplify_expr(*then_expr);
-            let else_expr = simplify_expr(*else_expr);
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => simplify_conditional(
+            simplify_expr(*condition),
+            simplify_expr(*then_expr),
+            simplify_expr(*else_expr),
+        ),
 
-            if is_truthy(&condition) {
-                return then_expr;
-            }
-            if is_falsy(&condition) {
-                return else_expr;
-            }
-
-            // c ? x : x → x
-            if exprs_equal(&then_expr, &else_expr) {
-                return then_expr;
-            }
-
-            // c ? true : false → c (when c is boolean)
-            if is_truthy(&then_expr) && is_falsy(&else_expr) && is_boolean_expr(&condition) {
-                return condition;
-            }
-
-            // c ? false : true → !c
-            if is_falsy(&then_expr) && is_truthy(&else_expr) {
-                return negate_expr(condition);
-            }
-
-            Expression::Conditional {
-                condition: Box::new(condition),
-                then_expr: Box::new(then_expr),
-                else_expr: Box::new(else_expr),
-            }
-        }
-
-        // Recursively simplify other expressions
+        // Recursively simplify sub-expressions
         Expression::Call { callee, arguments } => Expression::Call {
             callee: Box::new(simplify_expr(*callee)),
             arguments: arguments.into_iter().map(simplify_expr).collect(),
@@ -152,7 +33,11 @@ pub fn simplify_expr(expr: Expression) -> Expression {
             callee: Box::new(simplify_expr(*callee)),
             arguments: arguments.into_iter().map(simplify_expr).collect(),
         },
-        Expression::Member { object, property, optional } => Expression::Member {
+        Expression::Member {
+            object,
+            property,
+            optional,
+        } => Expression::Member {
             object: Box::new(simplify_expr(*object)),
             property,
             optional,
@@ -180,6 +65,130 @@ pub fn simplify_expr(expr: Expression) -> Expression {
             delegate,
         },
         other => other,
+    }
+}
+
+// Simplify `!operand`: double negation, De Morgan's laws, constant folding.
+fn simplify_unary_not(operand: Expression) -> Expression {
+    // !!x → x (only safe when x is known boolean)
+    if let Expression::Unary {
+        op: UnaryOp::Not,
+        operand: inner,
+    } = &operand
+    {
+        if is_boolean_expr(inner) {
+            return *inner.clone();
+        }
+    }
+
+    // De Morgan's Law: !(a || b) → !a && !b
+    if let Expression::Binary {
+        op: BinaryOp::Or,
+        left,
+        right,
+    } = &operand
+    {
+        return Expression::Binary {
+            op: BinaryOp::And,
+            left: Box::new(negate_expr(*left.clone())),
+            right: Box::new(negate_expr(*right.clone())),
+        };
+    }
+
+    // De Morgan's Law: !(a && b) → !a || !b
+    if let Expression::Binary {
+        op: BinaryOp::And,
+        left,
+        right,
+    } = &operand
+    {
+        return Expression::Binary {
+            op: BinaryOp::Or,
+            left: Box::new(negate_expr(*left.clone())),
+            right: Box::new(negate_expr(*right.clone())),
+        };
+    }
+
+    // !true → false, !false → true
+    if let Expression::Value(Value::Constant(Constant::Bool(b))) = &operand {
+        return Expression::Value(Value::Constant(Constant::Bool(!b)));
+    }
+
+    Expression::Unary {
+        op: UnaryOp::Not,
+        operand: Box::new(operand),
+    }
+}
+
+// Simplify binary operations: Or/And identity/absorption, StrictEq/StrictNeq reflexivity.
+fn simplify_binary(op: BinaryOp, left: Expression, right: Expression) -> Expression {
+    match op {
+        // x || false → x, false || x → x, x || true → true, x || x → x
+        BinaryOp::Or => {
+            if is_falsy(&right) { return left; }
+            if is_falsy(&left) { return right; }
+            if is_truthy(&right) || is_truthy(&left) {
+                return Expression::Value(Value::Constant(Constant::Bool(true)));
+            }
+            if exprs_equal(&left, &right) { return left; }
+        }
+        // x && true → x, true && x → x, x && false → false, x && x → x
+        BinaryOp::And => {
+            if is_truthy(&right) { return left; }
+            if is_truthy(&left) { return right; }
+            if is_falsy(&right) || is_falsy(&left) {
+                return Expression::Value(Value::Constant(Constant::Bool(false)));
+            }
+            if exprs_equal(&left, &right) { return left; }
+        }
+        // x === x → true (for simple values)
+        BinaryOp::StrictEq => {
+            if is_simple_value(&left) && exprs_equal(&left, &right) {
+                return Expression::Value(Value::Constant(Constant::Bool(true)));
+            }
+        }
+        // x !== x → false (for simple values)
+        BinaryOp::StrictNeq => {
+            if is_simple_value(&left) && exprs_equal(&left, &right) {
+                return Expression::Value(Value::Constant(Constant::Bool(false)));
+            }
+        }
+        _ => {}
+    }
+
+    Expression::Binary {
+        op,
+        left: Box::new(left),
+        right: Box::new(right),
+    }
+}
+
+// Simplify ternary: constant condition, equal branches, boolean identity/negation.
+fn simplify_conditional(
+    condition: Expression,
+    then_expr: Expression,
+    else_expr: Expression,
+) -> Expression {
+    if is_truthy(&condition) { return then_expr; }
+    if is_falsy(&condition) { return else_expr; }
+
+    // c ? x : x → x
+    if exprs_equal(&then_expr, &else_expr) { return then_expr; }
+
+    // c ? true : false → c (when c is boolean)
+    if is_truthy(&then_expr) && is_falsy(&else_expr) && is_boolean_expr(&condition) {
+        return condition;
+    }
+
+    // c ? false : true → !c
+    if is_falsy(&then_expr) && is_truthy(&else_expr) {
+        return negate_expr(condition);
+    }
+
+    Expression::Conditional {
+        condition: Box::new(condition),
+        then_expr: Box::new(then_expr),
+        else_expr: Box::new(else_expr),
     }
 }
 
@@ -220,7 +229,13 @@ mod tests {
         };
 
         let result = simplify_expr(expr);
-        assert!(matches!(result, Expression::Binary { op: BinaryOp::And, .. }));
+        assert!(matches!(
+            result,
+            Expression::Binary {
+                op: BinaryOp::And,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -238,7 +253,13 @@ mod tests {
         };
 
         let result = simplify_expr(expr);
-        assert!(matches!(result, Expression::Binary { op: BinaryOp::Or, .. }));
+        assert!(matches!(
+            result,
+            Expression::Binary {
+                op: BinaryOp::Or,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -296,6 +317,12 @@ mod tests {
         };
 
         let result = negate_expr(inner);
-        assert!(matches!(result, Expression::Binary { op: BinaryOp::StrictNeq, .. }));
+        assert!(matches!(
+            result,
+            Expression::Binary {
+                op: BinaryOp::StrictNeq,
+                ..
+            }
+        ));
     }
 }

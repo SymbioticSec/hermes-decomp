@@ -1,19 +1,19 @@
-use crate::ir::{Statement, Expression, Value, AssignTarget, Constant, BinaryOp};
+use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, Statement, Value};
 
 // Detect and simplify generator state machine patterns.
-/// 
-/// Transpiled Generators (Regenerator) often use a "State Machine Loop":
-/// ```js
-/// var state = 0;
-/// while (true) {
-///   switch (state) {
-///     case 0: ...; state = 2; break;
-///     case 2: ...; return;
-///   }
-/// }
-/// ```
-/// This pass tries to detect this pattern (While -> Switch -> Case assignments) and "flatten" it
-/// into a linear sequence of statements, removing the artificial state variable.
+//
+// Transpiled Generators (Regenerator) often use a "State Machine Loop":
+// ```js
+// var state = 0;
+// while (true) {
+//   switch (state) {
+//     case 0: ...; state = 2; break;
+//     case 2: ...; return;
+//   }
+// }
+// ```
+// This pass tries to detect this pattern (While -> Switch -> Case assignments) and "flatten" it
+// into a linear sequence of statements, removing the artificial state variable.
 pub fn simplify_state_machine(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut result = Vec::new();
     let mut i = 0;
@@ -62,7 +62,10 @@ fn try_flatten_state_machine(stmt: &Statement) -> Option<Vec<Statement>> {
 
 // Check if a condition is `true` literal.
 fn is_true_literal(expr: &Expression) -> bool {
-    matches!(expr, Expression::Value(Value::Constant(Constant::Bool(true))))
+    matches!(
+        expr,
+        Expression::Value(Value::Constant(Constant::Bool(true)))
+    )
 }
 
 // Check if an if-else chain looks like a state machine.
@@ -71,11 +74,24 @@ fn looks_like_state_machine(stmt: &Statement) -> bool {
     let mut depth = 0;
     let mut current = stmt;
 
-    while let Statement::If { condition, else_body, .. } = current {
+    while let Statement::If {
+        condition,
+        else_body,
+        ..
+    } = current
+    {
         // Check if condition is comparing a register to a constant
-        if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = condition {
+        if let Expression::Binary {
+            op: BinaryOp::StrictEq,
+            left,
+            right,
+        } = condition
+        {
             if matches!(left.as_ref(), Expression::Value(Value::Register(_)))
-                && matches!(right.as_ref(), Expression::Value(Value::Constant(Constant::Integer(_))))
+                && matches!(
+                    right.as_ref(),
+                    Expression::Value(Value::Constant(Constant::Integer(_)))
+                )
             {
                 depth += 1;
             }
@@ -126,12 +142,24 @@ fn flatten_state_switch(body: &[Statement]) -> Option<Vec<Statement>> {
 
 // Collect state cases from an if-else chain.
 fn collect_state_cases(stmt: &Statement, cases: &mut Vec<(i32, Vec<Statement>)>) {
-    if let Statement::If { condition, then_body, else_body } = stmt {
+    if let Statement::If {
+        condition,
+        then_body,
+        else_body,
+    } = stmt
+    {
         // Extract state number from condition
-        if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = condition {
+        if let Expression::Binary {
+            op: BinaryOp::StrictEq,
+            left,
+            right,
+        } = condition
+        {
             if let Expression::Value(Value::Constant(Constant::Integer(state))) = right.as_ref() {
                 cases.push((*state, then_body.clone()));
-            } else if let Expression::Value(Value::Constant(Constant::Integer(state))) = left.as_ref() {
+            } else if let Expression::Value(Value::Constant(Constant::Integer(state))) =
+                left.as_ref()
+            {
                 cases.push((*state, then_body.clone()));
             }
         }
@@ -165,7 +193,11 @@ fn is_state_assignment_ref(stmt: &Statement) -> bool {
 // Recursively simplify state machine patterns in a statement.
 fn simplify_state_machine_stmt(stmt: Statement) -> Statement {
     match stmt {
-        Statement::If { condition, then_body, else_body } => Statement::If {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::If {
             condition,
             then_body: simplify_state_machine(then_body),
             else_body: simplify_state_machine(else_body),
@@ -178,13 +210,23 @@ fn simplify_state_machine_stmt(stmt: Statement) -> Statement {
                 body: simplified_body,
             }
         }
-        Statement::For { init, condition, update, body } => Statement::For {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
             init: init.map(|s| Box::new(simplify_state_machine_stmt(*s))),
             condition,
             update: update.map(|s| Box::new(simplify_state_machine_stmt(*s))),
             body: simplify_state_machine(body),
         },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
             try_body: simplify_state_machine(try_body),
             catch_param,
             catch_body: simplify_state_machine(catch_body),
@@ -208,24 +250,22 @@ mod tests {
                 left: Box::new(Expression::Value(Value::Register(0))),
                 right: Box::new(Expression::Value(Value::Constant(Constant::Integer(0)))),
             },
-            then_body: vec![
-                Statement::Return(Some(Expression::Value(Value::Constant(Constant::Integer(1))))),
-            ],
-            else_body: vec![
-                Statement::If {
-                    condition: Expression::Binary {
-                        op: BinaryOp::StrictEq,
-                        left: Box::new(Expression::Value(Value::Register(0))),
-                        right: Box::new(Expression::Value(Value::Constant(Constant::Integer(1)))),
-                    },
-                    then_body: vec![
-                        Statement::Return(Some(Expression::Value(Value::Constant(Constant::Integer(2))))),
-                    ],
-                    else_body: vec![
-                        Statement::Return(Some(Expression::Value(Value::Constant(Constant::Integer(3))))),
-                    ],
+            then_body: vec![Statement::Return(Some(Expression::Value(Value::Constant(
+                Constant::Integer(1),
+            ))))],
+            else_body: vec![Statement::If {
+                condition: Expression::Binary {
+                    op: BinaryOp::StrictEq,
+                    left: Box::new(Expression::Value(Value::Register(0))),
+                    right: Box::new(Expression::Value(Value::Constant(Constant::Integer(1)))),
                 },
-            ],
+                then_body: vec![Statement::Return(Some(Expression::Value(Value::Constant(
+                    Constant::Integer(2),
+                ))))],
+                else_body: vec![Statement::Return(Some(Expression::Value(Value::Constant(
+                    Constant::Integer(3),
+                ))))],
+            }],
         };
 
         assert!(looks_like_state_machine(&stmt));

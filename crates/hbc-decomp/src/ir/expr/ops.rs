@@ -1,19 +1,36 @@
-// Operators for expressions.
-
 use std::fmt;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BinaryOp {
-    Add, Sub, Mul, Div, Mod,
-    BitAnd, BitOr, BitXor, Shl, Shr, UShr,
-    Eq, StrictEq, Neq, StrictNeq, Lt, Le, Gt, Ge,
-    And, Or,
-    In, InstanceOf,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    UShr,
+    Eq,
+    StrictEq,
+    Neq,
+    StrictNeq,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+    In,
+    InstanceOf,
     NullishCoalesce,
-    LogicalAnd, LogicalOr,
+    LogicalAnd,
+    LogicalOr,
+    Exp,
 }
 
 impl BinaryOp {
@@ -43,6 +60,7 @@ impl BinaryOp {
             BinaryOp::In => "in",
             BinaryOp::InstanceOf => "instanceof",
             BinaryOp::NullishCoalesce => "??",
+            BinaryOp::Exp => "**",
         }
     }
 
@@ -55,11 +73,16 @@ impl BinaryOp {
             BinaryOp::BitXor => 7,
             BinaryOp::BitAnd => 8,
             BinaryOp::Eq | BinaryOp::StrictEq | BinaryOp::Neq | BinaryOp::StrictNeq => 9,
-            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
-            | BinaryOp::In | BinaryOp::InstanceOf => 10,
+            BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge
+            | BinaryOp::In
+            | BinaryOp::InstanceOf => 10,
             BinaryOp::Shl | BinaryOp::Shr | BinaryOp::UShr => 11,
             BinaryOp::Add | BinaryOp::Sub => 12,
             BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => 13,
+            BinaryOp::Exp => 14,
         }
     }
 }
@@ -70,10 +93,14 @@ impl fmt::Display for BinaryOp {
     }
 }
 
-// Unary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnaryOp {
-    Neg, Plus, BitNot, Not, TypeOf, Void,
+    Neg,
+    Plus,
+    BitNot,
+    Not,
+    TypeOf,
+    Void,
 }
 
 impl UnaryOp {

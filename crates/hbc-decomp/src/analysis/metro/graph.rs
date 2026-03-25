@@ -1,6 +1,6 @@
+use std::collections::HashSet;
 use super::registry::MetroRegistry;
 
-// A tree structure showing module dependencies.
 #[derive(Debug, Clone)]
 pub struct DependencyTree {
     pub module_id: u32,
@@ -14,10 +14,20 @@ impl DependencyTree {
         let mut output = String::new();
         let prefix = "  ".repeat(indent);
 
-        let func_str = self.function_id.map(|f| format!(" (F{f})")).unwrap_or_default();
-        let name_str = self.name.as_ref().map(|n| format!(" - {n}")).unwrap_or_default();
+        let func_str = self
+            .function_id
+            .map(|f| format!(" (F{f})"))
+            .unwrap_or_default();
+        let name_str = self
+            .name
+            .as_ref()
+            .map(|n| format!(" - {n}"))
+            .unwrap_or_default();
 
-        output.push_str(&format!("{}Module {}{}{}\n", prefix, self.module_id, func_str, name_str));
+        output.push_str(&format!(
+            "{}Module {}{}{}\n",
+            prefix, self.module_id, func_str, name_str
+        ));
 
         for child in &self.children {
             output.push_str(&child.format(indent + 1));
@@ -30,9 +40,18 @@ impl DependencyTree {
 pub struct DependencyGraph;
 
 impl DependencyGraph {
-    // Build a dependency tree for a module (what it requires recursively).
-    pub fn get_dependency_tree(registry: &MetroRegistry, module_id: u32, max_depth: usize) -> DependencyTree {
-        Self::build_tree(registry, module_id, 0, max_depth, &mut std::collections::HashSet::new())
+    pub fn get_dependency_tree(
+        registry: &MetroRegistry,
+        module_id: u32,
+        max_depth: usize,
+    ) -> DependencyTree {
+        Self::build_tree(
+            registry,
+            module_id,
+            0,
+            max_depth,
+            &mut HashSet::new(),
+        )
     }
 
     fn build_tree(
@@ -40,12 +59,15 @@ impl DependencyGraph {
         module_id: u32,
         depth: usize,
         max_depth: usize,
-        visited: &mut std::collections::HashSet<u32>,
+        visited: &mut HashSet<u32>,
     ) -> DependencyTree {
         let mut tree = DependencyTree {
             module_id,
             function_id: registry.modules.get(&module_id).map(|m| m.function_id),
-            name: registry.modules.get(&module_id).and_then(|m| m.name.clone()),
+            name: registry
+                .modules
+                .get(&module_id)
+                .and_then(|m| m.name.clone()),
             children: Vec::new(),
         };
 
@@ -57,7 +79,13 @@ impl DependencyGraph {
 
         if let Some(module) = registry.modules.get(&module_id) {
             for &dep_id in &module.dependencies {
-                tree.children.push(Self::build_tree(registry, dep_id, depth + 1, max_depth, visited));
+                tree.children.push(Self::build_tree(
+                    registry,
+                    dep_id,
+                    depth + 1,
+                    max_depth,
+                    visited,
+                ));
             }
         }
 

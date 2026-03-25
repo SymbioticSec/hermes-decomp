@@ -1,8 +1,12 @@
-use crate::ir::{Expression, Value, Constant, UnaryOp, BinaryOp};
+use crate::ir::{BinaryOp, Constant, Expression, UnaryOp, Value};
 
 pub fn negate_expr(expr: Expression) -> Expression {
     // Avoid double negation
-    if let Expression::Unary { op: UnaryOp::Not, operand } = expr {
+    if let Expression::Unary {
+        op: UnaryOp::Not,
+        operand,
+    } = expr
+    {
         return *operand;
     }
 
@@ -61,7 +65,9 @@ pub fn is_falsy(expr: &Expression) -> bool {
 pub fn is_boolean_expr(expr: &Expression) -> bool {
     match expr {
         Expression::Value(Value::Constant(Constant::Bool(_))) => true,
-        Expression::Unary { op: UnaryOp::Not, .. } => true,
+        Expression::Unary {
+            op: UnaryOp::Not, ..
+        } => true,
         Expression::Binary { op, .. } => matches!(
             op,
             BinaryOp::Eq
@@ -81,26 +87,7 @@ pub fn is_boolean_expr(expr: &Expression) -> bool {
     }
 }
 
-pub fn is_simple_value(expr: &Expression) -> bool {
-    matches!(
-        expr,
-        Expression::Value(Value::Constant(_))
-            | Expression::Value(Value::Variable(_))
-            | Expression::Value(Value::Register(_))
-    )
-}
+pub use crate::ir::is_simple_value;
 
-pub fn exprs_equal(a: &Expression, b: &Expression) -> bool {
-    match (a, b) {
-        (Expression::Value(v1), Expression::Value(v2)) => v1 == v2,
-        (
-            Expression::Unary { op: op1, operand: o1 },
-            Expression::Unary { op: op2, operand: o2 },
-        ) => op1 == op2 && exprs_equal(o1, o2),
-        (
-            Expression::Binary { op: op1, left: l1, right: r1 },
-            Expression::Binary { op: op2, left: l2, right: r2 },
-        ) => op1 == op2 && exprs_equal(l1, l2) && exprs_equal(r1, r2),
-        _ => false,
-    }
-}
+// Re-export from centralized location
+pub use crate::ir::exprs_equal;

@@ -1,6 +1,7 @@
+use crate::debug::DebugInfo;
 use crate::format::{BytecodeHeader, FunctionHeader};
 use crate::opcode::Operand;
-use crate::debug::DebugInfo;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StringKindType {
@@ -44,6 +45,21 @@ pub enum LiteralValue {
 }
 
 #[derive(Debug, Clone)]
+pub struct SectionInfo {
+    pub name: &'static str,
+    pub offset: u32,
+    pub size: u32,
+    pub entries: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExceptionHandler {
+    pub start: u32,
+    pub end: u32,
+    pub target: u32,
+}
+
+#[derive(Debug, Clone)]
 pub struct BytecodeFile {
     pub header: BytecodeHeader,
     pub function_headers: Vec<FunctionHeader>,
@@ -64,6 +80,8 @@ pub struct BytecodeFile {
     pub instruction_offset: u32,
     pub instructions: Vec<u8>,
     pub debug_info: Option<DebugInfo>,
+    pub exception_handlers: BTreeMap<u32, Vec<ExceptionHandler>>,
+    pub sections: Vec<SectionInfo>,
 }
 
 #[derive(Debug, Clone)]

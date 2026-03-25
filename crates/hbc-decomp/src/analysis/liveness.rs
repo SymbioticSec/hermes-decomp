@@ -1,28 +1,22 @@
-// Liveness analysis for registers.
+use crate::ir::{BlockId, Expression, Statement, Value, CFG};
+use std::collections::{BTreeMap, HashSet};
 
-use std::collections::{HashMap, HashSet};
-use crate::ir::{CFG, BlockId, Statement, Expression, Value};
-
-// Result of liveness analysis.
-/// 
-/// Liveness analysis determines which registers are "live" (hold a useful value) at each point in the program.
-/// - `live_in`: Set of registers live at the entry of a block.
-/// - `live_out`: Set of registers live at the exit of a block.
-/// 
-/// Use case: Dead Code Elimination (DCE). If a register is assigned but not live-out, the assignment is dead (unless it has side effects).
+// Liveness analysis determines which registers are "live" (hold a useful value) at each point in the program.
+// - `live_in`: Set of registers live at the entry of a block.
+// - `live_out`: Set of registers live at the exit of a block.
+//
+// Use case: Dead Code Elimination (DCE). If a register is assigned but not live-out, the assignment is dead (unless it has side effects).
 #[derive(Debug)]
 pub struct LivenessInfo {
-    pub live_in: HashMap<BlockId, HashSet<u32>>,
-    pub live_out: HashMap<BlockId, HashSet<u32>>,
+    pub live_in: BTreeMap<BlockId, HashSet<u32>>,
+    pub live_out: BTreeMap<BlockId, HashSet<u32>>,
 }
 
 impl LivenessInfo {
-    // Compute liveness information for a CFG.
     pub fn analyze(cfg: &CFG) -> Self {
-        let mut live_in: HashMap<BlockId, HashSet<u32>> = HashMap::new();
-        let mut live_out: HashMap<BlockId, HashSet<u32>> = HashMap::new();
+        let mut live_in: BTreeMap<BlockId, HashSet<u32>> = BTreeMap::new();
+        let mut live_out: BTreeMap<BlockId, HashSet<u32>> = BTreeMap::new();
 
-        // Initialize empty sets
         for id in cfg.block_ids() {
             live_in.insert(id, HashSet::new());
             live_out.insert(id, HashSet::new());
@@ -44,7 +38,6 @@ impl LivenessInfo {
                     None => continue,
                 };
 
-                // live_out = union of live_in of successors
                 let mut new_out: HashSet<u32> = HashSet::new();
                 for succ in block.successors() {
                     if let Some(succ_in) = live_in.get(&succ) {
@@ -74,14 +67,18 @@ impl LivenessInfo {
         LivenessInfo { live_in, live_out }
     }
 
-    // Check if a register is live at block exit.
     pub fn is_live_out(&self, block: BlockId, reg: u32) -> bool {
-        self.live_out.get(&block).map(|s| s.contains(&reg)).unwrap_or(false)
+        self.live_out
+            .get(&block)
+            .map(|s| s.contains(&reg))
+            .unwrap_or(false)
     }
 
-    // Check if a register is live at block entry.
     pub fn is_live_in(&self, block: BlockId, reg: u32) -> bool {
-        self.live_in.get(&block).map(|s| s.contains(&reg)).unwrap_or(false)
+        self.live_in
+            .get(&block)
+            .map(|s| s.contains(&reg))
+            .unwrap_or(false)
     }
 }
 
@@ -94,7 +91,6 @@ fn collect_uses_defs(block: &crate::ir::BasicBlock) -> (HashSet<u32>, HashSet<u3
         collect_stmt_defs(stmt, &mut defs);
     }
 
-    // Terminator uses
     collect_terminator_uses(&block.terminator, &mut uses, &defs);
 
     (uses, defs)
@@ -111,7 +107,11 @@ fn collect_stmt_uses(stmt: &Statement, uses: &mut HashSet<u32>, defs: &HashSet<u
 }
 
 fn collect_stmt_defs(stmt: &Statement, defs: &mut HashSet<u32>) {
-    if let Statement::Assign { target: crate::ir::AssignTarget::Register(r), .. } = stmt {
+    if let Statement::Assign {
+        target: crate::ir::AssignTarget::Register(r),
+        ..
+    } = stmt
+    {
         defs.insert(*r);
     }
 }
@@ -159,7 +159,10 @@ mod tests {
     #[test]
     fn test_basic_liveness() {
         let mut builder = CFGBuilder::new();
-        builder.emit(Statement::assign_reg(0, Expression::constant(Constant::Integer(1))));
+        builder.emit(Statement::assign_reg(
+            0,
+            Expression::constant(Constant::Integer(1)),
+        ));
         builder.emit_return(Some(Expression::Value(Value::Register(0))));
 
         let cfg = builder.finish();

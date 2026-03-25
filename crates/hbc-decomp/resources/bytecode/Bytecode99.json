@@ -1,0 +1,2226 @@
+{
+  "Version": 99,
+  "Definitions": [
+    {
+      "Opcode": 0,
+      "Name": "Unreachable",
+      "OperandTypes": [],
+      "IsJump": false
+    },
+    {
+      "Opcode": 1,
+      "Name": "NewObjectWithBuffer",
+      "OperandTypes": [
+        "Reg8",
+        "UInt16",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 2,
+      "Name": "NewObjectWithBufferLong",
+      "OperandTypes": [
+        "Reg8",
+        "UInt32",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 3,
+      "Name": "NewObjectWithBufferAndParent",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt32",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 4,
+      "Name": "NewObject",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 5,
+      "Name": "NewObjectWithParent",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 6,
+      "Name": "NewArrayWithBuffer",
+      "OperandTypes": [
+        "Reg8",
+        "UInt16",
+        "UInt16",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 7,
+      "Name": "NewArrayWithBufferLong",
+      "OperandTypes": [
+        "Reg8",
+        "UInt16",
+        "UInt16",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 8,
+      "Name": "NewArray",
+      "OperandTypes": [
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 9,
+      "Name": "NewFastArray",
+      "OperandTypes": [
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 10,
+      "Name": "FastArrayLength",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 11,
+      "Name": "FastArrayLoad",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 12,
+      "Name": "FastArrayStore",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 13,
+      "Name": "FastArrayPush",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 14,
+      "Name": "FastArrayAppend",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 15,
+      "Name": "Mov",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 16,
+      "Name": "MovLong",
+      "OperandTypes": [
+        "Reg32",
+        "Reg32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 17,
+      "Name": "Negate",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 18,
+      "Name": "Not",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 19,
+      "Name": "BitNot",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 20,
+      "Name": "TypeOf",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 21,
+      "Name": "Eq",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 22,
+      "Name": "StrictEq",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 23,
+      "Name": "Neq",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 24,
+      "Name": "StrictNeq",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 25,
+      "Name": "Less",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 26,
+      "Name": "LessEq",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 27,
+      "Name": "Greater",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 28,
+      "Name": "GreaterEq",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 29,
+      "Name": "Add",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 30,
+      "Name": "AddN",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 31,
+      "Name": "AddS",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 32,
+      "Name": "Mul",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 33,
+      "Name": "MulN",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 34,
+      "Name": "Div",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 35,
+      "Name": "DivN",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 36,
+      "Name": "Mod",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 37,
+      "Name": "Sub",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 38,
+      "Name": "SubN",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 39,
+      "Name": "LShift",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 40,
+      "Name": "RShift",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 41,
+      "Name": "URshift",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 42,
+      "Name": "BitAnd",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 43,
+      "Name": "BitXor",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 44,
+      "Name": "BitOr",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 45,
+      "Name": "Inc",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 46,
+      "Name": "Dec",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 47,
+      "Name": "InstanceOf",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 48,
+      "Name": "IsIn",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 49,
+      "Name": "PrivateIsIn",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 50,
+      "Name": "TypeOfIs",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 51,
+      "Name": "GetParentEnvironment",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 52,
+      "Name": "GetEnvironment",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 53,
+      "Name": "GetClosureEnvironment",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 54,
+      "Name": "StoreToEnvironment",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 55,
+      "Name": "StoreToEnvironmentL",
+      "OperandTypes": [
+        "Reg8",
+        "UInt16",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 56,
+      "Name": "StoreNPToEnvironment",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 57,
+      "Name": "StoreNPToEnvironmentL",
+      "OperandTypes": [
+        "Reg8",
+        "UInt16",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 58,
+      "Name": "LoadFromEnvironment",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 59,
+      "Name": "LoadFromEnvironmentL",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 60,
+      "Name": "GetGlobalObject",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 61,
+      "Name": "GetNewTarget",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 62,
+      "Name": "LoadParentNoTraps",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 63,
+      "Name": "CreateFunctionEnvironment",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 64,
+      "Name": "CreateTopLevelEnvironment",
+      "OperandTypes": [
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 65,
+      "Name": "CreateEnvironment",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 66,
+      "Name": "DeclareGlobalVar",
+      "OperandTypes": [
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 67,
+      "Name": "GetByIdShort",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt8S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 68,
+      "Name": "GetById",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt16S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 69,
+      "Name": "GetByIdLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 70,
+      "Name": "GetByIdWithReceiverLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "Reg8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 71,
+      "Name": "TryGetById",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt16S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 72,
+      "Name": "TryGetByIdLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 73,
+      "Name": "PutByIdLoose",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt16S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 74,
+      "Name": "PutByIdStrict",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt16S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 75,
+      "Name": "PutByIdLooseLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 76,
+      "Name": "PutByIdStrictLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 77,
+      "Name": "TryPutByIdLoose",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt16S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 78,
+      "Name": "TryPutByIdStrict",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt16S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 79,
+      "Name": "TryPutByIdLooseLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 80,
+      "Name": "TryPutByIdStrictLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 81,
+      "Name": "PutOwnBySlotIdx",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 82,
+      "Name": "PutOwnBySlotIdxLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 83,
+      "Name": "GetOwnBySlotIdx",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 84,
+      "Name": "GetOwnBySlotIdxLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 85,
+      "Name": "DefineOwnById",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt16S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 86,
+      "Name": "DefineOwnByIdLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 87,
+      "Name": "DefineOwnByIndex",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 88,
+      "Name": "DefineOwnByIndexL",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 89,
+      "Name": "DefineOwnInDenseArray",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 90,
+      "Name": "DefineOwnInDenseArrayL",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 91,
+      "Name": "DefineOwnByVal",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 92,
+      "Name": "GetByVal",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 93,
+      "Name": "GetByIndex",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 94,
+      "Name": "GetByValWithReceiver",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 95,
+      "Name": "PutByValLoose",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 96,
+      "Name": "PutByValStrict",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 97,
+      "Name": "PutByValWithReceiver",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 98,
+      "Name": "DelByVal",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 99,
+      "Name": "AddOwnPrivateBySym",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 100,
+      "Name": "GetOwnPrivateBySym",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 101,
+      "Name": "PutOwnPrivateBySym",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 102,
+      "Name": "DefineOwnGetterSetterByVal",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 103,
+      "Name": "GetPNameList",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 104,
+      "Name": "GetNextPName",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 105,
+      "Name": "Call",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 106,
+      "Name": "Construct",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 107,
+      "Name": "Call1",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 108,
+      "Name": "CallWithNewTarget",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 109,
+      "Name": "Call2",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 110,
+      "Name": "Call3",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 111,
+      "Name": "Call4",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 112,
+      "Name": "CallWithNewTargetLong",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 113,
+      "Name": "CallRequire",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 114,
+      "Name": "CallBuiltin",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 115,
+      "Name": "CallBuiltinLong",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 116,
+      "Name": "GetBuiltinClosure",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 117,
+      "Name": "Ret",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 118,
+      "Name": "Catch",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 119,
+      "Name": "DirectEval",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 120,
+      "Name": "Throw",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 121,
+      "Name": "ThrowIfEmpty",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 122,
+      "Name": "ThrowIfUndefined",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 123,
+      "Name": "ThrowIfThisInitialized",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 124,
+      "Name": "Debugger",
+      "OperandTypes": [],
+      "IsJump": false
+    },
+    {
+      "Opcode": 125,
+      "Name": "AsyncBreakCheck",
+      "OperandTypes": [],
+      "IsJump": false
+    },
+    {
+      "Opcode": 126,
+      "Name": "ProfilePoint",
+      "OperandTypes": [
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 127,
+      "Name": "CreateBaseClass",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 128,
+      "Name": "CreateBaseClassLongIndex",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 129,
+      "Name": "CreateDerivedClass",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 130,
+      "Name": "CreateDerivedClassLongIndex",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 131,
+      "Name": "CreateClosure",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 132,
+      "Name": "CreateClosureLongIndex",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 133,
+      "Name": "CreateThisForNew",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 134,
+      "Name": "CreateThisForSuper",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 135,
+      "Name": "SelectObject",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 136,
+      "Name": "LoadParam",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 137,
+      "Name": "LoadParamLong",
+      "OperandTypes": [
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 138,
+      "Name": "LoadConstUInt8",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 139,
+      "Name": "LoadConstInt",
+      "OperandTypes": [
+        "Reg8",
+        "Imm32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 140,
+      "Name": "LoadConstDouble",
+      "OperandTypes": [
+        "Reg8",
+        "Double"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 141,
+      "Name": "LoadConstBigInt",
+      "OperandTypes": [
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 142,
+      "Name": "LoadConstBigIntLongIndex",
+      "OperandTypes": [
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 143,
+      "Name": "LoadConstString",
+      "OperandTypes": [
+        "Reg8",
+        "UInt16S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 144,
+      "Name": "LoadConstStringLongIndex",
+      "OperandTypes": [
+        "Reg8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 145,
+      "Name": "LoadConstEmpty",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 146,
+      "Name": "LoadConstUndefined",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 147,
+      "Name": "LoadConstNull",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 148,
+      "Name": "LoadConstTrue",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 149,
+      "Name": "LoadConstFalse",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 150,
+      "Name": "LoadConstZero",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 151,
+      "Name": "CoerceThisNS",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 152,
+      "Name": "LoadThisNS",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 153,
+      "Name": "ToNumber",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 154,
+      "Name": "ToNumeric",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 155,
+      "Name": "ToInt32",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 156,
+      "Name": "ToUint32",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 157,
+      "Name": "AddEmptyString",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 158,
+      "Name": "CreatePrivateName",
+      "OperandTypes": [
+        "Reg8",
+        "UInt32S"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 159,
+      "Name": "GetArgumentsPropByValLoose",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 160,
+      "Name": "GetArgumentsPropByValStrict",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 161,
+      "Name": "GetArgumentsLength",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 162,
+      "Name": "ReifyArgumentsStrict",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 163,
+      "Name": "ReifyArgumentsLoose",
+      "OperandTypes": [
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 164,
+      "Name": "ToPropertyKey",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 165,
+      "Name": "CreateRegExp",
+      "OperandTypes": [
+        "Reg8",
+        "UInt32S",
+        "UInt32S",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 166,
+      "Name": "UIntSwitchImm",
+      "OperandTypes": [
+        "Reg8",
+        "UInt32",
+        "Addr32",
+        "UInt32",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 167,
+      "Name": "StringSwitchImm",
+      "OperandTypes": [
+        "Reg8",
+        "UInt32",
+        "UInt32",
+        "Addr32",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 168,
+      "Name": "CreateGenerator",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 169,
+      "Name": "CreateGeneratorLongIndex",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt32"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 170,
+      "Name": "IteratorBegin",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 171,
+      "Name": "IteratorNext",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 172,
+      "Name": "IteratorClose",
+      "OperandTypes": [
+        "Reg8",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 173,
+      "Name": "TypedLoadParent",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 174,
+      "Name": "Jmp",
+      "OperandTypes": [
+        "Addr8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 175,
+      "Name": "JmpLong",
+      "OperandTypes": [
+        "Addr32"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 176,
+      "Name": "JmpTrue",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 177,
+      "Name": "JmpTrueLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 178,
+      "Name": "JmpFalse",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 179,
+      "Name": "JmpFalseLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 180,
+      "Name": "JmpUndefined",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 181,
+      "Name": "JmpUndefinedLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 182,
+      "Name": "JmpTypeOfIs",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "UInt16"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 183,
+      "Name": "JLess",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 184,
+      "Name": "JLessLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 185,
+      "Name": "JNotLess",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 186,
+      "Name": "JNotLessLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 187,
+      "Name": "JLessN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 188,
+      "Name": "JLessNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 189,
+      "Name": "JNotLessN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 190,
+      "Name": "JNotLessNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 191,
+      "Name": "JLessEqual",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 192,
+      "Name": "JLessEqualLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 193,
+      "Name": "JNotLessEqual",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 194,
+      "Name": "JNotLessEqualLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 195,
+      "Name": "JLessEqualN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 196,
+      "Name": "JLessEqualNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 197,
+      "Name": "JNotLessEqualN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 198,
+      "Name": "JNotLessEqualNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 199,
+      "Name": "JGreater",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 200,
+      "Name": "JGreaterLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 201,
+      "Name": "JNotGreater",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 202,
+      "Name": "JNotGreaterLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 203,
+      "Name": "JGreaterN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 204,
+      "Name": "JGreaterNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 205,
+      "Name": "JNotGreaterN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 206,
+      "Name": "JNotGreaterNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 207,
+      "Name": "JGreaterEqual",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 208,
+      "Name": "JGreaterEqualLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 209,
+      "Name": "JNotGreaterEqual",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 210,
+      "Name": "JNotGreaterEqualLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 211,
+      "Name": "JGreaterEqualN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 212,
+      "Name": "JGreaterEqualNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 213,
+      "Name": "JNotGreaterEqualN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 214,
+      "Name": "JNotGreaterEqualNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 215,
+      "Name": "JEqual",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 216,
+      "Name": "JEqualLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 217,
+      "Name": "JNotEqual",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 218,
+      "Name": "JNotEqualLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 219,
+      "Name": "JStrictEqual",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 220,
+      "Name": "JStrictEqualLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 221,
+      "Name": "JStrictNotEqual",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 222,
+      "Name": "JStrictNotEqualLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 223,
+      "Name": "JmpBuiltinIs",
+      "OperandTypes": [
+        "Addr8",
+        "UInt8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 224,
+      "Name": "JmpBuiltinIsLong",
+      "OperandTypes": [
+        "Addr32",
+        "UInt8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 225,
+      "Name": "JmpBuiltinIsNot",
+      "OperandTypes": [
+        "Addr8",
+        "UInt8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 226,
+      "Name": "JmpBuiltinIsNotLong",
+      "OperandTypes": [
+        "Addr32",
+        "UInt8",
+        "Reg8"
+      ],
+      "IsJump": true
+    }
+  ]
+}

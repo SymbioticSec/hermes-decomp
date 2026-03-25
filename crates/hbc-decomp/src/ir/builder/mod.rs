@@ -1,25 +1,26 @@
-// CFG builder from Hermes bytecode.
-
+mod dispatch;
+pub(crate) mod generator_cfg;
 mod ir_builder;
 mod jump_analysis;
-mod dispatch;
-mod opcodes_load;
 mod opcodes_arith;
-mod opcodes_prop;
 mod opcodes_call;
-mod opcodes_obj;
+mod opcodes_environment;
 mod opcodes_flow;
+mod opcodes_generator;
+mod opcodes_load;
+mod opcodes_obj;
+mod opcodes_prop;
+mod opcodes_switch;
 
 pub use ir_builder::{IRBuilder, IRBuilderOptions};
 
-use std::collections::HashMap;
-use super::{CFG, BlockId, Statement, Terminator, Expression};
+use super::{BlockId, Expression, Statement, Terminator, CFG};
+use std::collections::BTreeMap;
 
-// Builder for constructing a CFG from bytecode.
 pub struct CFGBuilder {
     cfg: CFG,
     current_block: BlockId,
-    offset_to_block: HashMap<u32, BlockId>,
+    offset_to_block: BTreeMap<u32, BlockId>,
 }
 
 impl CFGBuilder {
@@ -29,7 +30,7 @@ impl CFGBuilder {
         CFGBuilder {
             cfg,
             current_block: current,
-            offset_to_block: HashMap::new(),
+            offset_to_block: BTreeMap::new(),
         }
     }
 

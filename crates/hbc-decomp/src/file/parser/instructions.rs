@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use crate::file::{BytecodeFile, Instruction};
-use crate::opcode::{BytecodeFormat, Operand};
 use crate::io::ByteReader;
+use crate::opcode::{BytecodeFormat, Operand};
 
 pub fn decode_function_instructions(
     file: &BytecodeFile,

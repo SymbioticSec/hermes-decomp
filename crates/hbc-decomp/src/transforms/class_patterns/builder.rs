@@ -1,6 +1,6 @@
-use crate::ir::{Statement, Expression, ClassMethod};
+use crate::ir::{ClassMethod, Expression, Statement};
 
-/// Detected class information during analysis.
+// Detected class information during analysis.
 #[derive(Debug, Clone, Default)]
 pub struct ClassBuilder {
     pub name: String,

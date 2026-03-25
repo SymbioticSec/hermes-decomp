@@ -11,6 +11,10 @@ build = "build.rs"
 
 [dependencies]
 colored = "3.1.1"
+env_logger = "0.11.9"
+log = "0.4.29"
+rayon = "1"
+regex = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

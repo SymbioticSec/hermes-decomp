@@ -1,6 +1,6 @@
-mod structure;
 mod parser;
+mod structure;
 
-pub use structure::*;
 #[allow(unused_imports)]
 pub use parser::*;
+pub use structure::*;

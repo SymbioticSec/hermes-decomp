@@ -1,4 +1,4 @@
-use crate::ir::{Statement, Expression, AssignTarget, PropertyKey};
+use crate::ir::{AssignTarget, Expression, PropertyKey, Statement};
 
 // Information about a yield point in the generator.
 #[derive(Debug, Clone)]
@@ -23,12 +23,12 @@ pub struct ResumePoint {
 }
 
 // Collect all yield points from statements.
-/// 
-/// Hermes compiles generators/async functions into a state machine.
-/// When disassembling, we might see comments like `// __yield_point__: 12`.
-/// This analysis phase scans the IR for these markers to reconstruct where `yield` or `await` should be.
-/// - `YieldPoint`: A location where the function suspends (await/yield).
-/// - `ResumePoint`: A location where the function resumes execution (often a callback or state jump).
+//
+// Hermes compiles generators/async functions into a state machine.
+// When disassembling, we might see comments like `// __yield_point__: 12`.
+// This analysis phase scans the IR for these markers to reconstruct where `yield` or `await` should be.
+// - `YieldPoint`: A location where the function suspends (await/yield).
+// - `ResumePoint`: A location where the function resumes execution (often a callback or state jump).
 pub fn collect_yield_points(stmts: &[Statement]) -> Vec<YieldPoint> {
     let mut points = Vec::new();
     let mut i = 0;
@@ -59,14 +59,23 @@ pub fn collect_yield_points(stmts: &[Statement]) -> Vec<YieldPoint> {
 
         // Recurse into nested structures
         match &stmts[i] {
-            Statement::If { then_body, else_body, .. } => {
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 points.extend(collect_yield_points(then_body));
                 points.extend(collect_yield_points(else_body));
             }
             Statement::While { body, .. } | Statement::For { body, .. } => {
                 points.extend(collect_yield_points(body));
             }
-            Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
                 points.extend(collect_yield_points(try_body));
                 points.extend(collect_yield_points(catch_body));
                 points.extend(collect_yield_points(finally_body));
@@ -84,16 +93,19 @@ pub fn collect_yield_points(stmts: &[Statement]) -> Vec<YieldPoint> {
 }
 
 // Collect all resume points (ResumeGenerator calls).
-/// 
-/// A "Resume Point" corresponds to the re-entry logic of the generator.
-/// In the bytecode, this often looks like a call to `generator.resume()` or internal helper.
-/// We map these back to the return value of the `yield` expression (e.g., `let result = yield x;`).
+//
+// A "Resume Point" corresponds to the re-entry logic of the generator.
+// In the bytecode, this often looks like a call to `generator.resume()` or internal helper.
+// We map these back to the return value of the `yield` expression (e.g., `let result = yield x;`).
 pub fn collect_resume_points(stmts: &[Statement]) -> Vec<ResumePoint> {
     let mut points = Vec::new();
 
     for (i, stmt) in stmts.iter().enumerate() {
         match stmt {
-            Statement::Assign { target: AssignTarget::Register(reg), value } => {
+            Statement::Assign {
+                target: AssignTarget::Register(reg),
+                value,
+            } => {
                 if is_resume_call(value) {
                     points.push(ResumePoint {
                         index: i,
@@ -101,14 +113,23 @@ pub fn collect_resume_points(stmts: &[Statement]) -> Vec<ResumePoint> {
                     });
                 }
             }
-            Statement::If { then_body, else_body, .. } => {
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 points.extend(collect_resume_points(then_body));
                 points.extend(collect_resume_points(else_body));
             }
             Statement::While { body, .. } | Statement::For { body, .. } => {
                 points.extend(collect_resume_points(body));
             }
-            Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
                 points.extend(collect_resume_points(try_body));
                 points.extend(collect_resume_points(catch_body));
                 points.extend(collect_resume_points(finally_body));
@@ -126,7 +147,11 @@ pub fn collect_resume_points(stmts: &[Statement]) -> Vec<ResumePoint> {
 // Check if an expression is a ResumeGenerator call (gen.resume()).
 pub fn is_resume_call(expr: &Expression) -> bool {
     if let Expression::Call { callee, .. } = expr {
-        if let Expression::Member { property: PropertyKey::Ident(name), .. } = callee.as_ref() {
+        if let Expression::Member {
+            property: PropertyKey::Ident(name),
+            ..
+        } = callee.as_ref()
+        {
             return name == "resume";
         }
     }
@@ -139,7 +164,11 @@ pub fn has_generator_patterns(stmts: &[Statement]) -> bool {
         match stmt {
             Statement::Comment(c) if c.starts_with("__yield_point__:") => return true,
             Statement::Comment(c) if c == "StartGenerator" => return true,
-            Statement::If { then_body, else_body, .. } => {
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 if has_generator_patterns(then_body) || has_generator_patterns(else_body) {
                     return true;
                 }
@@ -149,7 +178,12 @@ pub fn has_generator_patterns(stmts: &[Statement]) -> bool {
                     return true;
                 }
             }
-            Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
                 if has_generator_patterns(try_body)
                     || has_generator_patterns(catch_body)
                     || has_generator_patterns(finally_body)

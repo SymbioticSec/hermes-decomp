@@ -1,9 +1,13 @@
-use hbc_decomp::{BytecodeFile, BytecodeFormat, DecompileOptionsV2, IRBuilder, IRBuilderOptions, StructureAnalysis, ClosureInfo, Decompiler};
+use hbc_decomp::{
+    BytecodeFile, BytecodeFormat, ClosureInfo, DecompileOptionsV2, Decompiler, IRBuilder,
+    IRBuilderOptions, StructureAnalysis,
+};
+use regex::Regex;
 use std::collections::HashSet;
 use std::error::Error;
-use regex::Regex;
+use std::fmt::Write as _;
 
-/// Decompile a function and expand all referenced functions up to a certain depth.
+// Decompile a function and expand all referenced functions up to a certain depth.
 pub fn decompile_with_expansion(
     file: &BytecodeFile,
     format: &BytecodeFormat,
@@ -69,6 +73,7 @@ pub fn print_closure_info(
     let options = IRBuilderOptions {
         resolve_strings: true,
         include_offsets: false,
+        ..Default::default()
     };
     let mut builder = IRBuilder::new(file, format, options);
     let cfg = builder.build_function(function_id)?;
@@ -120,4 +125,112 @@ pub fn expand_json(
     Ok(json)
 }
 
+// Format the section header table for assembly mode output.
+fn format_section_header(
+    file: &BytecodeFile,
+    file_path: &str,
+    file_size: usize,
+) -> String {
+    let mut out = String::new();
 
+    let layout_str = match file.header.layout {
+        hbc_decomp::HeaderLayout::Legacy => "Legacy",
+        hbc_decomp::HeaderLayout::Modern => "Modern",
+    };
+
+    let hash_hex: String = file.header.source_hash.iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+
+    let _ = writeln!(out, "=== Hermes Bytecode v{} ({}) ===", file.header.version, layout_str);
+    let _ = writeln!(out, "File: {} ({} bytes)", file_path, format_count(file_size as u32));
+    let _ = writeln!(out, "Source hash: {hash_hex}");
+    let _ = writeln!(out);
+
+    // Section table header
+    let _ = writeln!(out,
+        "{:<24} {:>10}  {:>12}  {:>5}  {:>8}",
+        "Section", "Offset", "Size", "%", "Entries"
+    );
+    let _ = writeln!(out, "{}", "\u{2500}".repeat(68));
+
+    for sec in &file.sections {
+        let pct = if file_size > 0 {
+            (sec.size as f64 / file_size as f64) * 100.0
+        } else {
+            0.0
+        };
+        let entries_str = match sec.entries {
+            Some(n) => format_count(n).to_string(),
+            None => String::new(),
+        };
+        let _ = writeln!(out,
+            "{:<24} 0x{:08x}  {:>10}  {:>4.1}%  {:>8}",
+            sec.name, sec.offset, format_size(sec.size as usize), pct, entries_str
+        );
+    }
+
+    let _ = writeln!(out, "{}", "\u{2500}".repeat(68));
+    let _ = writeln!(out);
+    out
+}
+
+// Format a byte size with comma separators and unit suffix.
+fn format_size(bytes: usize) -> String {
+    if bytes == 0 {
+        return "0 B".to_string();
+    }
+    format!("{} B", format_count(bytes as u32))
+}
+
+// Format a number with comma separators.
+fn format_count(n: u32) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, ch) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(ch);
+    }
+    result.chars().rev().collect()
+}
+
+// Post-process decompiled output for assembly mode.
+//
+// Converts inline `// @XXXXXXXX` offset comments into left-margin offsets
+// in Binary Ninja style: `0xXXXXXXXX | code here`.
+pub fn format_assembly_output(
+    raw_output: &str,
+    file: &BytecodeFile,
+    file_path: &str,
+    file_size: usize,
+) -> String {
+    let header = format_section_header(file, file_path, file_size);
+    let mut out = header;
+
+    // Regex to match offset comment lines: "// @XXXXXXXX" (8 hex digits for absolute offsets)
+    let offset_re = Regex::new(r"^\s*// @([0-9a-fA-F]{8})\s*$").unwrap();
+
+    let mut current_offset: Option<String> = None;
+    let margin_empty = "           | ";
+    // margin_empty is "           | " (11 chars for "0x" + 8 hex + " | ")
+
+    for line in raw_output.lines() {
+        if let Some(caps) = offset_re.captures(line) {
+            // This is an offset marker line — store the offset and skip the line
+            current_offset = Some(caps[1].to_string());
+            continue;
+        }
+
+        // Emit the line with the current offset as left margin
+        if let Some(ref offset) = current_offset {
+            let _ = writeln!(out, "0x{offset} | {line}");
+            current_offset = None;
+        } else {
+            let _ = writeln!(out, "{margin_empty}{line}");
+        }
+    }
+
+    out
+}
