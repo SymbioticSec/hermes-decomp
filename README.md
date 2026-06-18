@@ -1,15 +1,28 @@
 # Hermes Bytecode Decompiler
 
+[![Build](https://github.com/SymbioticSec/hermes-decomp/actions/workflows/build.yml/badge.svg)](https://github.com/SymbioticSec/hermes-decomp/actions/workflows/build.yml)
+
 A Rust-based decompiler for Hermes bytecode files (`.hbc`), the JavaScript engine used by React Native applications.
 
 ## Installation
 
-### Prerequisites
+### Download pre-built binaries
+
+Every push is built automatically by GitHub Actions for **Linux**, **macOS** (Apple Silicon), and **Windows**.
+Grab the latest binaries (`hermes-decomp` and the `hermes-mcp` server) from the
+[Actions tab](https://github.com/SymbioticSec/hermes-decomp/actions/workflows/build.yml):
+open the most recent successful run and download the artifact for your platform:
+
+- `hermes-decomp-x86_64-unknown-linux-gnu`
+- `hermes-decomp-aarch64-apple-darwin`
+- `hermes-decomp-x86_64-pc-windows-msvc`
+
+### Build from Source
+
+#### Prerequisites
 
 - Rust 1.70 or later
 - Cargo (comes with Rust)
-
-### Build from Source
 
 ```bash
 git clone https://github.com/SymbioticSec/hermes-decomp.git
@@ -17,7 +30,7 @@ cd hermes-decomp
 cargo build --release
 ```
 
-The binary will be at `target/release/hermes-decomp`.
+The binaries will be at `target/release/hermes-decomp` and `target/release/hermes-mcp`.
 
 ## Usage
 
@@ -42,17 +55,21 @@ hermes-decomp disasm app.hbc --function 5 --output disasm.txt
 ![Disassembly Example](disasm.png)
 
 **3. Decompile**
-Two decompile commands are available: `decompile` (legacy) and `decompile` (advanced, recommended).
-Both share the same options.
+Lift bytecode into readable JavaScript (with control-flow recovery, naming, and ESM output for Metro bundles).
 ```bash
 hermes-decomp decompile app.hbc --output decompiled.js
-hermes-decomp decompile app.hbc --function 5
 hermes-decomp decompile app.hbc --function 5
 # Options:
 #   --resolve-closures    Closure resolution across functions (auto-enabled when decompiling all)
 #   --expand              Inline referenced functions
 #   --expand-depth N      Expansion depth (default: 2)
 #   --show-offsets        Include bytecode offsets as comments
+#   --no-strings          Don't resolve string IDs
+#   --no-propagate        Disable constant/copy propagation
+#   --no-simplify         Disable expression simplification
+#   --no-structure        Disable if/while/for reconstruction
+#   --check-dead-code     Report functions unreachable from Metro roots
+#   --assembly            Binary Ninja-style output with absolute offsets
 #   --json                Export IR as JSON instead of JS
 ```
 
@@ -237,6 +254,20 @@ Hermes is a JavaScript engine optimized for React Native. Unlike V8 or JSC which
     *   **Structure Recovery**: Reconstructing `if`, `while`, `for` loops from graph edges.
     *   **Pattern Matching**: Detecting `class`, `async`, `generator` state machines.
 5.  **Code Generation**: The optimized IR is converted back into valid JavaScript syntax.
+
+## Contributing
+
+Contributions are welcome!
+
+**Please open an issue first** before submitting a pull request. This lets us discuss the
+problem or feature, avoid duplicate work, and agree on an approach before any code is written.
+
+1. [Open an issue](https://github.com/SymbioticSec/hermes-decomp/issues/new) describing the bug or feature.
+2. Wait for feedback / confirmation that a PR is welcome.
+3. Fork the repo and create a branch from `main`.
+4. Make your change and ensure `cargo build --release --workspace` and `cargo test --workspace` pass.
+   The CI builds on Linux, macOS, and Windows — keep all three green.
+5. Open a pull request that references the issue.
 
 ## Resources
 
