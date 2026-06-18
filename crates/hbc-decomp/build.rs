@@ -50,12 +50,14 @@ fn main() {
     .unwrap();
     writeln!(out_file, "    match version {{").unwrap();
     for version in &versions {
-        let file_name = format!("Bytecode{version}.json");
-        let rel_path = Path::new("resources").join("bytecode").join(file_name);
+        // Use forward slashes: this string is embedded into an include_str! literal,
+        // and a backslash path (from Path::join on Windows) would create invalid
+        // escape sequences such as `\b` in the generated source file.
+        let rel_path = format!("resources/bytecode/Bytecode{version}.json");
         writeln!(
             out_file,
             "        {version} => Some(include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/\", \"{}\"))),",
-            rel_path.display()
+            rel_path
         )
         .unwrap();
     }
