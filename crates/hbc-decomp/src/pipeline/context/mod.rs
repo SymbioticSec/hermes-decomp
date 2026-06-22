@@ -39,7 +39,7 @@ impl PipelineContext {
 
     // Run the full analysis pipeline with user-provided options.
     pub fn build_with_options(file: &BytecodeFile, format: &BytecodeFormat, user_options: &DecompileOptionsV2) -> Result<Self> {
-        Self::init_rayon();
+        crate::configure_thread_pool();
 
         let total_start = std::time::Instant::now();
         let options = DecompileOptionsV2 {
@@ -88,14 +88,6 @@ impl PipelineContext {
         Ok(ctx)
     }
 
-    fn init_rayon() {
-        static INIT_RAYON: std::sync::Once = std::sync::Once::new();
-        INIT_RAYON.call_once(|| {
-            let _ = rayon::ThreadPoolBuilder::new()
-                .stack_size(8 * 1024 * 1024)
-                .build_global();
-        });
-    }
 
     // Phase 1b: Detect Metro modules by scanning the global function with minimal IR.
     fn build_metro_registry(file: &BytecodeFile, format: &BytecodeFormat) -> crate::analysis::MetroRegistry {

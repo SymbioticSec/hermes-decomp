@@ -24,11 +24,19 @@ pub fn handle_switch_imm(
     let table_start_local = inst.offset as usize + jmp_table_idx as usize;
     let table_start_global = table_start_local + func_bytecode_offset as usize;
 
-    let count = (max_val - min_val + 1) as usize;
-    let mut cases = Vec::with_capacity(count);
+    // Malformed bytecode can have maxVal < minVal; a plain `max_val - min_val`
+    // underflows (panics in debug, wraps to ~4 billion in release and then
+    // blows up Vec::with_capacity). Reject the bad range instead.
+    let Some(span) = max_val.checked_sub(min_val) else {
+        return Some(FlowResult::Statement(Statement::Comment(format!(
+            "SwitchImm: invalid range (maxVal {max_val} < minVal {min_val})"
+        ))));
+    };
+    let count = span as usize + 1;
 
-    // Ensure we don't read past end of file
-    if table_start_global + count * 4 > file.instructions.len() {
+    // Bounds-check BEFORE allocating so a huge (or corrupt) table can't trigger
+    // a capacity-overflow abort in Vec::with_capacity.
+    if table_start_global.saturating_add(count.saturating_mul(4)) > file.instructions.len() {
         return Some(FlowResult::Statement(Statement::Comment(format!(
             "SwitchImm: jump table out of bounds (start={}, count={}, len={})",
             table_start_global,
@@ -36,6 +44,8 @@ pub fn handle_switch_imm(
             file.instructions.len()
         ))));
     }
+
+    let mut cases = Vec::with_capacity(count);
 
     use crate::io::ByteReader;
     let mut reader = ByteReader::new(&file.instructions[table_start_global..]);

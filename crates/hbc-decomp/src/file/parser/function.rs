@@ -9,7 +9,7 @@ pub fn parse_function_headers(
     reader: &mut ByteReader<'_>,
     header: &BytecodeHeader,
 ) -> Result<Vec<FunctionHeader>> {
-    let mut headers = Vec::with_capacity(header.function_count as usize);
+    let mut headers = Vec::with_capacity(reader.capacity_hint(header.function_count as usize));
     for function_id in 0..header.function_count {
         let current_pos = reader.position();
         let function_header = match header.function_header_layout {

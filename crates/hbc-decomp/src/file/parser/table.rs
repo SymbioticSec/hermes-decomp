@@ -5,7 +5,7 @@ use crate::file::structure::{
 use crate::io::ByteReader;
 
 pub fn parse_string_kinds(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<StringKindEntry>> {
-    let mut entries = Vec::with_capacity(count as usize);
+    let mut entries = Vec::with_capacity(reader.capacity_hint(count as usize));
     for _ in 0..count {
         let raw = reader.read_u32()?;
         let kind = if (raw & (1 << 31)) == 0 {
@@ -23,7 +23,7 @@ pub fn parse_overflow_string_table(
     reader: &mut ByteReader<'_>,
     count: u32,
 ) -> Result<Vec<(u32, u32)>> {
-    let mut entries = Vec::with_capacity(count as usize);
+    let mut entries = Vec::with_capacity(reader.capacity_hint(count as usize));
     for _ in 0..count {
         let offset = reader.read_u32()?;
         let length = reader.read_u32()?;
@@ -33,7 +33,7 @@ pub fn parse_overflow_string_table(
 }
 
 pub fn parse_u32_vec(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<u32>> {
-    let mut values = Vec::with_capacity(count as usize);
+    let mut values = Vec::with_capacity(reader.capacity_hint(count as usize));
     for _ in 0..count {
         values.push(reader.read_u32()?);
     }
@@ -41,7 +41,7 @@ pub fn parse_u32_vec(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<u32>
 }
 
 pub fn parse_table_entries(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<TableEntry>> {
-    let mut entries = Vec::with_capacity(count as usize);
+    let mut entries = Vec::with_capacity(reader.capacity_hint(count as usize));
     for _ in 0..count {
         let offset = reader.read_u32()?;
         let length = reader.read_u32()?;
@@ -51,7 +51,7 @@ pub fn parse_table_entries(reader: &mut ByteReader<'_>, count: u32) -> Result<Ve
 }
 
 pub fn parse_shape_table(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<ShapeTableEntry>> {
-    let mut entries = Vec::with_capacity(count as usize);
+    let mut entries = Vec::with_capacity(reader.capacity_hint(count as usize));
     for _ in 0..count {
         let key_buffer_offset = reader.read_u32()?;
         let num_props = reader.read_u32()?;
@@ -64,7 +64,7 @@ pub fn parse_shape_table(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<
 }
 
 pub fn parse_pair_table(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<(u32, u32)>> {
-    let mut entries = Vec::with_capacity(count as usize);
+    let mut entries = Vec::with_capacity(reader.capacity_hint(count as usize));
     for _ in 0..count {
         let first = reader.read_u32()?;
         let second = reader.read_u32()?;
@@ -80,11 +80,15 @@ pub fn decode_string_table(
     overflow_entries: &[(u32, u32)],
     storage: &[u8],
 ) -> Result<Vec<StringTableEntry>> {
-    let mut expanded_kinds = Vec::with_capacity(string_count as usize);
+    // A corrupt or mis-read header can carry a string_count far larger than the
+    // actual small-entry table; clamp so both the allocations and the loops
+    // below stay bounded (for valid files the two are equal anyway).
+    let count = (string_count as usize).min(small_entries.len());
+    let mut expanded_kinds = Vec::with_capacity(count);
     let mut kind_index = 0usize;
     let mut remaining = kinds.first().map(|k| k.count).unwrap_or(0);
 
-    for _ in 0..string_count {
+    for _ in 0..count {
         if remaining == 0 {
             kind_index += 1;
             remaining = kinds.get(kind_index).map(|k| k.count).unwrap_or(0);
@@ -97,10 +101,10 @@ pub fn decode_string_table(
         remaining = remaining.saturating_sub(1);
     }
 
-    let mut strings = Vec::with_capacity(string_count as usize);
+    let mut strings = Vec::with_capacity(count);
     let mut overflow_index = 0usize;
 
-    for i in 0..string_count as usize {
+    for i in 0..count {
         let raw = small_entries
             .get(i)
             .copied()

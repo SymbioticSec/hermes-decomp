@@ -29,6 +29,23 @@
 // Suppress collapsible_match/collapsible_if: fixing these requires unstable let-chains (RFC #53667)
 #![allow(clippy::collapsible_match, clippy::collapsible_if)]
 
+/// Configure the global Rayon thread pool with a large worker stack.
+///
+/// Decompilation recurses deeply (CFG structure recovery, closure resolution)
+/// and runs across Rayon workers. Rayon's default worker stack (~2 MB) overflows
+/// and aborts the process on large real-world bundles (e.g. a Metro `global`
+/// function). Call this once at program start — before any decompilation — so
+/// every worker gets enough stack. It is idempotent and best-effort: if the pool
+/// is already initialized it does nothing.
+pub fn configure_thread_pool() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .stack_size(64 * 1024 * 1024)
+            .build_global();
+    });
+}
+
 pub mod debug;
 pub mod disasm;
 pub mod error;

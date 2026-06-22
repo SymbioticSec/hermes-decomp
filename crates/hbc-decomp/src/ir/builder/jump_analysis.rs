@@ -75,9 +75,13 @@ pub fn find_block_starts_with_handlers(
                     // Read jump table: jmpTableIdx is a byte offset from the SwitchImm instruction
                     let table_start_local = inst.offset as usize + jmp_table_idx as usize;
                     let table_start_global = table_start_local + func_bytecode_offset as usize;
-                    let count = (max_val - min_val + 1) as usize;
+                    // Guard against maxVal < minVal (would underflow) in malformed bytecode.
+                    let count = max_val.checked_sub(min_val).map_or(0, |span| span as usize + 1);
 
-                    if table_start_global + count * 4 <= file.instructions.len() {
+                    if count > 0
+                        && table_start_global.saturating_add(count.saturating_mul(4))
+                            <= file.instructions.len()
+                    {
                         use crate::io::ByteReader;
                         let mut reader = ByteReader::new(&file.instructions[table_start_global..]);
                         for _ in 0..count {

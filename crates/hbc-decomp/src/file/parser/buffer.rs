@@ -33,7 +33,7 @@ pub fn read_buffer_series(
     }
 
     let mut reader = ByteReader::new(&buffer[offset as usize..]);
-    let mut values = Vec::with_capacity(count as usize);
+    let mut values = Vec::with_capacity(reader.capacity_hint(count as usize));
 
     while values.len() < count as usize {
         let (tag, length) = read_buffer_tag(&mut reader)?;
