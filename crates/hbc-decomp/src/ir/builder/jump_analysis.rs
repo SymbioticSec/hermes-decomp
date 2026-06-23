@@ -31,7 +31,7 @@ pub fn find_block_starts_with_handlers(
         // Instructions that end a block - next instruction starts a new block
         if matches!(name, "Ret" | "Throw" | "Jmp" | "JmpLong") {
             // The instruction after this one starts a new block (if it exists)
-            let next_offset = inst.offset + inst.length;
+            let next_offset = inst.offset.wrapping_add(inst.length);
             targets.insert(next_offset);
         }
 
@@ -40,7 +40,7 @@ pub fn find_block_starts_with_handlers(
             for operand in &inst.operands {
                 if matches!(operand.ty, OperandType::Addr8 | OperandType::Addr32) {
                     if let Some(rel) = operand.value.as_i32() {
-                        let target = inst.offset as i32 + rel;
+                        let target = (inst.offset as i32).wrapping_add(rel);
                         if target >= 0 {
                             targets.insert(target as u32);
                         }
@@ -49,7 +49,7 @@ pub fn find_block_starts_with_handlers(
             }
             // Conditional jumps also have a fall-through to next instruction
             if is_conditional_jump(name) {
-                targets.insert(inst.offset + inst.length);
+                targets.insert(inst.offset.wrapping_add(inst.length));
             }
         }
 
@@ -69,12 +69,12 @@ pub fn find_block_starts_with_handlers(
                     max_op.value.as_u32(),
                 ) {
                     // Default target
-                    let default_target = (inst.offset as i32 + default_offset) as u32;
+                    let default_target = (inst.offset as i32).wrapping_add(default_offset) as u32;
                     targets.insert(default_target);
 
                     // Read jump table: jmpTableIdx is a byte offset from the SwitchImm instruction
-                    let table_start_local = inst.offset as usize + jmp_table_idx as usize;
-                    let table_start_global = table_start_local + func_bytecode_offset as usize;
+                    let table_start_local = (inst.offset as usize).saturating_add(jmp_table_idx as usize);
+                    let table_start_global = table_start_local.saturating_add(func_bytecode_offset as usize);
                     // Guard against maxVal < minVal (would underflow) in malformed bytecode.
                     let count = max_val.checked_sub(min_val).map_or(0, |span| span as usize + 1);
 
@@ -86,7 +86,7 @@ pub fn find_block_starts_with_handlers(
                         let mut reader = ByteReader::new(&file.instructions[table_start_global..]);
                         for _ in 0..count {
                             if let Ok(rel_offset) = reader.read_i32() {
-                                let target = (inst.offset as i32 + rel_offset) as u32;
+                                let target = (inst.offset as i32).wrapping_add(rel_offset) as u32;
                                 targets.insert(target);
                             }
                         }
@@ -108,11 +108,11 @@ pub fn find_block_starts_with_handlers(
                     num_cases_op.value.as_u32(),
                     default_op.value.as_i32(),
                 ) {
-                    let default_target = (inst.offset as i32 + default_offset) as u32;
+                    let default_target = (inst.offset as i32).wrapping_add(default_offset) as u32;
                     targets.insert(default_target);
 
-                    let table_start_local = inst.offset as usize + jmp_table_idx as usize;
-                    let table_start_global = table_start_local + func_bytecode_offset as usize;
+                    let table_start_local = (inst.offset as usize).saturating_add(jmp_table_idx as usize);
+                    let table_start_global = table_start_local.saturating_add(func_bytecode_offset as usize);
                     let count = num_cases as usize;
 
                     if table_start_global + count * 4 <= file.instructions.len() {
@@ -120,7 +120,7 @@ pub fn find_block_starts_with_handlers(
                         let mut reader = ByteReader::new(&file.instructions[table_start_global..]);
                         for _ in 0..count {
                             if let Ok(rel_offset) = reader.read_i32() {
-                                let target = (inst.offset as i32 + rel_offset) as u32;
+                                let target = (inst.offset as i32).wrapping_add(rel_offset) as u32;
                                 targets.insert(target);
                             }
                         }

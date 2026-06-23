@@ -7,7 +7,7 @@ use crate::file::{BytecodeFile, LiteralValue};
 pub fn bigint_at(file: &BytecodeFile, bigint_id: u32) -> Option<String> {
     let entry = file.big_int_table.get(bigint_id as usize)?;
     let start = entry.offset as usize;
-    let end = start + entry.length as usize;
+    let end = start.checked_add(entry.length as usize)?;
 
     if end > file.big_int_storage.len() {
         return None;

@@ -56,8 +56,7 @@ fn main() {
         let rel_path = format!("resources/bytecode/Bytecode{version}.json");
         writeln!(
             out_file,
-            "        {version} => Some(include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/\", \"{}\"))),",
-            rel_path
+            "        {version} => Some(include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/\", \"{rel_path}\"))),"
         )
         .unwrap();
     }

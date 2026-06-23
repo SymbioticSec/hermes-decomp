@@ -80,7 +80,7 @@ pub fn handle_save_generator(inst: &crate::Instruction, _format: &crate::Bytecod
         _ => return None,
     };
 
-    let resume_addr = (inst.offset as i32 + resume_offset) as u32;
+    let resume_addr = (inst.offset as i32).wrapping_add(resume_offset) as u32;
 
     // SaveGenerator creates a yield point
     // We mark this with a special statement that will be transformed later

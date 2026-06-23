@@ -99,13 +99,13 @@ pub fn collect_label_offsets(
             None => continue,
         };
         if def.name == "Ret" || def.name == "Throw" || def.name == "Jmp" || def.name == "JmpLong" {
-            labels.insert(insn.offset + insn.length);
+            labels.insert(insn.offset.wrapping_add(insn.length));
         }
         if def.is_jump {
             for operand in &insn.operands {
                 if operand.ty == OperandType::Addr8 || operand.ty == OperandType::Addr32 {
                     if let Some(rel) = operand.value.as_i32() {
-                        let target = insn.offset as i32 + rel;
+                        let target = (insn.offset as i32).wrapping_add(rel);
                         if target >= 0 {
                             labels.insert(target as u32);
                         }
@@ -182,7 +182,7 @@ fn format_operand(
         OperandType::Addr8 | OperandType::Addr32 => {
             let s = match operand.value.as_i32() {
                 Some(rel) => {
-                    let target = insn.offset as i32 + rel;
+                    let target = (insn.offset as i32).wrapping_add(rel);
                     format!("L{target}")
                 }
                 None => "L?".to_string(),

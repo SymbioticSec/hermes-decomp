@@ -304,40 +304,70 @@ mod tests {
         assert!(info.scope_descriptors.is_empty());
     }
 
-    /// Build a minimal but well-formed debug section (7-field header, no
-    /// filenames/regions) wrapping the given debug-data blob, returning the
-    /// full byte buffer and the offset to pass to `DebugInfo::parse`.
-    fn wrap_debug_section(
-        data: &[u8],
-        scope_desc_offset: u32,
-        textified_callee_offset: u32,
-        string_table_offset: u32,
+    /// Build a complete, well-formed Hermes debug section: the 7-field header, a
+    /// real filename table (`{offset,length}` entries + concatenated storage)
+    /// and a file-region table, then the debug-data blob (scope descriptors,
+    /// textified callees, string table). This lays the section out exactly like
+    /// a real bundle, so it exercises the data-start arithmetic
+    /// (`28 + 8*filenameCount + filenameStorageSize + 12*fileRegionCount`) —
+    /// not a degenerate empty-table shortcut. The section offsets are derived
+    /// from the actual blob sizes. Returns (full buffer, offset for `parse`).
+    fn build_debug_section(
+        filenames: &[&str],
+        file_regions: u32,
+        scope_data: &[u8],
+        callee_data: &[u8],
+        string_table: &[u8],
     ) -> (Vec<u8>, u32) {
+        // Filename table: an {offset, length} pair per name, then the storage.
+        let mut storage = Vec::new();
+        let mut entries = Vec::new();
+        for name in filenames {
+            entries.push((storage.len() as u32, name.len() as u32));
+            storage.extend_from_slice(name.as_bytes());
+        }
+
+        // Offsets are relative to the start of the debug-data blob.
+        let scope_off = 0u32;
+        let callee_off = scope_data.len() as u32;
+        let string_off = callee_off + callee_data.len() as u32;
+        let data_size = string_off + string_table.len() as u32;
+
         let mut bytes = vec![0u8; 4]; // prefix so the offset is non-zero
         for v in [
-            0u32, // filename_count
-            0,    // filename_storage_size
-            0,    // file_region_count
-            scope_desc_offset,
-            textified_callee_offset,
-            string_table_offset,
-            data.len() as u32, // debug_data_size
+            filenames.len() as u32,
+            storage.len() as u32,
+            file_regions,
+            scope_off,
+            callee_off,
+            string_off,
+            data_size,
         ] {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
-        bytes.extend_from_slice(data); // debug data starts at prefix(4) + header(28) = 32
+        // Filename table: entries, then storage.
+        for (off, len) in &entries {
+            bytes.extend_from_slice(&off.to_le_bytes());
+            bytes.extend_from_slice(&len.to_le_bytes());
+        }
+        bytes.extend_from_slice(&storage);
+        // File regions: file_regions * 12 bytes (contents irrelevant here).
+        bytes.extend(vec![0u8; file_regions as usize * 12]);
+        // Debug data: scope descriptors, callees, string table.
+        bytes.extend_from_slice(scope_data);
+        bytes.extend_from_slice(callee_data);
+        bytes.extend_from_slice(string_table);
         (bytes, 4)
     }
 
     #[test]
-    fn test_parses_scope_names_by_index() {
-        // data: [scope desc | string table]. One scope: parent=-1 (0x7f),
-        // flags=0, name_count=1, name_idx=0 -> "hi".
-        let data = [
-            0x7f, 0x00, 0x01, 0x00, // scope desc (offsets 0..4)
-            0x02, b'h', b'i', // string table (offsets 4..7): one string "hi"
-        ];
-        let (bytes, off) = wrap_debug_section(&data, 0, 4, 4);
+    fn test_parses_real_section_with_filenames_and_regions() {
+        // One scope: parent=-1 (0x7f), flags=0, name_count=1, name_idx=0 -> "hi".
+        let scope = [0x7f, 0x00, 0x01, 0x00];
+        let strings = [0x02, b'h', b'i']; // string table: one entry "hi"
+        // Two filenames + one file region so data_start =
+        // 28 + 8*2 + len("app.js"=6)+len("b.js"=4) + 12*1 = 28+16+10+12 = 66.
+        let (bytes, off) = build_debug_section(&["app.js", "b.js"], 1, &scope, &[], &strings);
         let info = DebugInfo::parse(&bytes, off).unwrap();
         assert_eq!(info.string_table, vec!["hi".to_string()]);
         assert_eq!(info.scope_descriptors.len(), 1);
@@ -351,9 +381,9 @@ mod tests {
     // clean result instead, never panicking, for any input.
     #[test]
     fn test_malformed_debug_info_never_panics() {
-        // Poison name_count (-1) in the scope region.
-        let data = [0x7f, 0x00, 0x7f]; // parent=-1, flags=0, name_count=-1
-        let (bytes, off) = wrap_debug_section(&data, 0, 3, 3);
+        // Poison name_count (-1) in the scope region of an otherwise valid section.
+        let scope = [0x7f, 0x00, 0x7f]; // parent=-1, flags=0, name_count=-1
+        let (bytes, off) = build_debug_section(&["a.js"], 1, &scope, &[], &[]);
         let info = DebugInfo::parse(&bytes, off).expect("must not panic");
         assert!(info.scope_descriptors.is_empty());
 

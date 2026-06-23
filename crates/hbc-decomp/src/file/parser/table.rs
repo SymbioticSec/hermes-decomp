@@ -126,11 +126,12 @@ pub fn decode_string_table(
         };
 
         let value = if is_utf16 {
-            let byte_len = (length as usize) * 2;
+            // saturating math: an overflowing offset/length just fails the
+            // bounds check below and yields "<invalid>" instead of panicking.
+            let byte_len = (length as usize).saturating_mul(2);
             let start = offset as usize;
-            let end = start + byte_len;
+            let end = start.saturating_add(byte_len);
 
-            // Check bounds strictly to safely panic/error if out of bounds
             if start >= storage.len() || end > storage.len() {
                 "<invalid utf16>".to_string()
             } else {
@@ -143,7 +144,7 @@ pub fn decode_string_table(
             }
         } else {
             let start = offset as usize;
-            let end = start + length as usize;
+            let end = start.saturating_add(length as usize);
             if start >= storage.len() || end > storage.len() {
                 "<invalid utf8>".to_string()
             } else {

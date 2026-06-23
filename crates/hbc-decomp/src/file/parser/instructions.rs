@@ -20,7 +20,9 @@ pub fn decode_function_instructions(
 
     let size = header.bytecode_size_in_bytes() as usize;
     let start = func_offset as usize;
-    let end = start + size;
+    let end = start.checked_add(size).ok_or_else(|| {
+        Error::Parse(format!("function {function_id} bytecode offset overflow"))
+    })?;
     if end > file.instructions.len() {
         return Err(Error::Parse(format!(
             "function {function_id} bytecode out of range"
