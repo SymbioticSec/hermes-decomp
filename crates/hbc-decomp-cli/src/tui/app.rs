@@ -1,12 +1,14 @@
+use ratatui::layout::Rect;
 use ratatui::text::Text;
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc::Receiver, Arc};
 use std::time::Instant;
 
-use hbc_decomp::{BytecodeFile, BytecodeFormat, ClosureContext, PipelineContext};
+use hbc_decomp::{BytecodeFile, BytecodeFormat, PipelineContext};
 
 use super::debug_log;
+use super::gitdiff::{self, GitDiffJob, GitMsg, GitRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode {
@@ -77,12 +79,6 @@ pub struct App {
     pub disasm_cache2: HashMap<usize, Text<'static>>,
     pub decompile_cache2: HashMap<usize, String>,
 
-    // Optional closure contexts for higher-quality v2 pseudocode.
-    pub closure_ctx: Option<ClosureContext>,
-    pub closure_ctx2: Option<ClosureContext>,
-    pub closure_ctx_attempted: bool,
-    pub closure_ctx2_attempted: bool,
-
     // Diff status for each function (by name)
     pub diff_status: HashMap<String, DiffStatus>,
     pub diff_rx: Option<Receiver<DiffProgressMsg>>,
@@ -97,11 +93,43 @@ pub struct App {
     // Toggle for content diff highlighting
     pub show_diff_colors: bool,
 
-    // Toggle for the unified (git-style, single column) diff view.
-    pub diff_unified: bool,
+    // Full-program "git" diff mode: hides the function list and shows all code
+    // of file 1 (left) vs file 2 (right), aligned. Computed off-thread.
+    pub git_diff: bool,
+    pub git_rows: Arc<Vec<GitRow>>,
+    pub git_rx: Option<Receiver<GitMsg>>,
+    pub git_computing: bool,
+    pub git_progress: (usize, usize),
+    pub git_built_kind: Option<ViewMode>,
+    // Git-diff content kind. Defaults to Disasm: it needs no decompiler pipeline
+    // so it shows instantly; `v` switches to Decompile (which waits for the
+    // pipeline). Independent from the split-view `diff_kind`.
+    pub git_kind: ViewMode,
+    // Ignore volatile Metro ids (module_955 vs module_769) in the git diff.
+    pub git_normalize: bool,
+    // In-view search for the git diff.
+    pub git_search: String,
+    pub git_searching: bool,
+    pub git_match_count: usize,
+    // 1-based index of the match the view is currently on (0 = none).
+    pub git_match_index: usize,
+    // Syntax-highlight the code in the git diff (vs. plain diff tint).
+    pub git_syntax: bool,
+    // Collapsed functions (by their header index in git_rows).
+    pub git_folded: std::collections::HashSet<usize>,
+    // Display order: indices into git_rows that are currently visible (respects
+    // folds). `scroll` indexes into this, not git_rows directly.
+    pub git_visible: Vec<usize>,
+    // Inner area of the git columns (set during draw) for click-to-fold.
+    pub git_view_top: u16,
+    pub git_view_height: u16,
+    // Frame counter, advanced each loop, for animating the loading spinner.
+    pub tick: usize,
 
     // Persistent list state for function list scrolling
     pub list_state: ListState,
+    // Inner area of the function list (set during draw), for click-to-select.
+    pub list_inner: Rect,
 
     // Full pipeline context (IPA, Metro, naming) — built in background
     pub pipeline_ctx: Option<Arc<PipelineContext>>,
@@ -198,10 +226,6 @@ impl App {
             decompile_cache: HashMap::new(),
             disasm_cache2: HashMap::new(),
             decompile_cache2: HashMap::new(),
-            closure_ctx: None,
-            closure_ctx2: None,
-            closure_ctx_attempted: false,
-            closure_ctx2_attempted: false,
             diff_status: HashMap::new(),
             diff_rx: None,
             diff_analyzing: false,
@@ -214,8 +238,28 @@ impl App {
                 DiffMode::Assembly
             },
             show_diff_colors: true, // Default to true as user requested colors
-            diff_unified: false,
+            git_diff: false,
+            git_rows: Arc::new(Vec::new()),
+            git_rx: None,
+            git_computing: false,
+            git_progress: (0, 0),
+            git_built_kind: None,
+            // Decompiled by default — it streams per function now, so there's
+            // no opaque wait; `v` toggles to disassembly.
+            git_kind: ViewMode::Decompile,
+            git_normalize: true,
+            git_search: String::new(),
+            git_searching: false,
+            git_match_count: 0,
+            git_match_index: 0,
+            git_syntax: false,
+            git_folded: std::collections::HashSet::new(),
+            git_visible: Vec::new(),
+            git_view_top: 0,
+            git_view_height: 0,
+            tick: 0,
             list_state: ListState::default().with_selected(Some(0)),
+            list_inner: Rect::default(),
             pipeline_ctx: None,
             pipeline_rx: None,
             pipeline_building: false,
@@ -260,58 +304,44 @@ impl App {
             app.known_names = app.all_function_names.iter().cloned().collect();
         }
 
-        // Spawn background pipeline build (IPA, Metro, naming) for file 1
-        {
-            let file = app.file.clone();
-            let format = app.format.clone();
-            let (tx, rx) = std::sync::mpsc::channel();
-            app.pipeline_rx = Some(rx);
-            app.pipeline_building = true;
-            std::thread::spawn(move || {
-                debug_log("[TUI] Pipeline build (file 1) started...");
-                let start = Instant::now();
-                match PipelineContext::build(&file, &format) {
-                    Ok(ctx) => {
-                        debug_log(&format!(
-                            "[TUI] Pipeline build (file 1) done in {:.2?}",
-                            start.elapsed()
-                        ));
-                        let _ = tx.send(ctx);
-                    }
-                    Err(e) => {
-                        debug_log(&format!("[TUI] Pipeline build (file 1) failed: {e}"));
-                    }
-                }
-            });
-        }
-
-        // Spawn background pipeline build for file 2 (diff mode)
-        if let (Some(file2), Some(format2)) = (&app.file2, &app.format2) {
-            let file2 = file2.clone();
-            let format2 = format2.clone();
-            let (tx, rx) = std::sync::mpsc::channel();
-            app.pipeline_rx2 = Some(rx);
-            app.pipeline_building2 = true;
-            std::thread::spawn(move || {
-                debug_log("[TUI] Pipeline build (file 2) started...");
-                let start = Instant::now();
-                match PipelineContext::build(&file2, &format2) {
-                    Ok(ctx) => {
-                        debug_log(&format!(
-                            "[TUI] Pipeline build (file 2) done in {:.2?}",
-                            start.elapsed()
-                        ));
-                        let _ = tx.send(ctx);
-                    }
-                    Err(e) => {
-                        debug_log(&format!("[TUI] Pipeline build (file 2) failed: {e}"));
-                    }
-                }
-            });
-        }
-
+        // The decompiler pipeline (IPA, Metro, naming) is built lazily — it
+        // takes several seconds per file and would otherwise saturate all CPU
+        // cores at startup, starving the (instant) disassembly views and making
+        // the UI lag. It's kicked off the first time decompiled output is asked
+        // for (Decompile view, or the git diff's `v`).
         debug_log(&format!("[TUI] App::new done in {:.2?}", total_start.elapsed()));
         app
+    }
+
+    /// Start building the decompiler pipeline context(s) in the background, if
+    /// not already built or in progress. Idempotent.
+    pub fn ensure_pipeline_building(&mut self) {
+        if self.pipeline_ctx.is_none() && !self.pipeline_building {
+            let file = self.file.clone();
+            let format = self.format.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.pipeline_rx = Some(rx);
+            self.pipeline_building = true;
+            std::thread::spawn(move || match PipelineContext::build(&file, &format) {
+                Ok(ctx) => {
+                    let _ = tx.send(ctx);
+                }
+                Err(e) => debug_log(&format!("[pipeline] file 1 build failed: {e}")),
+            });
+        }
+        if let (Some(file2), Some(format2)) = (self.file2.clone(), self.format2.clone()) {
+            if self.pipeline_ctx2.is_none() && !self.pipeline_building2 {
+                let (tx, rx) = std::sync::mpsc::channel();
+                self.pipeline_rx2 = Some(rx);
+                self.pipeline_building2 = true;
+                std::thread::spawn(move || match PipelineContext::build(&file2, &format2) {
+                    Ok(ctx) => {
+                        let _ = tx.send(ctx);
+                    }
+                    Err(e) => debug_log(&format!("[pipeline] file 2 build failed: {e}")),
+                });
+            }
+        }
     }
 
     // calculate_diff_status method removed (moved to module)
@@ -382,6 +412,20 @@ impl App {
         None
     }
 
+    /// Select the function clicked at the given terminal cell, if it falls
+    /// inside the function list.
+    pub fn select_at_row(&mut self, col: u16, row: u16) {
+        let a = self.list_inner;
+        let inside = col >= a.x && col < a.x + a.width && row >= a.y && row < a.y + a.height;
+        if !inside {
+            return;
+        }
+        let idx = self.list_state.offset() + (row - a.y) as usize;
+        if idx < self.function_names.len() {
+            self.set_selected(idx);
+        }
+    }
+
     pub fn set_selected(&mut self, index: usize) {
         if self.selected != index {
             self.selected = index;
@@ -412,6 +456,159 @@ impl App {
                 _ => ViewMode::Disasm,
             };
             self.scroll = 0;
+        }
+    }
+
+    /// Drop the cached git-diff rows (e.g. after switching disasm/decompile),
+    /// so the next `request_git_diff` recomputes.
+    pub fn invalidate_git_diff(&mut self) {
+        self.git_rows = Arc::new(Vec::new());
+        self.git_built_kind = None;
+        self.git_rx = None;
+        self.git_computing = false;
+        self.git_progress = (0, 0);
+        self.git_folded.clear();
+        self.git_visible.clear();
+    }
+
+    /// Recompute which git_rows are visible given the current fold state. Folded
+    /// functions show only their header; their body rows are hidden.
+    pub fn rebuild_git_visible(&mut self) {
+        let mut visible = Vec::with_capacity(self.git_rows.len());
+        let mut hiding = false;
+        for (i, row) in self.git_rows.iter().enumerate() {
+            match row {
+                GitRow::Header(_) => {
+                    hiding = self.git_folded.contains(&i);
+                    visible.push(i);
+                }
+                _ => {
+                    if !hiding {
+                        visible.push(i);
+                    }
+                }
+            }
+        }
+        self.git_visible = visible;
+    }
+
+    /// Toggle the fold of the function whose header is at the given display row
+    /// (terminal cell). No-op if the click isn't on a header.
+    pub fn git_toggle_fold_at(&mut self, row: u16) {
+        if row < self.git_view_top {
+            return;
+        }
+        let pos = self.scroll as usize + (row - self.git_view_top) as usize;
+        let Some(&ri) = self.git_visible.get(pos) else {
+            return;
+        };
+        if matches!(self.git_rows.get(ri), Some(GitRow::Header(_))) {
+            if !self.git_folded.remove(&ri) {
+                self.git_folded.insert(ri);
+            }
+            self.rebuild_git_visible();
+        }
+    }
+
+    /// Kick off the background build of the full-program git diff if it is
+    /// enabled and not already built/building for the current kind. Both disasm
+    /// and decompiled modes stream per function off-thread, so neither waits for
+    /// the full PipelineContext to build.
+    /// Safe to call every tick — it early-returns when there's nothing to do.
+    pub fn request_git_diff(&mut self) {
+        if !self.git_diff || self.git_computing || self.git_built_kind == Some(self.git_kind) {
+            return;
+        }
+        let (Some(file2), Some(format2)) = (self.file2.clone(), self.format2.clone()) else {
+            return;
+        };
+
+        // Build the full A->Z list directly from both files' function maps
+        // (always complete from startup), not from the diff worker's
+        // incrementally-populated list. file 1 functions first, then file-2-only
+        // (added) ones, both sorted by name.
+        let mut names: Vec<String> = self.map1.keys().cloned().collect();
+        names.sort();
+        let mut added: Vec<String> = self
+            .map2
+            .keys()
+            .filter(|n| !self.map1.contains_key(*n))
+            .cloned()
+            .collect();
+        added.sort();
+        names.extend(added);
+
+        let total = names.len();
+        let job = GitDiffJob {
+            names,
+            map1: self.map1.clone(),
+            map2: self.map2.clone(),
+            diff_status: self.diff_status.clone(),
+            file1: Arc::clone(&self.file),
+            file2,
+            format1: Arc::clone(&self.format),
+            format2,
+            kind: self.git_kind,
+            normalize: self.git_normalize,
+        };
+        self.git_rows = Arc::new(Vec::new());
+        self.git_visible.clear();
+        self.git_folded.clear();
+        self.git_progress = (0, total);
+        self.git_rx = Some(gitdiff::spawn(job));
+        self.git_computing = true;
+    }
+
+    /// Scroll to the next git-diff row matching `git_search` (case-insensitive,
+    /// wrapping). No-op if the query is empty or there are no rows.
+    /// Incremental search (used while typing): jump to the first match at or
+    /// after the current position.
+    pub fn git_search_live(&mut self) {
+        self.git_search_jump(true, true);
+    }
+
+    pub fn git_search_next(&mut self) {
+        self.git_search_jump(true, false);
+    }
+
+    pub fn git_search_prev(&mut self) {
+        self.git_search_jump(false, false);
+    }
+
+    /// Find the next/previous visible row matching `git_search` (wrapping),
+    /// update scroll, the total match count and the 1-based current index.
+    /// `inclusive` lets incremental typing match the current row in place.
+    fn git_search_jump(&mut self, forward: bool, inclusive: bool) {
+        let query = self.git_search.to_lowercase();
+        let n = self.git_visible.len();
+        self.git_match_count = if query.is_empty() {
+            0
+        } else {
+            self.git_visible
+                .iter()
+                .filter(|&&ri| gitdiff::row_contains(&self.git_rows[ri], &query))
+                .count()
+        };
+        if self.git_match_count == 0 {
+            self.git_match_index = 0;
+            return;
+        }
+        let cur = (self.scroll as usize).min(n - 1);
+        let first_off = usize::from(!inclusive);
+        for off in first_off..=n {
+            let pos = if forward {
+                (cur + off) % n
+            } else {
+                (cur + n - off) % n
+            };
+            if gitdiff::row_contains(&self.git_rows[self.git_visible[pos]], &query) {
+                self.scroll = pos as u32;
+                self.git_match_index = self.git_visible[..=pos]
+                    .iter()
+                    .filter(|&&ri| gitdiff::row_contains(&self.git_rows[ri], &query))
+                    .count();
+                return;
+            }
         }
     }
 

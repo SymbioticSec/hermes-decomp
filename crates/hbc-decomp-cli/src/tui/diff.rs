@@ -1,10 +1,10 @@
-use hbc_decomp::{decompile_function_v2, BytecodeFile, BytecodeFormat, DecompileOptionsV2};
+use hbc_decomp::{BytecodeFile, BytecodeFormat, DecompileOptionsV2};
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Instant;
 
-use super::debug_log;
+use super::{debug_log, decompile_or_log, disasm_or_log};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffMode {
@@ -66,20 +66,8 @@ pub fn compare_functions(
     match mode {
         DiffMode::Assembly => {
             // Deep comparison via disassembly
-            let dis1 = hbc_decomp::disassemble_function(
-                file1,
-                format1,
-                id1,
-                &hbc_decomp::DisasmOptions::default(),
-            )
-            .unwrap_or_default();
-            let dis2 = hbc_decomp::disassemble_function(
-                file2,
-                format2,
-                id2,
-                &hbc_decomp::DisasmOptions::default(),
-            )
-            .unwrap_or_default();
+            let dis1 = disasm_or_log(file1, format1, id1);
+            let dis2 = disasm_or_log(file2, format2, id2);
 
             if strip_offsets(&dis1) == strip_offsets(&dis2) {
                 DiffStatus::Identical
@@ -89,8 +77,8 @@ pub fn compare_functions(
         }
         DiffMode::Code => {
             let options = DecompileOptionsV2::optimized();
-            let code1 = decompile_function_v2(file1, format1, id1, &options).unwrap_or_default();
-            let code2 = decompile_function_v2(file2, format2, id2, &options).unwrap_or_default();
+            let code1 = decompile_or_log(file1, format1, id1, &options);
+            let code2 = decompile_or_log(file2, format2, id2, &options);
 
             if code1 == code2 {
                 DiffStatus::Identical
@@ -147,19 +135,10 @@ fn apply_rename_detection(
         for name in &added_names {
             let id = ctx2.map[name];
             let content = match mode {
-                DiffMode::Assembly => {
-                    let dis = hbc_decomp::disassemble_function(
-                        ctx2.file,
-                        ctx2.format,
-                        id,
-                        &hbc_decomp::DisasmOptions::default(),
-                    )
-                    .unwrap_or_default();
-                    strip_offsets(&dis)
-                }
+                DiffMode::Assembly => strip_offsets(&disasm_or_log(ctx2.file, ctx2.format, id)),
                 DiffMode::Code => {
                     let options = DecompileOptionsV2::optimized();
-                    decompile_function_v2(ctx2.file, ctx2.format, id, &options).unwrap_or_default()
+                    decompile_or_log(ctx2.file, ctx2.format, id, &options)
                 }
             };
             if !content.is_empty() {
@@ -171,19 +150,10 @@ fn apply_rename_detection(
         for name in removed_names {
             let id = ctx1.map[&name];
             let content = match mode {
-                DiffMode::Assembly => {
-                    let dis = hbc_decomp::disassemble_function(
-                        ctx1.file,
-                        ctx1.format,
-                        id,
-                        &hbc_decomp::DisasmOptions::default(),
-                    )
-                    .unwrap_or_default();
-                    strip_offsets(&dis)
-                }
+                DiffMode::Assembly => strip_offsets(&disasm_or_log(ctx1.file, ctx1.format, id)),
                 DiffMode::Code => {
                     let options = DecompileOptionsV2::optimized();
-                    decompile_function_v2(ctx1.file, ctx1.format, id, &options).unwrap_or_default()
+                    decompile_or_log(ctx1.file, ctx1.format, id, &options)
                 }
             };
 

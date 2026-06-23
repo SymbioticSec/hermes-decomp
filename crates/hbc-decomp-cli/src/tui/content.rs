@@ -3,16 +3,14 @@
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
-use similar::{ChangeTag, DiffTag, TextDiff};
+use similar::{DiffTag, TextDiff};
 
-use hbc_decomp::{
-    build_closure_context, decompile_function_v2, decompile_function_v2_with_context,
-    DecompileOptionsV2,
-};
+use hbc_decomp::DecompileOptionsV2;
 
 use super::app::{App, ViewMode};
 use super::diff::DiffStatus;
 use super::formatting::{format_disasm_colored, format_info, highlight_code};
+use super::{decompile_or_log, disasm_or_log};
 
 impl App {
     pub fn content(&mut self) -> (Text<'static>, Option<Text<'static>>) {
@@ -47,10 +45,6 @@ impl App {
                 (Text::from(highlight_code(&self.decompile_content())), None)
             }
             ViewMode::Diff => {
-                // Unified (git-style) single-column view, if toggled with `u`.
-                if self.diff_unified && self.file2.is_some() {
-                    return (self.unified_diff_text(), None);
-                }
                 // If showing diff colors, we need to compute the diff and styling manually
                 if self.show_diff_colors && self.file2.is_some() {
                     let left_str = match self.diff_kind {
@@ -231,47 +225,20 @@ impl App {
 
     // Helper to get raw string for disasm
     fn get_disasm_string_local(&self, id_opt: Option<u32>) -> String {
-        if let Some(id) = id_opt {
-            hbc_decomp::disassemble_function(
-                &self.file,
-                &self.format,
-                id,
-                &hbc_decomp::DisasmOptions::default(),
-            )
-            .unwrap_or_default()
-        } else {
-            String::new()
+        match id_opt {
+            Some(id) => disasm_or_log(&self.file, &self.format, id),
+            None => String::new(),
         }
     }
 
     fn get_disasm_string_remote(&self, id: u32) -> String {
-        let (file2, format2) = match (self.file2.as_ref(), self.format2.as_ref()) {
-            (Some(f), Some(fmt)) => (f, fmt),
-            _ => return String::new(),
-        };
-        hbc_decomp::disassemble_function(file2, format2, id, &hbc_decomp::DisasmOptions::default())
-            .unwrap_or_default()
+        match (self.file2.as_ref(), self.format2.as_ref()) {
+            (Some(file2), Some(format2)) => disasm_or_log(file2, format2, id),
+            _ => String::new(),
+        }
     }
 
     // --- Content Generators for File 1 ---
-
-    fn ensure_closure_ctx_local(&mut self) {
-        if self.closure_ctx_attempted {
-            return;
-        }
-        self.closure_ctx_attempted = true;
-        self.closure_ctx = build_closure_context(&self.file, &self.format).ok();
-    }
-
-    fn ensure_closure_ctx_remote(&mut self) {
-        if self.closure_ctx2_attempted {
-            return;
-        }
-        self.closure_ctx2_attempted = true;
-        if let (Some(file2), Some(format2)) = (self.file2.as_ref(), self.format2.as_ref()) {
-            self.closure_ctx2 = build_closure_context(file2, format2).ok();
-        }
-    }
 
     pub fn disasm_content(&mut self) -> Text<'static> {
         let function_id = match self.selected_function_id() {
@@ -306,26 +273,22 @@ impl App {
             return content.clone();
         }
 
-        // Use full pipeline context if available (IPA, Metro, naming)
+        // Decompiled output was requested: make sure the (lazy) pipeline is
+        // building so quality upgrades once it's ready.
+        if self.pipeline_ctx.is_none() {
+            self.ensure_pipeline_building();
+        }
+
+        // Use full pipeline context if available (IPA, Metro, naming). Otherwise
+        // fall back to a fast single-function decompile — NEVER build a
+        // whole-file closure context here: that ran on the UI thread inside
+        // terminal.draw() and froze the TUI for seconds on large bundles. The
+        // background pipeline upgrades quality once it's ready.
         let content = if let Some(ctx) = &self.pipeline_ctx {
             ctx.generate_function_code(&self.file, function_id)
         } else {
-            // Fallback: basic single-function decompilation while pipeline builds
             let options = DecompileOptionsV2::optimized();
-            self.ensure_closure_ctx_local();
-
-            if let Some(closure) = self.closure_ctx.as_ref() {
-                decompile_function_v2_with_context(
-                    &self.file,
-                    &self.format,
-                    function_id,
-                    &options,
-                    Some(closure),
-                )
-            } else {
-                decompile_function_v2(&self.file, &self.format, function_id, &options)
-            }
-            .unwrap_or_else(|err| format!("error: {err}"))
+            decompile_or_log(&self.file, &self.format, function_id, &options)
         };
 
         self.decompile_cache
@@ -373,17 +336,12 @@ impl App {
                 .unwrap()
                 .generate_function_code(file2, function_id)
         } else {
-            // Fallback: basic single-function decompilation while pipeline builds
-            self.ensure_closure_ctx_remote();
+            // Fast fallback while the pipeline builds — no whole-file work on
+            // the UI thread (see decompile_content for why).
             let file2 = self.file2.as_ref().unwrap();
             let format2 = self.format2.as_ref().unwrap();
             let options = DecompileOptionsV2::optimized();
-            if let Some(ctx) = self.closure_ctx2.as_ref() {
-                decompile_function_v2_with_context(file2, format2, function_id, &options, Some(ctx))
-            } else {
-                decompile_function_v2(file2, format2, function_id, &options)
-            }
-            .unwrap_or_else(|err| format!("error: {err}"))
+            decompile_or_log(file2, format2, function_id, &options)
         };
 
         self.decompile_cache2
@@ -412,80 +370,4 @@ impl App {
         )
     }
 
-    /// Left (file 1) and right (file 2) source for the selected function's
-    /// diff. A side is empty when the function exists only in the other file
-    /// (added / removed).
-    fn diff_left_right(&mut self) -> (String, String) {
-        let left = if self.selected_function_id().is_some() {
-            match self.diff_kind {
-                ViewMode::Disasm => self.get_disasm_string_local(self.selected_function_id()),
-                _ => self.decompile_content(),
-            }
-        } else {
-            String::new()
-        };
-        let right = if let Some(id2) = self.selected_function_id2() {
-            match self.diff_kind {
-                ViewMode::Disasm => self.get_disasm_string_remote(id2),
-                _ => self.decompile_content2(id2),
-            }
-        } else {
-            String::new()
-        };
-        (left, right)
-    }
-
-    /// Git-style unified diff of the selected function: a single column showing
-    /// the full before/after with `-`/`+` markers and old/new line numbers.
-    fn unified_diff_text(&mut self) -> Text<'static> {
-        let (left, right) = self.diff_left_right();
-        let kind = match self.diff_kind {
-            ViewMode::Disasm => "disassembly",
-            _ => "decompiled code",
-        };
-        let name = self.selected_function_name().unwrap_or("?").to_string();
-
-        let mut lines: Vec<Line<'static>> = vec![
-            Line::from(Span::styled(
-                format!("--- file 1: {name} ({kind})"),
-                Style::default().fg(Color::Red),
-            )),
-            Line::from(Span::styled(
-                format!("+++ file 2: {name} ({kind})"),
-                Style::default().fg(Color::Green),
-            )),
-            Line::from(Span::styled(
-                "  old   new",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ];
-
-        let diff = TextDiff::from_lines(&left, &right);
-        for change in diff.iter_all_changes() {
-            let old_n = change
-                .old_index()
-                .map(|i| format!("{:>5}", i + 1))
-                .unwrap_or_else(|| "     ".to_string());
-            let new_n = change
-                .new_index()
-                .map(|i| format!("{:>5}", i + 1))
-                .unwrap_or_else(|| "     ".to_string());
-            let (sign, color) = match change.tag() {
-                ChangeTag::Delete => ('-', Some(Color::Red)),
-                ChangeTag::Insert => ('+', Some(Color::Green)),
-                ChangeTag::Equal => (' ', None),
-            };
-            let text = change.value().trim_end_matches('\n').to_string();
-            let content_style = color.map_or_else(Style::default, |c| Style::default().fg(c));
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{old_n} {new_n} {sign} "),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(text, content_style),
-            ]));
-        }
-
-        Text::from(lines)
-    }
 }

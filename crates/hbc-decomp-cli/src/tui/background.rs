@@ -7,6 +7,7 @@ use std::sync::Arc;
 use super::app::App;
 use super::debug_log;
 use super::diff::DiffProgressMsg;
+use super::gitdiff::GitMsg;
 
 impl App {
     pub fn poll_background_tasks(&mut self) {
@@ -96,6 +97,40 @@ impl App {
                 }
             }
         }
-    }
 
+        // Collect git-diff progress / result, if a worker is running.
+        if self.git_rx.is_some() {
+            for _ in 0..MAX_MESSAGES_PER_TICK {
+                match self.git_rx.as_ref().unwrap().try_recv() {
+                    Ok(GitMsg::Chunk { rows, done, total }) => {
+                        // Append incrementally (O(chunk)); a full rebuild here on
+                        // every chunk was O(total) and made scrolling lag during
+                        // the build. Freshly-streamed rows can't be folded yet,
+                        // so they are all visible.
+                        let store = Arc::make_mut(&mut self.git_rows);
+                        let old_len = store.len();
+                        store.extend(rows);
+                        let new_len = store.len();
+                        self.git_visible.extend(old_len..new_len);
+                        self.git_progress = (done, total);
+                    }
+                    Ok(GitMsg::Done) => {
+                        self.git_built_kind = Some(self.git_kind);
+                        self.git_computing = false;
+                        self.git_rx = None;
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        self.git_computing = false;
+                        self.git_rx = None;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Kick off (or retry) the git-diff build once its inputs are ready.
+        self.request_git_diff();
+    }
 }

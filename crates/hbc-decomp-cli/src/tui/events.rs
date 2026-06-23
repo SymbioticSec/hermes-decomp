@@ -1,7 +1,10 @@
 use std::io::{self, Stdout};
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 use ratatui::Terminal;
 
 use super::app::{App, ViewMode};
@@ -13,20 +16,39 @@ pub fn run_loop(
 ) -> io::Result<()> {
     loop {
         terminal.draw(|frame| draw_ui(frame, app))?;
+        app.tick = app.tick.wrapping_add(1);
 
-        if event::poll(Duration::from_millis(250))? {
-            match event::read()? {
-                // Only react to key *presses*: with the crossterm 0.29 enhanced
-                // protocol, repeats/releases also arrive and would double every
-                // action (navigation, toggles).
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    if handle_key(app, key) {
-                        break;
+        // Spin faster while loading (animated spinner), idle slower.
+        let loading = app.git_computing || app.pipeline_building || app.pipeline_building2;
+        let timeout = Duration::from_millis(if loading { 80 } else { 200 });
+
+        if event::poll(timeout)? {
+            // Drain ALL pending events before redrawing once. Trackpad/wheel
+            // scrolling emits many events per gesture; handling them one-redraw-
+            // each made scrolling lag badly.
+            let mut quit = false;
+            loop {
+                match event::read()? {
+                    // Only react to key *presses*: the crossterm 0.29 enhanced
+                    // protocol also sends repeats/releases, which would double
+                    // every action.
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        if handle_key(app, key) {
+                            quit = true;
+                            break;
+                        }
                     }
+                    Event::Mouse(me) => handle_mouse(app, me),
+                    // Force a full repaint on resize so no stale cells linger.
+                    Event::Resize(_, _) => terminal.clear()?,
+                    _ => {}
                 }
-                // Force a full repaint on resize so no stale cells linger.
-                Event::Resize(_, _) => terminal.clear()?,
-                _ => {}
+                if !event::poll(Duration::from_millis(0))? {
+                    break;
+                }
+            }
+            if quit {
+                break;
             }
         }
 
@@ -59,6 +81,11 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             _ => {}
         }
         return false;
+    }
+
+    // Full-program git diff is a separate full-screen mode with its own keys.
+    if app.git_diff {
+        return handle_git_key(app, key);
     }
 
     let has_diff = app.file2.is_some();
@@ -111,12 +138,13 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             ViewMode::Decompile => app.set_view(ViewMode::Disasm),
             _ => app.set_view(ViewMode::Decompile),
         },
-        // `u` switches the diff view between split (side-by-side) and unified
-        // (git-style single column).
+        // `u` enters the full-program git diff (whole code, base vs modified,
+        // side by side). Only meaningful when a second file is loaded.
         KeyCode::Char('u') => {
-            if app.view == ViewMode::Diff {
-                app.diff_unified = !app.diff_unified;
+            if app.file2.is_some() {
+                app.git_diff = true;
                 app.scroll = 0;
+                app.request_git_diff();
             }
         }
         _ => {}
@@ -138,5 +166,87 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
     }
 
+    false
+}
+
+/// Mouse: wheel scrolls the active view, left click selects a function in the
+/// list (normal mode).
+fn handle_mouse(app: &mut App, me: MouseEvent) {
+    match me.kind {
+        MouseEventKind::ScrollDown => app.scroll = app.scroll.saturating_add(3),
+        MouseEventKind::ScrollUp => app.scroll = app.scroll.saturating_sub(3),
+        MouseEventKind::Down(MouseButton::Left) => {
+            if app.git_diff {
+                app.git_toggle_fold_at(me.row); // click a ▼/▶ header to fold
+            } else {
+                app.select_at_row(me.column, me.row);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Keys for the full-program git diff mode (no function list; both columns are
+/// scrolled together).
+fn handle_git_key(app: &mut App, key: KeyEvent) -> bool {
+    // Search input mode.
+    if app.git_searching {
+        match key.code {
+            KeyCode::Esc => app.git_searching = false,
+            // Navigate matches while the popup stays open. Use Enter/arrows so
+            // letter keys (n/N) keep going into the query text.
+            KeyCode::Enter | KeyCode::Down => app.git_search_next(),
+            KeyCode::Up => app.git_search_prev(),
+            KeyCode::Backspace => {
+                app.git_search.pop();
+                app.git_search_live();
+            }
+            KeyCode::Char(c) => {
+                app.git_search.push(c);
+                app.git_search_live(); // incremental: jump as you type
+            }
+            _ => {}
+        }
+        return false;
+    }
+
+    match key.code {
+        KeyCode::Char('q') => return true,
+        // Search within the diff. `/` opens input; n/N or Enter cycle matches.
+        KeyCode::Char('/') => app.git_searching = true,
+        KeyCode::Char('n') | KeyCode::Enter => app.git_search_next(),
+        KeyCode::Char('N') => app.git_search_prev(),
+        // Leave the git diff and go back to the normal browser.
+        KeyCode::Char('u') | KeyCode::Esc => {
+            app.git_diff = false;
+            app.scroll = 0;
+        }
+        // Toggle decompiled vs disassembly; rebuild the diff for the new kind.
+        KeyCode::Char('v') => {
+            app.git_kind = match app.git_kind {
+                ViewMode::Disasm => ViewMode::Decompile,
+                _ => ViewMode::Disasm,
+            };
+            app.invalidate_git_diff();
+            app.request_git_diff();
+            app.scroll = 0;
+        }
+        // Toggle syntax coloring (vs. plain red/green diff tint).
+        KeyCode::Char('c') => app.git_syntax = !app.git_syntax,
+        // Toggle ignoring volatile Metro ids (module_955 vs module_769).
+        KeyCode::Char('i') => {
+            app.git_normalize = !app.git_normalize;
+            app.invalidate_git_diff();
+            app.request_git_diff();
+            app.scroll = 0;
+        }
+        KeyCode::Down | KeyCode::Char('j') => app.scroll = app.scroll.saturating_add(1),
+        KeyCode::Up | KeyCode::Char('k') => app.scroll = app.scroll.saturating_sub(1),
+        KeyCode::PageDown => app.scroll = app.scroll.saturating_add(20),
+        KeyCode::PageUp => app.scroll = app.scroll.saturating_sub(20),
+        KeyCode::Home => app.scroll = 0,
+        KeyCode::End => app.scroll = u32::MAX, // clamped during rendering
+        _ => {}
+    }
     false
 }
