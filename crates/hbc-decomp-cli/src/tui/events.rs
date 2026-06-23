@@ -1,7 +1,7 @@
 use std::io::{self, Stdout};
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Terminal;
 
 use super::app::{App, ViewMode};
@@ -15,10 +15,18 @@ pub fn run_loop(
         terminal.draw(|frame| draw_ui(frame, app))?;
 
         if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()? {
-                if handle_key(app, key) {
-                    break;
+            match event::read()? {
+                // Only react to key *presses*: with the crossterm 0.29 enhanced
+                // protocol, repeats/releases also arrive and would double every
+                // action (navigation, toggles).
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if handle_key(app, key) {
+                        break;
+                    }
                 }
+                // Force a full repaint on resize so no stale cells linger.
+                Event::Resize(_, _) => terminal.clear()?,
+                _ => {}
             }
         }
 
@@ -96,9 +104,19 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 app.set_view(ViewMode::Diff)
             }
         }
-        KeyCode::Char('v') => {
+        // `v` toggles between disassembly and decompiled code. In the split
+        // diff view it flips which of the two is being diffed instead.
+        KeyCode::Char('v') => match app.view {
+            ViewMode::Diff => app.toggle_diff_kind(),
+            ViewMode::Decompile => app.set_view(ViewMode::Disasm),
+            _ => app.set_view(ViewMode::Decompile),
+        },
+        // `u` switches the diff view between split (side-by-side) and unified
+        // (git-style single column).
+        KeyCode::Char('u') => {
             if app.view == ViewMode::Diff {
-                app.toggle_diff_kind()
+                app.diff_unified = !app.diff_unified;
+                app.scroll = 0;
             }
         }
         _ => {}

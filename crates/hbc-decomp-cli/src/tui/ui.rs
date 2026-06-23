@@ -8,7 +8,7 @@ use super::app::{App, ViewMode};
 use super::diff::DiffStatus;
 
 pub fn draw_ui(frame: &mut Frame, app: &mut App) {
-    let size = frame.size();
+    let size = frame.area();
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -90,7 +90,9 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
             Span::styled("d", Style::default().fg(Color::White)),
             Span::styled(" diff colors ", Style::default().fg(Color::DarkGray)),
             Span::styled("v", Style::default().fg(Color::White)),
-            Span::styled(" toggle asm/code ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" asm/code ", Style::default().fg(Color::DarkGray)),
+            Span::styled("u", Style::default().fg(Color::White)),
+            Span::styled(" split/unified ", Style::default().fg(Color::DarkGray)),
             Span::raw("  "),
             Span::styled("\u{25cf}", Style::default().fg(Color::Green)),
             Span::styled(" added ", Style::default().fg(Color::DarkGray)),

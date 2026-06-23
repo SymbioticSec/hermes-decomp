@@ -33,7 +33,7 @@ impl<'a> ClassAnalyzer<'a> {
     pub(super) fn fetch_body(&self, expr: &Expression) -> Option<Vec<Statement>> {
         if let Expression::Function { id, .. } = expr {
             crate::generate_ir(self.file, self.format, id.0, self.options, self.closure_ctx, true)
-                .map_err(|e| eprintln!("[class_patterns] IR gen failed for func {}: {e}", id.0))
+                .map_err(|e| log::debug!("[class_patterns] IR gen failed for func {}: {e}", id.0))
                 .ok()
         } else {
             None

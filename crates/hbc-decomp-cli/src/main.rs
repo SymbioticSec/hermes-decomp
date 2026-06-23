@@ -10,7 +10,24 @@ mod tui;
 use cli_args::{Cli, Command};
 use helpers::{load_file, load_format, write_output};
 
+/// Restore the default SIGPIPE behavior on Unix. Rust ignores SIGPIPE by
+/// default, which turns a closed output pipe (e.g. `… | head`) into a
+/// "Broken pipe" panic instead of a clean exit. Resetting to SIG_DFL makes the
+/// tool terminate silently like `cat`/`grep` when the reader goes away.
+#[cfg(unix)]
+fn reset_sigpipe() {
+    // SAFETY: a single libc::signal call with valid constants, before threads
+    // that touch stdout are spawned.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    reset_sigpipe();
     env_logger::init();
     // Give Rayon workers a large stack up front: decompilation recurses deeply
     // and the default stack overflows on big bundles (e.g. `decompile

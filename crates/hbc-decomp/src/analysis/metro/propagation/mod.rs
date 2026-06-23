@@ -149,7 +149,7 @@ pub fn propagate_module_names(
     // Count how many modules have names now
     let named_total = registry.modules.values().filter(|m| m.name.is_some()).count();
     let total = registry.modules.len();
-    eprintln!("[pipeline] module naming: {named_total}/{total} named ({inferred_count} inferred, {reexport_count} re-export)");
+    log::debug!("[pipeline] module naming: {named_total}/{total} named ({inferred_count} inferred, {reexport_count} re-export)");
 
     // PHASE 1: Detect closure_N = require(id) and propagate module names to closure slots
     propagate_module_names_to_closures(functions, registry, closure_ctx);

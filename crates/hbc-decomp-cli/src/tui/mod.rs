@@ -11,6 +11,8 @@ use hbc_decomp::{BytecodeFile, BytecodeFormat};
 use ratatui::Terminal;
 
 pub mod app;
+pub mod background;
+pub mod content;
 pub mod diff;
 pub mod events;
 pub mod formatting;
