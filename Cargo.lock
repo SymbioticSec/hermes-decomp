@@ -792,7 +792,6 @@ dependencies = [
  "crossterm",
  "env_logger",
  "hbc-decomp",
- "libc",
  "log",
  "ratatui",
  "regex",
