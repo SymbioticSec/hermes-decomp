@@ -3,6 +3,7 @@ use std::io::Write;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -11,9 +12,12 @@ use hbc_decomp::{BytecodeFile, BytecodeFormat};
 use ratatui::Terminal;
 
 pub mod app;
+pub mod background;
+pub mod content;
 pub mod diff;
 pub mod events;
 pub mod formatting;
+pub mod gitdiff;
 pub mod ui;
 
 use app::App;
@@ -32,6 +36,37 @@ pub(crate) fn debug_log(message: &str) {
         .open("/tmp/hermes-decomp-tui.log")
     {
         let _ = writeln!(file, "{line}");
+    }
+}
+
+/// Decompile a single function, logging (never silently swallowing) any error
+/// and returning a visible comment instead of an empty string. Used everywhere
+/// the TUI needs per-function code so failures show up in the log and on screen
+/// rather than vanishing into `unwrap_or_default()`.
+pub(crate) fn decompile_or_log(
+    file: &BytecodeFile,
+    format: &BytecodeFormat,
+    id: u32,
+    options: &hbc_decomp::DecompileOptionsV2,
+) -> String {
+    match hbc_decomp::decompile_function_v2(file, format, id, options) {
+        Ok(code) => code,
+        Err(e) => {
+            debug_log(&format!("[decompile] function {id} failed: {e}"));
+            format!("// <decompile error for function {id}: {e}>\n")
+        }
+    }
+}
+
+/// Disassemble a single function, logging any error and returning a visible
+/// comment instead of an empty string.
+pub(crate) fn disasm_or_log(file: &BytecodeFile, format: &BytecodeFormat, id: u32) -> String {
+    match hbc_decomp::disassemble_function(file, format, id, &hbc_decomp::DisasmOptions::default()) {
+        Ok(s) => s,
+        Err(e) => {
+            debug_log(&format!("[disasm] function {id} failed: {e}"));
+            format!("; <disasm error for function {id}: {e}>\n")
+        }
     }
 }
 
@@ -59,7 +94,7 @@ pub fn run_tui(
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -69,7 +104,11 @@ pub fn run_tui(
     debug_log("[TUI] Event loop exited. Restoring terminal.");
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
 
     result

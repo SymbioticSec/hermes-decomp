@@ -65,11 +65,13 @@ pub fn collect_param_names_from_expr(
 
     if !site_results.is_empty() {
         // Flatten the results into a single "site" vector for voting
-        let max_idx = site_results.iter().map(|(idx, _)| *idx).max().unwrap_or(0);
-        let mut site = vec![None; max_idx as usize + 1];
+        let max_idx = (site_results.iter().map(|(idx, _)| *idx).max().unwrap_or(0) as usize)
+            .min(super::MAX_PARAM_SLOTS);
+        let mut site = vec![None; max_idx + 1];
         for (idx, name) in site_results {
-            if site[idx as usize].is_none() {
-                site[idx as usize] = Some(name);
+            let idx = idx as usize;
+            if idx < site.len() && site[idx].is_none() {
+                site[idx] = Some(name);
             }
         }
         self_param_names.entry(owner_id).or_default().push(site);

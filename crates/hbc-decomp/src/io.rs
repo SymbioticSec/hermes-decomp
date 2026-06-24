@@ -18,6 +18,18 @@ impl<'a> ByteReader<'a> {
         self.data.len().saturating_sub(self.pos)
     }
 
+    /// A safe pre-allocation hint for `count` upcoming entries.
+    ///
+    /// A corrupt or mis-read header can carry an absurd count (up to
+    /// `u32::MAX`, or a negative SLEB128 cast to `usize`). Feeding that
+    /// straight to `Vec::with_capacity` aborts the process with "capacity
+    /// overflow". Since every entry consumes at least one byte, the count can
+    /// never validly exceed the bytes left to read, so we clamp to that. Valid
+    /// files (where `count <= remaining`) keep their exact-size pre-allocation.
+    pub fn capacity_hint(&self, count: usize) -> usize {
+        count.min(self.remaining())
+    }
+
     pub fn seek(&mut self, pos: usize) -> Result<()> {
         if pos > self.data.len() {
             return Err(Error::Parse(format!(
@@ -83,15 +95,19 @@ impl<'a> ByteReader<'a> {
     }
 
     fn read_exact(&mut self, len: usize) -> Result<&'a [u8]> {
-        if self.pos + len > self.data.len() {
+        // checked_add so a huge `len` (e.g. a bogus length prefix) can't wrap
+        // past the bounds check and cause an out-of-bounds slice panic.
+        let end = self.pos.checked_add(len).filter(|&e| e <= self.data.len());
+        let Some(end) = end else {
             return Err(Error::Parse(format!(
-                "unexpected end of file at {} (needed {len} bytes)",
-                self.pos
+                "unexpected end of file: needed {len} bytes at offset {} but only {} remain",
+                self.pos,
+                self.remaining()
             )));
-        }
+        };
         let start = self.pos;
-        self.pos += len;
-        Ok(&self.data[start..start + len])
+        self.pos = end;
+        Ok(&self.data[start..end])
     }
 
     pub fn read_uleb128(&mut self) -> Result<u64> {
@@ -158,7 +174,12 @@ impl<'a> ByteReader<'a> {
         if len == 0 {
             return Ok(String::new());
         }
-        let bytes = self.read_exact(len)?;
+        let bytes = self.read_exact(len).map_err(|_| {
+            Error::Parse(format!(
+                "length-prefixed string claims {len} bytes but only {} remain (likely a mis-aligned section)",
+                self.remaining()
+            ))
+        })?;
         Ok(String::from_utf8_lossy(bytes).into_owned())
     }
 }

@@ -12,6 +12,10 @@ use helpers::{load_file, load_format, write_output};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
+    // Give Rayon workers a large stack up front: decompilation recurses deeply
+    // and the default stack overflows on big bundles (e.g. `decompile
+    // --resolve-closures` on a multi-MB Metro bundle).
+    hbc_decomp::configure_thread_pool();
     let cli = Cli::parse();
 
     match cli.command {

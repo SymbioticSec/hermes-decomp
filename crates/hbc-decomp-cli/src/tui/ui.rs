@@ -1,14 +1,20 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
 use super::app::{App, ViewMode};
 use super::diff::DiffStatus;
+use super::formatting::highlight_code;
 
 pub fn draw_ui(frame: &mut Frame, app: &mut App) {
-    let size = frame.size();
+    if app.git_diff {
+        draw_git_diff(frame, app);
+        return;
+    }
+
+    let size = frame.area();
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -90,7 +96,9 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
             Span::styled("d", Style::default().fg(Color::White)),
             Span::styled(" diff colors ", Style::default().fg(Color::DarkGray)),
             Span::styled("v", Style::default().fg(Color::White)),
-            Span::styled(" toggle asm/code ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" asm/code ", Style::default().fg(Color::DarkGray)),
+            Span::styled("u", Style::default().fg(Color::White)),
+            Span::styled(" git diff ", Style::default().fg(Color::DarkGray)),
             Span::raw("  "),
             Span::styled("\u{25cf}", Style::default().fg(Color::Green)),
             Span::styled(" added ", Style::default().fg(Color::DarkGray)),
@@ -184,6 +192,8 @@ fn draw_function_list(frame: &mut Frame, app: &mut App, area: Rect) {
         area
     };
 
+    // Record the inner (content) area so mouse clicks can map to a row.
+    app.list_inner = Block::default().borders(Borders::ALL).inner(list_area);
     frame.render_stateful_widget(list, list_area, &mut app.list_state);
 }
 
@@ -213,4 +223,304 @@ fn draw_content_pane(
         .wrap(Wrap { trim: false })
         .scroll((app.scroll as u16, 0));
     frame.render_widget(paragraph, area);
+}
+
+/// Split `text` into spans, highlighting case-insensitive occurrences of the
+/// (lowercase, ASCII) search query. Falls back to a single plain span.
+fn highlight_spans(text: &str, base: Style, query: Option<&str>) -> Vec<Span<'static>> {
+    let hl = Style::default().fg(Color::Black).bg(Color::Yellow);
+    match query {
+        Some(q) if !q.is_empty() && text.is_ascii() && q.is_ascii() => {
+            let lower = text.to_lowercase();
+            let mut spans = Vec::new();
+            let mut i = 0;
+            while let Some(pos) = lower[i..].find(q) {
+                let s = i + pos;
+                let e = s + q.len();
+                if s > i {
+                    spans.push(Span::styled(text[i..s].to_string(), base));
+                }
+                spans.push(Span::styled(text[s..e].to_string(), hl));
+                i = e;
+            }
+            if i < text.len() {
+                spans.push(Span::styled(text[i..].to_string(), base));
+            }
+            if spans.is_empty() {
+                spans.push(Span::styled(text.to_string(), base));
+            }
+            spans
+        }
+        _ => vec![Span::styled(text.to_string(), base)],
+    }
+}
+
+/// One side of a diff row: git-style sign (`+`/`-`/space), a line-number
+/// gutter, then the text — either syntax-highlighted or diff-tinted, with the
+/// active search term highlighted on top.
+#[allow(clippy::too_many_arguments)]
+fn git_side_line(
+    sign: char,
+    sign_style: Style,
+    line_no: Option<usize>,
+    text: &str,
+    base: Style,
+    query: Option<&str>,
+    syntax: bool,
+) -> Line<'static> {
+    let gutter = match line_no {
+        Some(n) => format!("{n:>5} \u{2502} "),
+        None => "      \u{2502} ".to_string(),
+    };
+    let mut spans = vec![
+        Span::styled(format!("{sign} "), sign_style),
+        Span::styled(gutter, Style::default().fg(Color::DarkGray)),
+    ];
+    if syntax && !text.is_empty() {
+        // Only the visible lines are rendered each frame, so per-line syntax
+        // highlighting here is cheap.
+        match highlight_code(text).into_iter().next() {
+            Some(line) => spans.extend(line.spans),
+            None => spans.push(Span::styled(text.to_string(), base)),
+        }
+    } else {
+        spans.extend(highlight_spans(text, base, query));
+    }
+    Line::from(spans)
+}
+
+/// Full-program git diff: base (file 1) on the left, modified (file 2) on the
+/// right, aligned line by line, both columns scrolled together.
+fn draw_git_diff(frame: &mut Frame, app: &mut App) {
+    use super::gitdiff::GitRow;
+
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // title
+            Constraint::Min(1),    // panes
+            Constraint::Length(1), // footer
+        ])
+        .split(frame.area());
+
+    let kind = match app.git_kind {
+        ViewMode::Disasm => "disassembly",
+        _ => "decompiled",
+    };
+    const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let spin = SPINNER[app.tick % SPINNER.len()];
+    let verb = if app.git_kind == ViewMode::Disasm {
+        "disassembling"
+    } else {
+        "decompiling"
+    };
+    let progress = if app.git_computing {
+        let (done, total) = app.git_progress;
+        format!("   {spin} {verb} {done}/{total} functions…")
+    } else {
+        String::new()
+    };
+    // Word-style position feedback: "term [3/324]". The input itself is in the
+    // centered popup while typing.
+    let search = if app.git_search.is_empty() {
+        String::new()
+    } else if app.git_match_count == 0 {
+        format!("   {} [no match]", app.git_search)
+    } else {
+        format!(
+            "   {} [{}/{}]",
+            app.git_search, app.git_match_index, app.git_match_count
+        )
+    };
+    let title = Paragraph::new(Line::from(vec![
+        Span::styled(" Git Diff ", Style::default().fg(Color::Black).bg(Color::Cyan)),
+        Span::raw(format!("  base (file 1) vs modified (file 2) — {kind}")),
+        Span::styled(progress, Style::default().fg(Color::Yellow)),
+        Span::styled(search, Style::default().fg(Color::Cyan)),
+    ]));
+    frame.render_widget(title, outer[0]);
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled("u/Esc", Style::default().fg(Color::White)),
+        Span::styled(" back ", Style::default().fg(Color::DarkGray)),
+        Span::styled("j/k wheel", Style::default().fg(Color::White)),
+        Span::styled(" scroll ", Style::default().fg(Color::DarkGray)),
+        Span::styled("/ n/N", Style::default().fg(Color::White)),
+        Span::styled(" search ", Style::default().fg(Color::DarkGray)),
+        Span::styled("click", Style::default().fg(Color::White)),
+        Span::styled(" fold ", Style::default().fg(Color::DarkGray)),
+        Span::styled("v", Style::default().fg(Color::White)),
+        Span::styled(" asm/code ", Style::default().fg(Color::DarkGray)),
+        Span::styled("c", Style::default().fg(Color::White)),
+        Span::styled(
+            if app.git_syntax { " syntax " } else { " plain " },
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled("i", Style::default().fg(Color::White)),
+        Span::styled(
+            if app.git_normalize {
+                " ids:ignored "
+            } else {
+                " ids:shown "
+            },
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled("q", Style::default().fg(Color::White)),
+        Span::styled(" quit", Style::default().fg(Color::DarkGray)),
+    ]));
+    frame.render_widget(footer, outer[2]);
+
+    // Only show a full-screen message until the first chunk arrives; after that
+    // we render (and let the user scroll) the partial result as it streams in.
+    if app.git_rows.is_empty() {
+        let msg = if app.git_computing {
+            let (done, total) = app.git_progress;
+            format!("\n   {spin}  {} bundle… {done}/{total} functions\n\n        Streaming per function — results appear as they finish. Press 'v' to switch asm/code.", if app.git_kind == ViewMode::Disasm { "Disassembling" } else { "Decompiling" })
+        } else {
+            "\n   No diff available yet…".to_string()
+        };
+        frame.render_widget(
+            Paragraph::new(msg).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Loading "),
+            ),
+            outer[1],
+        );
+        return;
+    }
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(outer[1]);
+
+    // Visible window (minus the block borders), with scroll clamped. `scroll`
+    // and the window index into git_visible (fold-aware), not git_rows.
+    let height = cols[0].height.saturating_sub(2) as usize;
+    let total = app.git_visible.len();
+    let start = (app.scroll as usize).min(total.saturating_sub(height));
+    app.scroll = start as u32;
+    let end = (start + height).min(total);
+    // Record the columns' content top/height for click-to-fold (both share y).
+    app.git_view_top = cols[0].y + 1;
+    app.git_view_height = height as u16;
+
+    let q_owned = (!app.git_search.is_empty()).then(|| app.git_search.to_lowercase());
+    let q = q_owned.as_deref();
+    let syntax = app.git_syntax;
+    let dim = Style::default().fg(Color::DarkGray);
+    let red = Style::default().fg(Color::Red);
+    let green = Style::default().fg(Color::Green);
+    let plain = Style::default();
+    let blank = || git_side_line(' ', dim, None, "", plain, None, false);
+
+    let mut left_lines: Vec<Line<'static>> = Vec::new();
+    let mut right_lines: Vec<Line<'static>> = Vec::new();
+    for &ri in &app.git_visible[start..end] {
+        match &app.git_rows[ri] {
+            GitRow::Header(name) => {
+                let s = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+                // ▶ when folded, ▼ when expanded (click the header to toggle).
+                let marker = if app.git_folded.contains(&ri) {
+                    "  \u{25b6} "
+                } else {
+                    "  \u{25bc} "
+                };
+                let mut spans = vec![Span::styled(marker.to_string(), s)];
+                spans.extend(highlight_spans(name, s, q));
+                left_lines.push(Line::from(spans.clone()));
+                right_lines.push(Line::from(spans));
+            }
+            GitRow::Same { old, new, text } => {
+                left_lines.push(git_side_line(' ', dim, Some(*old), text, plain, q, syntax));
+                right_lines.push(git_side_line(' ', dim, Some(*new), text, plain, q, syntax));
+            }
+            // Differs only by a volatile id: shown plainly (not a real change).
+            GitRow::Cosmetic {
+                old,
+                new,
+                left,
+                right,
+            } => {
+                left_lines.push(git_side_line(' ', dim, Some(*old), left, plain, q, syntax));
+                right_lines.push(git_side_line(' ', dim, Some(*new), right, plain, q, syntax));
+            }
+            GitRow::Changed {
+                old,
+                new,
+                left,
+                right,
+            } => {
+                left_lines.push(git_side_line('-', red, Some(*old), left, red, q, syntax));
+                right_lines.push(git_side_line('+', green, Some(*new), right, green, q, syntax));
+            }
+            GitRow::Removed { old, text } => {
+                left_lines.push(git_side_line('-', red, Some(*old), text, red, q, syntax));
+                right_lines.push(blank());
+            }
+            GitRow::Added { new, text } => {
+                left_lines.push(blank());
+                right_lines.push(git_side_line('+', green, Some(*new), text, green, q, syntax));
+            }
+            GitRow::Blank => {
+                left_lines.push(Line::from(""));
+                right_lines.push(Line::from(""));
+            }
+        }
+    }
+
+    frame.render_widget(
+        Paragraph::new(left_lines)
+            .block(Block::default().borders(Borders::ALL).title("file 1 (base)")),
+        cols[0],
+    );
+    frame.render_widget(
+        Paragraph::new(right_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("file 2 (modified)"),
+        ),
+        cols[1],
+    );
+
+    // Centered search popup while typing.
+    if app.git_searching {
+        let popup = centered_rect(54, 3, frame.area());
+        frame.render_widget(Clear, popup);
+        let count = if app.git_search.is_empty() {
+            String::new()
+        } else if app.git_match_count == 0 {
+            "   no match".to_string()
+        } else {
+            format!("   [{}/{}]", app.git_match_index, app.git_match_count)
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("/", Style::default().fg(Color::Cyan)),
+                Span::raw(app.git_search.clone()),
+                Span::styled("_", Style::default().fg(Color::Cyan)),
+                Span::styled(count, Style::default().fg(Color::Yellow)),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Double)
+                    .title(" Search — \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
+            ),
+            popup,
+        );
+    }
+}
+
+/// A `Rect` of the given size centered within `area`.
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let w = width.min(area.width);
+    let h = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    }
 }

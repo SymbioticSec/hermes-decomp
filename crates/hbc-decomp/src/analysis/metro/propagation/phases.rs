@@ -134,7 +134,7 @@ pub(super) fn reverse_require_naming(
     }
 
     if named_count > 0 {
-        eprintln!("[pipeline] reverse require naming: {named_count} modules named");
+        log::debug!("[pipeline] reverse require naming: {named_count} modules named");
     }
 }
 

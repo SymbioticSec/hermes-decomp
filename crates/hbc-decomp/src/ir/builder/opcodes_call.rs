@@ -4,6 +4,11 @@ use super::opcodes_load::{get_reg, reg_expr};
 use crate::ir::{AssignTarget, Expression, Statement, Value};
 use crate::{BytecodeFile, Instruction};
 
+/// Upper bound for a call's argument count when pre-allocating. `arg_count`
+/// comes from a u32 operand; a corrupt value would otherwise abort the process
+/// in `Vec::with_capacity`. Real call sites have far fewer arguments than this.
+const MAX_CALL_ARGS: usize = 1 << 16;
+
 // Handle Call1, Call2, Call3, Call4 opcodes (fixed argument count).
 pub fn handle_call_fixed(name: &str, inst: &Instruction) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
@@ -40,8 +45,8 @@ pub fn handle_call(inst: &Instruction) -> Option<Statement> {
     let callee = reg_expr(&inst.operands, 1)?;
     let arg_count = inst.operands.get(2)?.value.as_u32()? as usize;
 
-    // Arguments are in registers dst-arg_count to dst-1
-    let mut arguments = Vec::with_capacity(arg_count);
+    // Arguments are in registers dst-arg_count to dst-1.
+    let mut arguments = Vec::with_capacity(arg_count.min(MAX_CALL_ARGS));
     if arg_count > 0 && dst >= arg_count as u32 {
         let first_arg = dst - arg_count as u32;
         for i in 0..arg_count {
@@ -64,8 +69,8 @@ pub fn handle_construct(inst: &Instruction) -> Option<Statement> {
     let callee = reg_expr(&inst.operands, 1)?;
     let arg_count = inst.operands.get(2)?.value.as_u32()? as usize;
 
-    // Arguments are in registers dst-arg_count to dst-1
-    let mut arguments = Vec::with_capacity(arg_count);
+    // Arguments are in registers dst-arg_count to dst-1.
+    let mut arguments = Vec::with_capacity(arg_count.min(MAX_CALL_ARGS));
     if arg_count > 0 && dst >= arg_count as u32 {
         let first_arg = dst - arg_count as u32;
         for i in 0..arg_count {
@@ -192,8 +197,8 @@ pub fn handle_call_builtin(inst: &Instruction) -> Option<Statement> {
     let builtin_idx = inst.operands.get(1)?.value.as_u32()?;
     let arg_count = inst.operands.get(2)?.value.as_u32()? as usize;
 
-    // Arguments are in registers dst-arg_count to dst-1
-    let mut arguments = Vec::with_capacity(arg_count);
+    // Arguments are in registers dst-arg_count to dst-1.
+    let mut arguments = Vec::with_capacity(arg_count.min(MAX_CALL_ARGS));
     if arg_count > 0 && dst >= arg_count as u32 {
         let first_arg = dst - arg_count as u32;
         for i in 0..arg_count {

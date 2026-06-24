@@ -48,7 +48,7 @@ pub fn handle_jmp_cond(
 ) -> Option<FlowResult> {
     let target = get_jump_target(inst, format)?;
     let cond = reg_expr(&inst.operands, 1)?;
-    let fallthrough = inst.offset + inst.length;
+    let fallthrough = inst.offset.wrapping_add(inst.length);
 
     let condition = if name.contains("False") {
         Expression::unary(crate::ir::UnaryOp::Not, cond)
@@ -73,7 +73,7 @@ pub fn handle_jmp_comparison(
     let target = get_jump_target(inst, format)?;
     let left = reg_expr(&inst.operands, 1)?;
     let right = reg_expr(&inst.operands, 2)?;
-    let fallthrough = inst.offset + inst.length;
+    let fallthrough = inst.offset.wrapping_add(inst.length);
 
     // Strip "Long" suffix for matching
     let base_name = name.trim_end_matches("Long");
@@ -125,7 +125,7 @@ pub fn handle_jmp_typeof_is(
 ) -> Option<FlowResult> {
     let target = get_jump_target(inst, format)?;
     let src = reg_expr(&inst.operands, 1)?;
-    let fallthrough = inst.offset + inst.length;
+    let fallthrough = inst.offset.wrapping_add(inst.length);
 
     let type_idx = inst.operands.get(2)?.value.as_u32()?;
     let type_str = file
@@ -155,7 +155,7 @@ pub fn handle_jmp_builtin_is(
     let target = get_jump_target(inst, format)?;
     let type_id = inst.operands.get(1)?.value.as_u32()?;
     let src = reg_expr(&inst.operands, 2)?;
-    let fallthrough = inst.offset + inst.length;
+    let fallthrough = inst.offset.wrapping_add(inst.length);
 
     let type_str = typeof_id_to_string(type_id).to_string();
 
@@ -224,7 +224,7 @@ pub fn handle_jmp_undefined(
 ) -> Option<FlowResult> {
     let target = get_jump_target(inst, format)?;
     let val = reg_expr(&inst.operands, 1)?;
-    let fallthrough = inst.offset + inst.length;
+    let fallthrough = inst.offset.wrapping_add(inst.length);
 
     let condition = Expression::binary(
         BinaryOp::StrictEq,
@@ -268,7 +268,7 @@ pub(super) fn get_jump_target(inst: &Instruction, format: &BytecodeFormat) -> Op
     for operand in &inst.operands {
         if matches!(operand.ty, OperandType::Addr8 | OperandType::Addr32) {
             if let Some(rel) = operand.value.as_i32() {
-                let target = inst.offset as i32 + rel;
+                let target = (inst.offset as i32).wrapping_add(rel);
                 if target >= 0 {
                     return Some(target as u32);
                 }

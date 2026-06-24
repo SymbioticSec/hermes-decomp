@@ -39,7 +39,7 @@ impl PipelineContext {
 
     // Run the full analysis pipeline with user-provided options.
     pub fn build_with_options(file: &BytecodeFile, format: &BytecodeFormat, user_options: &DecompileOptionsV2) -> Result<Self> {
-        Self::init_rayon();
+        crate::configure_thread_pool();
 
         let total_start = std::time::Instant::now();
         let options = DecompileOptionsV2 {
@@ -51,7 +51,7 @@ impl PipelineContext {
         // STAGE W1: Closure Context Build
         let t = std::time::Instant::now();
         let mut closure_ctx = Some(build_closure_context_from_file(file, format)?);
-        eprintln!("[pipeline] closure context: {:.2?}", t.elapsed());
+        log::debug!("[pipeline] closure context: {:.2?}", t.elapsed());
 
         // STAGE W2: Metro Detection
         let mut registry = Self::build_metro_registry(file, format);
@@ -80,22 +80,14 @@ impl PipelineContext {
 
         let t = std::time::Instant::now();
         ctx.build_all_inline_bodies(file);
-        eprintln!("[pipeline] inline body rendering: {:.2?} ({} of {} functions)", t.elapsed(), ctx.inline_bodies.len(), file.header.function_count);
+        log::debug!("[pipeline] inline body rendering: {:.2?} ({} of {} functions)", t.elapsed(), ctx.inline_bodies.len(), file.header.function_count);
 
-        eprintln!("[pipeline] exception handlers: {} functions with try/catch", file.exception_handlers.len());
-        eprintln!("[pipeline] TOTAL: {:.2?}", total_start.elapsed());
+        log::debug!("[pipeline] exception handlers: {} functions with try/catch", file.exception_handlers.len());
+        log::debug!("[pipeline] TOTAL: {:.2?}", total_start.elapsed());
 
         Ok(ctx)
     }
 
-    fn init_rayon() {
-        static INIT_RAYON: std::sync::Once = std::sync::Once::new();
-        INIT_RAYON.call_once(|| {
-            let _ = rayon::ThreadPoolBuilder::new()
-                .stack_size(8 * 1024 * 1024)
-                .build_global();
-        });
-    }
 
     // Phase 1b: Detect Metro modules by scanning the global function with minimal IR.
     fn build_metro_registry(file: &BytecodeFile, format: &BytecodeFormat) -> crate::analysis::MetroRegistry {
@@ -110,7 +102,7 @@ impl PipelineContext {
         if let Ok(stmts) = generate_ir(file, format, global_idx, &raw_options, None, false) {
             registry.analyze_statements(&stmts);
         }
-        eprintln!("[pipeline] metro detection: {:.2?} ({} modules)", t.elapsed(), registry.modules.len());
+        log::debug!("[pipeline] metro detection: {:.2?} ({} modules)", t.elapsed(), registry.modules.len());
         registry
     }
 
@@ -130,7 +122,7 @@ impl PipelineContext {
                 .into_par_iter()
                 .map(|i| {
                     let stmts = generate_ir(file, format, i, options, ctx_ref, false)
-                        .map_err(|e| eprintln!("[pipeline] IR gen failed for func {i}: {e}"))
+                        .map_err(|e| log::debug!("[pipeline] IR gen failed for func {i}: {e}"))
                         .ok()?;
                     let named = super::apply_register_naming(stmts, file, i);
                     let semantic = transforms::infer_variable_names(named);
@@ -140,7 +132,7 @@ impl PipelineContext {
                 })
                 .collect()
         };
-        eprintln!("[pipeline] optimized IR generation (parallel): {:.2?}", t.elapsed());
+        log::debug!("[pipeline] optimized IR generation (parallel): {:.2?}", t.elapsed());
 
         let t = std::time::Instant::now();
         let mut all_ir = BTreeMap::new();
@@ -154,7 +146,7 @@ impl PipelineContext {
         if let Some(ctx) = closure_ctx.as_mut() {
             ctx.propagate_async_to_generators();
         }
-        eprintln!("[pipeline] closure analyze + insert: {:.2?}", t.elapsed());
+        log::debug!("[pipeline] closure analyze + insert: {:.2?}", t.elapsed());
         all_ir
     }
 
@@ -168,14 +160,14 @@ impl PipelineContext {
         // STAGE W5: Module Name Propagation
         let t = std::time::Instant::now();
         crate::analysis::metro::propagate_module_names(all_ir, registry, closure_ctx);
-        eprintln!("[pipeline] module name propagation: {:.2?}", t.elapsed());
+        log::debug!("[pipeline] module name propagation: {:.2?}", t.elapsed());
 
         // STAGE W6: Closure Resolution (first pass)
         let t = std::time::Instant::now();
         if let Some(ctx) = closure_ctx.as_ref() {
             Self::resolve_all_closures(all_ir, ctx);
         }
-        eprintln!("[pipeline] closure resolution: {:.2?}", t.elapsed());
+        log::debug!("[pipeline] closure resolution: {:.2?}", t.elapsed());
 
         // STAGE W7: Metro Export Analysis
         let t = std::time::Instant::now();
@@ -186,13 +178,13 @@ impl PipelineContext {
                 crate::analysis::metro::exports::ExportAnalyzer::analyze(module, all_ir);
             }
         }
-        eprintln!("[pipeline] metro export analysis: {:.2?}", t.elapsed());
+        log::debug!("[pipeline] metro export analysis: {:.2?}", t.elapsed());
 
         // STAGE W8: Inter-Procedural Analysis (IPA)
         let t = std::time::Instant::now();
         let func_name_index = build_function_name_index(file);
         let global_analysis = crate::analysis::run_ipa(all_ir, registry, &func_name_index);
-        eprintln!("[pipeline] IPA: {:.2?}", t.elapsed());
+        log::debug!("[pipeline] IPA: {:.2?}", t.elapsed());
 
         // STAGE W9: IPA Closure Re-resolve
         let t = std::time::Instant::now();
@@ -200,7 +192,7 @@ impl PipelineContext {
             ctx.update_with_ipa_names(&global_analysis.param_names);
             Self::resolve_all_closures(all_ir, ctx);
         }
-        eprintln!("[pipeline] IPA closure re-resolve: {:.2?}", t.elapsed());
+        log::debug!("[pipeline] IPA closure re-resolve: {:.2?}", t.elapsed());
 
         // STAGE W10: Closure Property Naming (cross-function)
         let t = std::time::Instant::now();
@@ -217,12 +209,12 @@ impl PipelineContext {
             }
             count
         };
-        eprintln!("[pipeline] closure property naming: {:.2?} ({closure_renames} variables renamed)", t.elapsed());
+        log::debug!("[pipeline] closure property naming: {:.2?} ({closure_renames} variables renamed)", t.elapsed());
 
         // STAGE W11: Definition-site closure naming
         let def_renames = transforms::rename_closures_from_definitions(all_ir);
         if def_renames > 0 {
-            eprintln!("[pipeline] closure definition naming: {def_renames} variables renamed");
+            log::debug!("[pipeline] closure definition naming: {def_renames} variables renamed");
         }
 
         global_analysis
@@ -246,7 +238,7 @@ impl PipelineContext {
             let old = std::mem::take(stmts);
             *stmts = transforms::inline_named_variables(old);
         }
-        eprintln!("[pipeline] variable inlining: {:.2?}", t.elapsed());
+        log::debug!("[pipeline] variable inlining: {:.2?}", t.elapsed());
 
         // STAGE W14: Detect async generator patterns (yield → await)
         if let Some(ctx) = closure_ctx.as_mut() {
@@ -261,7 +253,7 @@ impl PipelineContext {
                         *stmts = convert_yields_to_awaits(old);
                     }
                 }
-                eprintln!("[pipeline] async detection: {} functions converted yield→await", async_gen_ids.len());
+                log::debug!("[pipeline] async detection: {} functions converted yield→await", async_gen_ids.len());
             }
         }
 
@@ -269,7 +261,7 @@ impl PipelineContext {
         if let Some(ctx) = closure_ctx.as_mut() {
             let unwrapped = async_detection::unwrap_async_wrappers(all_ir, ctx, &mut global_analysis.param_names, file);
             if unwrapped > 0 {
-                eprintln!("[pipeline] async wrapper unwrap: {unwrapped} functions unwrapped");
+                log::debug!("[pipeline] async wrapper unwrap: {unwrapped} functions unwrapped");
             }
         }
 

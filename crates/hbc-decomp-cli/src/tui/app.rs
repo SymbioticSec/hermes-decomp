@@ -1,21 +1,14 @@
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span, Text};
+use ratatui::layout::Rect;
+use ratatui::text::Text;
 use ratatui::widgets::ListState;
-use similar::{DiffTag, TextDiff};
 use std::collections::{HashMap, HashSet};
-use std::sync::{
-    mpsc::{Receiver, TryRecvError},
-    Arc,
-};
+use std::sync::{mpsc::Receiver, Arc};
 use std::time::Instant;
 
-use hbc_decomp::{
-    build_closure_context, decompile_function_v2, decompile_function_v2_with_context, BytecodeFile,
-    BytecodeFormat, ClosureContext, DecompileOptionsV2, PipelineContext,
-};
+use hbc_decomp::{BytecodeFile, BytecodeFormat, PipelineContext};
 
-use super::formatting::{format_disasm_colored, format_info, highlight_code};
 use super::debug_log;
+use super::gitdiff::{self, GitDiffJob, GitMsg, GitRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode {
@@ -86,19 +79,13 @@ pub struct App {
     pub disasm_cache2: HashMap<usize, Text<'static>>,
     pub decompile_cache2: HashMap<usize, String>,
 
-    // Optional closure contexts for higher-quality v2 pseudocode.
-    pub closure_ctx: Option<ClosureContext>,
-    pub closure_ctx2: Option<ClosureContext>,
-    pub closure_ctx_attempted: bool,
-    pub closure_ctx2_attempted: bool,
-
     // Diff status for each function (by name)
     pub diff_status: HashMap<String, DiffStatus>,
     pub diff_rx: Option<Receiver<DiffProgressMsg>>,
     pub diff_analyzing: bool,
     pub diff_progress_done: usize,
     pub diff_progress_total: usize,
-    known_names: HashSet<String>,
+    pub(crate) known_names: HashSet<String>,
 
     // Mode used for diff calculation (Assembly or Code)
     pub diff_calc_mode: DiffMode,
@@ -106,8 +93,43 @@ pub struct App {
     // Toggle for content diff highlighting
     pub show_diff_colors: bool,
 
+    // Full-program "git" diff mode: hides the function list and shows all code
+    // of file 1 (left) vs file 2 (right), aligned. Computed off-thread.
+    pub git_diff: bool,
+    pub git_rows: Arc<Vec<GitRow>>,
+    pub git_rx: Option<Receiver<GitMsg>>,
+    pub git_computing: bool,
+    pub git_progress: (usize, usize),
+    pub git_built_kind: Option<ViewMode>,
+    // Git-diff content kind. Defaults to Disasm: it needs no decompiler pipeline
+    // so it shows instantly; `v` switches to Decompile (which waits for the
+    // pipeline). Independent from the split-view `diff_kind`.
+    pub git_kind: ViewMode,
+    // Ignore volatile Metro ids (module_955 vs module_769) in the git diff.
+    pub git_normalize: bool,
+    // In-view search for the git diff.
+    pub git_search: String,
+    pub git_searching: bool,
+    pub git_match_count: usize,
+    // 1-based index of the match the view is currently on (0 = none).
+    pub git_match_index: usize,
+    // Syntax-highlight the code in the git diff (vs. plain diff tint).
+    pub git_syntax: bool,
+    // Collapsed functions (by their header index in git_rows).
+    pub git_folded: std::collections::HashSet<usize>,
+    // Display order: indices into git_rows that are currently visible (respects
+    // folds). `scroll` indexes into this, not git_rows directly.
+    pub git_visible: Vec<usize>,
+    // Inner area of the git columns (set during draw) for click-to-fold.
+    pub git_view_top: u16,
+    pub git_view_height: u16,
+    // Frame counter, advanced each loop, for animating the loading spinner.
+    pub tick: usize,
+
     // Persistent list state for function list scrolling
     pub list_state: ListState,
+    // Inner area of the function list (set during draw), for click-to-select.
+    pub list_inner: Rect,
 
     // Full pipeline context (IPA, Metro, naming) — built in background
     pub pipeline_ctx: Option<Arc<PipelineContext>>,
@@ -204,10 +226,6 @@ impl App {
             decompile_cache: HashMap::new(),
             disasm_cache2: HashMap::new(),
             decompile_cache2: HashMap::new(),
-            closure_ctx: None,
-            closure_ctx2: None,
-            closure_ctx_attempted: false,
-            closure_ctx2_attempted: false,
             diff_status: HashMap::new(),
             diff_rx: None,
             diff_analyzing: false,
@@ -220,7 +238,28 @@ impl App {
                 DiffMode::Assembly
             },
             show_diff_colors: true, // Default to true as user requested colors
+            git_diff: false,
+            git_rows: Arc::new(Vec::new()),
+            git_rx: None,
+            git_computing: false,
+            git_progress: (0, 0),
+            git_built_kind: None,
+            // Decompiled by default — it streams per function now, so there's
+            // no opaque wait; `v` toggles to disassembly.
+            git_kind: ViewMode::Decompile,
+            git_normalize: true,
+            git_search: String::new(),
+            git_searching: false,
+            git_match_count: 0,
+            git_match_index: 0,
+            git_syntax: false,
+            git_folded: std::collections::HashSet::new(),
+            git_visible: Vec::new(),
+            git_view_top: 0,
+            git_view_height: 0,
+            tick: 0,
             list_state: ListState::default().with_selected(Some(0)),
+            list_inner: Rect::default(),
             pipeline_ctx: None,
             pipeline_rx: None,
             pipeline_building: false,
@@ -265,58 +304,44 @@ impl App {
             app.known_names = app.all_function_names.iter().cloned().collect();
         }
 
-        // Spawn background pipeline build (IPA, Metro, naming) for file 1
-        {
-            let file = app.file.clone();
-            let format = app.format.clone();
-            let (tx, rx) = std::sync::mpsc::channel();
-            app.pipeline_rx = Some(rx);
-            app.pipeline_building = true;
-            std::thread::spawn(move || {
-                debug_log("[TUI] Pipeline build (file 1) started...");
-                let start = Instant::now();
-                match PipelineContext::build(&file, &format) {
-                    Ok(ctx) => {
-                        debug_log(&format!(
-                            "[TUI] Pipeline build (file 1) done in {:.2?}",
-                            start.elapsed()
-                        ));
-                        let _ = tx.send(ctx);
-                    }
-                    Err(e) => {
-                        debug_log(&format!("[TUI] Pipeline build (file 1) failed: {e}"));
-                    }
-                }
-            });
-        }
-
-        // Spawn background pipeline build for file 2 (diff mode)
-        if let (Some(file2), Some(format2)) = (&app.file2, &app.format2) {
-            let file2 = file2.clone();
-            let format2 = format2.clone();
-            let (tx, rx) = std::sync::mpsc::channel();
-            app.pipeline_rx2 = Some(rx);
-            app.pipeline_building2 = true;
-            std::thread::spawn(move || {
-                debug_log("[TUI] Pipeline build (file 2) started...");
-                let start = Instant::now();
-                match PipelineContext::build(&file2, &format2) {
-                    Ok(ctx) => {
-                        debug_log(&format!(
-                            "[TUI] Pipeline build (file 2) done in {:.2?}",
-                            start.elapsed()
-                        ));
-                        let _ = tx.send(ctx);
-                    }
-                    Err(e) => {
-                        debug_log(&format!("[TUI] Pipeline build (file 2) failed: {e}"));
-                    }
-                }
-            });
-        }
-
+        // The decompiler pipeline (IPA, Metro, naming) is built lazily — it
+        // takes several seconds per file and would otherwise saturate all CPU
+        // cores at startup, starving the (instant) disassembly views and making
+        // the UI lag. It's kicked off the first time decompiled output is asked
+        // for (Decompile view, or the git diff's `v`).
         debug_log(&format!("[TUI] App::new done in {:.2?}", total_start.elapsed()));
         app
+    }
+
+    /// Start building the decompiler pipeline context(s) in the background, if
+    /// not already built or in progress. Idempotent.
+    pub fn ensure_pipeline_building(&mut self) {
+        if self.pipeline_ctx.is_none() && !self.pipeline_building {
+            let file = self.file.clone();
+            let format = self.format.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.pipeline_rx = Some(rx);
+            self.pipeline_building = true;
+            std::thread::spawn(move || match PipelineContext::build(&file, &format) {
+                Ok(ctx) => {
+                    let _ = tx.send(ctx);
+                }
+                Err(e) => debug_log(&format!("[pipeline] file 1 build failed: {e}")),
+            });
+        }
+        if let (Some(file2), Some(format2)) = (self.file2.clone(), self.format2.clone()) {
+            if self.pipeline_ctx2.is_none() && !self.pipeline_building2 {
+                let (tx, rx) = std::sync::mpsc::channel();
+                self.pipeline_rx2 = Some(rx);
+                self.pipeline_building2 = true;
+                std::thread::spawn(move || match PipelineContext::build(&file2, &format2) {
+                    Ok(ctx) => {
+                        let _ = tx.send(ctx);
+                    }
+                    Err(e) => debug_log(&format!("[pipeline] file 2 build failed: {e}")),
+                });
+            }
+        }
     }
 
     // calculate_diff_status method removed (moved to module)
@@ -337,100 +362,11 @@ impl App {
 
     // strip_offsets removed (moved to module)
 
-    fn add_discovered_name(&mut self, name: String) {
+    pub(crate) fn add_discovered_name(&mut self, name: String) {
         if self.known_names.insert(name.clone()) {
             self.all_function_names.push(name);
             self.all_function_names.sort();
             self.update_search();
-        }
-    }
-
-    pub fn poll_background_tasks(&mut self) {
-        let mut messages = Vec::new();
-        let mut disconnected = false;
-        const MAX_MESSAGES_PER_TICK: usize = 128;
-
-        if let Some(rx) = self.diff_rx.as_ref() {
-            for _ in 0..MAX_MESSAGES_PER_TICK {
-                match rx.try_recv() {
-                    Ok(msg) => messages.push(msg),
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => {
-                        disconnected = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        for msg in messages {
-            match msg {
-                DiffProgressMsg::Item {
-                    name,
-                    status,
-                    done,
-                    total,
-                } => {
-                    self.diff_status.insert(name.clone(), status);
-                    self.diff_progress_done = done;
-                    self.diff_progress_total = total;
-                    self.add_discovered_name(name);
-                }
-                DiffProgressMsg::Finished { final_status } => {
-                    self.diff_status = final_status;
-                    self.diff_analyzing = false;
-                    self.diff_progress_done = self.diff_status.len();
-                    if self.diff_progress_total == 0 {
-                        self.diff_progress_total = self.diff_status.len();
-                    }
-                    self.all_function_names = self.diff_status.keys().cloned().collect();
-                    self.all_function_names.sort();
-                    self.known_names = self.all_function_names.iter().cloned().collect();
-                    self.update_search();
-                    self.diff_rx = None;
-                }
-            }
-        }
-
-        if disconnected {
-            self.diff_analyzing = false;
-            self.diff_rx = None;
-        }
-
-        // Poll pipeline context (file 1)
-        if let Some(rx) = self.pipeline_rx.as_ref() {
-            match rx.try_recv() {
-                Ok(ctx) => {
-                    debug_log("[TUI] Pipeline context (file 1) received");
-                    self.pipeline_ctx = Some(Arc::new(ctx));
-                    self.pipeline_building = false;
-                    self.pipeline_rx = None;
-                    self.decompile_cache.clear();
-                }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => {
-                    self.pipeline_building = false;
-                    self.pipeline_rx = None;
-                }
-            }
-        }
-
-        // Poll pipeline context (file 2)
-        if let Some(rx) = self.pipeline_rx2.as_ref() {
-            match rx.try_recv() {
-                Ok(ctx) => {
-                    debug_log("[TUI] Pipeline context (file 2) received");
-                    self.pipeline_ctx2 = Some(Arc::new(ctx));
-                    self.pipeline_building2 = false;
-                    self.pipeline_rx2 = None;
-                    self.decompile_cache2.clear();
-                }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => {
-                    self.pipeline_building2 = false;
-                    self.pipeline_rx2 = None;
-                }
-            }
         }
     }
 
@@ -459,6 +395,34 @@ impl App {
             Some(&self.function_names[self.selected])
         } else {
             None
+        }
+    }
+
+    /// File-2 id for the selected function, resolving renames. Lets us show the
+    /// code of functions that exist only in file 2 ("added"), which have no
+    /// file-1 id.
+    pub fn selected_function_id2(&self) -> Option<u32> {
+        let name = self.selected_function_name()?;
+        if let Some(id) = self.map2.get(name) {
+            return Some(*id);
+        }
+        if let Some(DiffStatus::Renamed(new_name)) = self.diff_status.get(name) {
+            return self.map2.get(new_name).copied();
+        }
+        None
+    }
+
+    /// Select the function clicked at the given terminal cell, if it falls
+    /// inside the function list.
+    pub fn select_at_row(&mut self, col: u16, row: u16) {
+        let a = self.list_inner;
+        let inside = col >= a.x && col < a.x + a.width && row >= a.y && row < a.y + a.height;
+        if !inside {
+            return;
+        }
+        let idx = self.list_state.offset() + (row - a.y) as usize;
+        if idx < self.function_names.len() {
+            self.set_selected(idx);
         }
     }
 
@@ -495,384 +459,159 @@ impl App {
         }
     }
 
-    pub fn content(&mut self) -> (Text<'static>, Option<Text<'static>>) {
-        if self.function_names.is_empty() {
-            if self.diff_analyzing {
-                return (Text::raw("Analyzing functions..."), None);
-            }
-            return (Text::raw("No functions found matching query."), None);
-        }
+    /// Drop the cached git-diff rows (e.g. after switching disasm/decompile),
+    /// so the next `request_git_diff` recomputes.
+    pub fn invalidate_git_diff(&mut self) {
+        self.git_rows = Arc::new(Vec::new());
+        self.git_built_kind = None;
+        self.git_rx = None;
+        self.git_computing = false;
+        self.git_progress = (0, 0);
+        self.git_folded.clear();
+        self.git_visible.clear();
+    }
 
-        match self.view {
-            ViewMode::Info => (Text::raw(self.format_info_wrapper()), None),
-            ViewMode::Disasm => (self.disasm_content(), None),
-            ViewMode::Decompile => (
-                Text::from(highlight_code(&self.decompile_content())),
-                None,
-            ),
-            ViewMode::Diff => {
-                // If showing diff colors, we need to compute the diff and styling manually
-                if self.show_diff_colors && self.file2.is_some() {
-                    let left_str = match self.diff_kind {
-                        ViewMode::Disasm => {
-                            self.get_disasm_string_local(self.selected_function_id())
-                        }
-                        _ => self.decompile_content(), // Returns String
-                    };
-
-                    let right_str = {
-                        let name_opt = self.selected_function_name();
-                        if let Some(name) = name_opt {
-                            let name = name.to_string();
-                            let id2 = if let Some(id) = self.map2.get(&name) {
-                                Some(*id)
-                            } else if let Some(DiffStatus::Renamed(new_name)) =
-                                self.diff_status.get(&name)
-                            {
-                                self.map2.get(new_name).copied()
-                            } else {
-                                None
-                            };
-
-                            if let Some(id2) = id2 {
-                                match self.diff_kind {
-                                    ViewMode::Disasm => self.get_disasm_string_remote(id2),
-                                    _ => self.decompile_content2(id2), // Returns String
-                                }
-                            } else {
-                                String::new() // Function doesn't exist in right
-                            }
-                        } else {
-                            String::new()
-                        }
-                    };
-
-                    if right_str.is_empty() {
-                        let left = match self.diff_kind {
-                            ViewMode::Disasm => self.disasm_content(),
-                            _ => Text::raw(left_str),
-                        };
-                        return (
-                            left,
-                            Some(Text::raw("Function removed or renamed in file 2.")),
-                        );
+    /// Recompute which git_rows are visible given the current fold state. Folded
+    /// functions show only their header; their body rows are hidden.
+    pub fn rebuild_git_visible(&mut self) {
+        let mut visible = Vec::with_capacity(self.git_rows.len());
+        let mut hiding = false;
+        for (i, row) in self.git_rows.iter().enumerate() {
+            match row {
+                GitRow::Header(_) => {
+                    hiding = self.git_folded.contains(&i);
+                    visible.push(i);
+                }
+                _ => {
+                    if !hiding {
+                        visible.push(i);
                     }
-
-                    // Compute Diff
-                    let diff = TextDiff::from_lines(&left_str, &right_str);
-
-                    // Optimization: Collect lines into Vec for O(1) access
-                    let left_lines_vec: Vec<&str> = left_str.lines().collect();
-                    let right_lines_vec: Vec<&str> = right_str.lines().collect();
-
-                    let mut l_lines = Vec::new();
-                    let mut r_lines = Vec::new();
-
-                    for op in diff.ops() {
-                        match op.tag() {
-                            DiffTag::Delete => {
-                                // Lines only in Left
-                                for i in op.old_range() {
-                                    let content = left_lines_vec.get(i).unwrap_or(&"").to_string();
-                                    l_lines.push(Line::from(Span::styled(
-                                        content,
-                                        Style::default().bg(Color::Red).fg(Color::White),
-                                    )));
-                                    // Padding in Right
-                                    r_lines.push(Line::from(""));
-                                }
-                            }
-                            DiffTag::Insert => {
-                                // Lines only in Right
-                                for i in op.new_range() {
-                                    let content = right_lines_vec.get(i).unwrap_or(&"").to_string();
-                                    r_lines.push(Line::from(Span::styled(
-                                        content,
-                                        Style::default().bg(Color::Green).fg(Color::Black),
-                                    )));
-                                    // Padding in Left
-                                    l_lines.push(Line::from(""));
-                                }
-                            }
-                            DiffTag::Replace => {
-                                // Left has lines, Right has lines.
-                                let old_len = op.old_range().len();
-                                let new_len = op.new_range().len();
-                                let max_len = std::cmp::max(old_len, new_len);
-
-                                for i in 0..max_len {
-                                    if i < old_len {
-                                        let idx = op.old_range().start + i;
-                                        let content =
-                                            left_lines_vec.get(idx).unwrap_or(&"").to_string();
-                                        l_lines.push(Line::from(Span::styled(
-                                            content,
-                                            Style::default().bg(Color::Red).fg(Color::White),
-                                        )));
-                                    } else {
-                                        l_lines.push(Line::from(""));
-                                    }
-
-                                    if i < new_len {
-                                        let idx = op.new_range().start + i;
-                                        let content =
-                                            right_lines_vec.get(idx).unwrap_or(&"").to_string();
-                                        r_lines.push(Line::from(Span::styled(
-                                            content,
-                                            Style::default().bg(Color::Green).fg(Color::Black),
-                                        )));
-                                    } else {
-                                        r_lines.push(Line::from(""));
-                                    }
-                                }
-                            }
-                            DiffTag::Equal => {
-                                for i in op.old_range() {
-                                    let content = left_lines_vec.get(i).unwrap_or(&"").to_string();
-                                    l_lines.push(Line::from(content.clone()));
-                                    r_lines.push(Line::from(content)); // Identical
-                                }
-                            }
-                        }
-                    }
-
-                    (Text::from(l_lines), Some(Text::from(r_lines)))
-                } else {
-                    // Standard non-colored view (or if file2 missing)
-                    let left = match self.diff_kind {
-                        ViewMode::Disasm => self.disasm_content(),
-                        _ => Text::raw(self.decompile_content()),
-                    };
-
-                    let right = if self.file2.is_some() {
-                        let name_opt = self.selected_function_name();
-                        if let Some(name) = name_opt {
-                            let name = name.to_string();
-                            let id2 = if let Some(id) = self.map2.get(&name) {
-                                Some(*id)
-                            } else if let Some(DiffStatus::Renamed(new_name)) =
-                                self.diff_status.get(&name)
-                            {
-                                self.map2.get(new_name).copied()
-                            } else {
-                                None
-                            };
-
-                            if let Some(id2) = id2 {
-                                match self.diff_kind {
-                                    ViewMode::Disasm => Some(self.disasm_content2(id2)),
-                                    _ => Some(Text::raw(self.decompile_content2(id2))),
-                                }
-                            } else {
-                                match self.diff_status.get(&name) {
-                                    Some(DiffStatus::Renamed(new_name)) => {
-                                        Some(Text::raw(format!("Renamed to {new_name}")))
-                                    }
-                                    Some(DiffStatus::Removed) => {
-                                        Some(Text::raw("Function removed in file 2."))
-                                    }
-                                    _ => Some(Text::raw("Function removed or renamed in file 2.")),
-                                }
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some(Text::raw("No second file loaded."))
-                    };
-
-                    (left, right)
                 }
             }
         }
+        self.git_visible = visible;
     }
 
-    // get_line_from_str removed (optimized out)
-
-    // Helper to get raw string for disasm
-    fn get_disasm_string_local(&self, id_opt: Option<u32>) -> String {
-        if let Some(id) = id_opt {
-            hbc_decomp::disassemble_function(
-                &self.file,
-                &self.format,
-                id,
-                &hbc_decomp::DisasmOptions::default(),
-            )
-            .unwrap_or_default()
-        } else {
-            String::new()
-        }
-    }
-
-    fn get_disasm_string_remote(&self, id: u32) -> String {
-        let (file2, format2) = match (self.file2.as_ref(), self.format2.as_ref()) {
-            (Some(f), Some(fmt)) => (f, fmt),
-            _ => return String::new(),
-        };
-        hbc_decomp::disassemble_function(file2, format2, id, &hbc_decomp::DisasmOptions::default())
-            .unwrap_or_default()
-    }
-
-    // --- Content Generators for File 1 ---
-
-    fn ensure_closure_ctx_local(&mut self) {
-        if self.closure_ctx_attempted {
+    /// Toggle the fold of the function whose header is at the given display row
+    /// (terminal cell). No-op if the click isn't on a header.
+    pub fn git_toggle_fold_at(&mut self, row: u16) {
+        if row < self.git_view_top {
             return;
         }
-        self.closure_ctx_attempted = true;
-        self.closure_ctx = build_closure_context(&self.file, &self.format).ok();
+        let pos = self.scroll as usize + (row - self.git_view_top) as usize;
+        let Some(&ri) = self.git_visible.get(pos) else {
+            return;
+        };
+        if matches!(self.git_rows.get(ri), Some(GitRow::Header(_))) {
+            if !self.git_folded.remove(&ri) {
+                self.git_folded.insert(ri);
+            }
+            self.rebuild_git_visible();
+        }
     }
 
-    fn ensure_closure_ctx_remote(&mut self) {
-        if self.closure_ctx2_attempted {
+    /// Kick off the background build of the full-program git diff if it is
+    /// enabled and not already built/building for the current kind. Both disasm
+    /// and decompiled modes stream per function off-thread, so neither waits for
+    /// the full PipelineContext to build.
+    /// Safe to call every tick — it early-returns when there's nothing to do.
+    pub fn request_git_diff(&mut self) {
+        if !self.git_diff || self.git_computing || self.git_built_kind == Some(self.git_kind) {
             return;
         }
-        self.closure_ctx2_attempted = true;
-        if let (Some(file2), Some(format2)) = (self.file2.as_ref(), self.format2.as_ref()) {
-            self.closure_ctx2 = build_closure_context(file2, format2).ok();
-        }
+        let (Some(file2), Some(format2)) = (self.file2.clone(), self.format2.clone()) else {
+            return;
+        };
+
+        // Build the full A->Z list directly from both files' function maps
+        // (always complete from startup), not from the diff worker's
+        // incrementally-populated list. file 1 functions first, then file-2-only
+        // (added) ones, both sorted by name.
+        let mut names: Vec<String> = self.map1.keys().cloned().collect();
+        names.sort();
+        let mut added: Vec<String> = self
+            .map2
+            .keys()
+            .filter(|n| !self.map1.contains_key(*n))
+            .cloned()
+            .collect();
+        added.sort();
+        names.extend(added);
+
+        let total = names.len();
+        let job = GitDiffJob {
+            names,
+            map1: self.map1.clone(),
+            map2: self.map2.clone(),
+            diff_status: self.diff_status.clone(),
+            file1: Arc::clone(&self.file),
+            file2,
+            format1: Arc::clone(&self.format),
+            format2,
+            kind: self.git_kind,
+            normalize: self.git_normalize,
+        };
+        self.git_rows = Arc::new(Vec::new());
+        self.git_visible.clear();
+        self.git_folded.clear();
+        self.git_progress = (0, total);
+        self.git_rx = Some(gitdiff::spawn(job));
+        self.git_computing = true;
     }
 
-    pub fn disasm_content(&mut self) -> Text<'static> {
-        let function_id = match self.selected_function_id() {
-            Some(id) => id,
-            None => return Text::raw("Function not present in this file (Added in v2)"),
-        };
-
-        if let Some(content) = self.disasm_cache.get(&(function_id as usize)) {
-            return content.clone();
-        }
-
-        let content = match self
-            .file
-            .decode_function_instructions(&self.format, function_id)
-        {
-            Ok(instructions) => format_disasm_colored(&instructions, &self.format, &self.file),
-            Err(e) => Text::raw(format!("Error: {e}")),
-        };
-
-        self.disasm_cache
-            .insert(function_id as usize, content.clone());
-        content
+    /// Scroll to the next git-diff row matching `git_search` (case-insensitive,
+    /// wrapping). No-op if the query is empty or there are no rows.
+    /// Incremental search (used while typing): jump to the first match at or
+    /// after the current position.
+    pub fn git_search_live(&mut self) {
+        self.git_search_jump(true, true);
     }
 
-    pub fn decompile_content(&mut self) -> String {
-        let function_id = match self.selected_function_id() {
-            Some(id) => id,
-            None => return "Function not present in this file (Added in v2)".to_string(),
-        };
+    pub fn git_search_next(&mut self) {
+        self.git_search_jump(true, false);
+    }
 
-        if let Some(content) = self.decompile_cache.get(&(function_id as usize)) {
-            return content.clone();
-        }
+    pub fn git_search_prev(&mut self) {
+        self.git_search_jump(false, false);
+    }
 
-        // Use full pipeline context if available (IPA, Metro, naming)
-        let content = if let Some(ctx) = &self.pipeline_ctx {
-            ctx.generate_function_code(&self.file, function_id)
+    /// Find the next/previous visible row matching `git_search` (wrapping),
+    /// update scroll, the total match count and the 1-based current index.
+    /// `inclusive` lets incremental typing match the current row in place.
+    fn git_search_jump(&mut self, forward: bool, inclusive: bool) {
+        let query = self.git_search.to_lowercase();
+        let n = self.git_visible.len();
+        self.git_match_count = if query.is_empty() {
+            0
         } else {
-            // Fallback: basic single-function decompilation while pipeline builds
-            let options = DecompileOptionsV2::optimized();
-            self.ensure_closure_ctx_local();
-
-            if let Some(closure) = self.closure_ctx.as_ref() {
-                decompile_function_v2_with_context(
-                    &self.file,
-                    &self.format,
-                    function_id,
-                    &options,
-                    Some(closure),
-                )
+            self.git_visible
+                .iter()
+                .filter(|&&ri| gitdiff::row_contains(&self.git_rows[ri], &query))
+                .count()
+        };
+        if self.git_match_count == 0 {
+            self.git_match_index = 0;
+            return;
+        }
+        let cur = (self.scroll as usize).min(n - 1);
+        let first_off = usize::from(!inclusive);
+        for off in first_off..=n {
+            let pos = if forward {
+                (cur + off) % n
             } else {
-                decompile_function_v2(&self.file, &self.format, function_id, &options)
+                (cur + n - off) % n
+            };
+            if gitdiff::row_contains(&self.git_rows[self.git_visible[pos]], &query) {
+                self.scroll = pos as u32;
+                self.git_match_index = self.git_visible[..=pos]
+                    .iter()
+                    .filter(|&&ri| gitdiff::row_contains(&self.git_rows[ri], &query))
+                    .count();
+                return;
             }
-            .unwrap_or_else(|err| format!("error: {err}"))
-        };
-
-        self.decompile_cache
-            .insert(function_id as usize, content.clone());
-        content
-    }
-
-    // --- Content Generators for File 2 ---
-
-    pub fn disasm_content2(&mut self, function_id: u32) -> Text<'static> {
-        if let Some(content) = self.disasm_cache2.get(&(function_id as usize)) {
-            return content.clone();
         }
-
-        let (file2, format2) = match (self.file2.as_ref(), self.format2.as_ref()) {
-            (Some(f), Some(fmt)) => (f, fmt),
-            _ => return Text::raw("No second file loaded"),
-        };
-
-        let content = match file2.decode_function_instructions(format2, function_id) {
-            Ok(instructions) => format_disasm_colored(&instructions, format2, file2),
-            Err(e) => Text::raw(format!("Error: {e}")),
-        };
-
-        self.disasm_cache2
-            .insert(function_id as usize, content.clone());
-        content
     }
 
-    pub fn decompile_content2(&mut self, function_id: u32) -> String {
-        if let Some(content) = self.decompile_cache2.get(&(function_id as usize)) {
-            return content.clone();
-        }
-
-        // Guard: both file2 and format2 must be present for diff mode
-        if self.file2.is_none() || self.format2.is_none() {
-            return "No second file loaded".to_string();
-        }
-
-        let content = if self.pipeline_ctx2.is_some() {
-            // Use full pipeline context if available (IPA, Metro, naming)
-            let file2 = self.file2.as_ref().unwrap();
-            self.pipeline_ctx2
-                .as_ref()
-                .unwrap()
-                .generate_function_code(file2, function_id)
-        } else {
-            // Fallback: basic single-function decompilation while pipeline builds
-            self.ensure_closure_ctx_remote();
-            let file2 = self.file2.as_ref().unwrap();
-            let format2 = self.format2.as_ref().unwrap();
-            let options = DecompileOptionsV2::optimized();
-            if let Some(ctx) = self.closure_ctx2.as_ref() {
-                decompile_function_v2_with_context(file2, format2, function_id, &options, Some(ctx))
-            } else {
-                decompile_function_v2(file2, format2, function_id, &options)
-            }
-            .unwrap_or_else(|err| format!("error: {err}"))
-        };
-
-        self.decompile_cache2
-            .insert(function_id as usize, content.clone());
-        content
-    }
-
-    pub fn format_info_wrapper(&self) -> String {
-        let name_opt = self.selected_function_name();
-        let name = match name_opt {
-            Some(n) => n,
-            None => return "No function selected.".to_string(),
-        };
-        let status = self.diff_status.get(name);
-
-        format_info(
-            &self.file,
-            &self.path,
-            &self.file2,
-            &self.path2,
-            self.selected,
-            &self.function_names,
-            &self.map1,
-            &self.map2,
-            status,
-        )
-    }
-
-    // Fast search: only matches function names (called on every keystroke).
     pub fn update_search(&mut self) {
         if self.search_query.is_empty() {
             self.function_names = self.all_function_names.clone();

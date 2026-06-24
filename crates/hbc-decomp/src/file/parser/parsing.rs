@@ -50,7 +50,7 @@ fn track_section<T>(
     sections.push(SectionInfo {
         name,
         offset: sec_start,
-        size: reader.position() as u32 - sec_start,
+        size: (reader.position() as u32).saturating_sub(sec_start),
         entries,
     });
     Ok(result)
@@ -290,7 +290,7 @@ fn parse_trailing_and_build(
     sections.push(SectionInfo {
         name: "bytecode",
         offset: instruction_offset,
-        size: bytes.len() as u32 - instruction_offset,
+        size: (bytes.len() as u32).saturating_sub(instruction_offset),
         entries: None,
     });
 
@@ -354,8 +354,8 @@ fn parse_exception_handlers(
         }
 
         // Align to 4 bytes
-        let aligned = (info_offset + 3) & !3;
-        if aligned + 4 > bytes.len() {
+        let aligned = info_offset.saturating_add(3) & !3;
+        if aligned.saturating_add(4) > bytes.len() {
             continue;
         }
 

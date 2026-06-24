@@ -12,6 +12,12 @@ use crate::ir::Statement;
 use graph::CallGraph;
 use inference::{is_generic_name, vote_on_names};
 use std::collections::BTreeMap;
+
+/// Upper bound on parameter-slot vectors. Parameter indices come from parsed
+/// IR; a corrupt index could otherwise drive `vec![None; idx + 1]` / `resize`
+/// to allocate gigabytes and abort the process. No real function approaches
+/// this many parameters.
+pub(crate) const MAX_PARAM_SLOTS: usize = 1 << 16;
 pub use structs::GlobalAnalysis;
 pub use resolution::FunctionNameIndex;
 
@@ -54,8 +60,10 @@ pub fn run_ipa(
     for (&func_id, stmts) in functions {
         let body_hints = body_hints::infer_param_names_from_body(stmts);
         if !body_hints.is_empty() {
-            let max_idx = body_hints.iter().map(|(idx, _)| *idx).max().unwrap_or(0);
-            let mut site = vec![None; max_idx as usize + 1];
+            let max_idx =
+                (body_hints.iter().map(|(idx, _)| *idx).max().unwrap_or(0) as usize)
+                    .min(MAX_PARAM_SLOTS);
+            let mut site = vec![None; max_idx + 1];
             for (idx, name) in body_hints {
                 if site.get(idx as usize).is_none_or(|s| s.is_none())
                     && idx < site.len() as u32 {
@@ -109,6 +117,9 @@ pub fn run_ipa(
 
         if let Some(links) = links_by_src.get(&func_id) {
             for link in links {
+                if link.dst_param as usize >= MAX_PARAM_SLOTS {
+                    continue;
+                }
                 if let Some(Some(name)) = src_names.get(link.src_param as usize) {
                     let entry = analysis.param_names.entry(link.dst_func).or_default();
                     if entry.len() <= link.dst_param as usize {
@@ -133,6 +144,9 @@ pub fn run_ipa(
 
         if let Some(links) = links_by_dst.get(&func_id) {
             for link in links {
+                if link.src_param as usize >= MAX_PARAM_SLOTS {
+                    continue;
+                }
                 if let Some(Some(name)) = dst_names.get(link.dst_param as usize) {
                     let entry = analysis.param_names.entry(link.src_func).or_default();
                     if entry.len() <= link.src_param as usize {

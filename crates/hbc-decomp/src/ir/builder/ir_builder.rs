@@ -105,7 +105,11 @@ impl<'a> IRBuilder<'a> {
 
             if self.options.include_offsets {
                 if self.options.absolute_offsets {
-                    let abs_offset = self.file.instruction_offset + func_bytecode_offset + inst.offset;
+                    let abs_offset = self
+                        .file
+                        .instruction_offset
+                        .wrapping_add(func_bytecode_offset)
+                        .wrapping_add(inst.offset);
                     current_stmts.push(Statement::Comment(format!("@{abs_offset:08x}")));
                 } else {
                     current_stmts.push(Statement::Comment(format!("@{:04x}", inst.offset)));
