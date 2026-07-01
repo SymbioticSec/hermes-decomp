@@ -17,13 +17,13 @@ pub use reserved_words::rename_reserved_words;
 pub use strip_this::strip_hermes_this;
 
 use crate::ir::{AssignTarget, Expression, MutVisitor, Statement, Value, Visitor};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 pub fn inline_expressions(mut stmts: Vec<Statement>) -> Vec<Statement> {
     let mut counter = UseCounter::new();
     counter.count_uses(&stmts);
 
-    let mut inliner = ExpressionInliner::new(counter.use_count);
+    let mut inliner = ExpressionInliner::new(counter.use_count, counter.def_count);
     inliner.visit_statement_list(&mut stmts);
 
     stmts
@@ -31,12 +31,14 @@ pub fn inline_expressions(mut stmts: Vec<Statement>) -> Vec<Statement> {
 
 struct UseCounter {
     use_count: BTreeMap<u32, usize>,
+    def_count: BTreeMap<u32, usize>,
 }
 
 impl UseCounter {
     fn new() -> Self {
         Self {
             use_count: BTreeMap::new(),
+            def_count: BTreeMap::new(),
         }
     }
 
@@ -52,7 +54,20 @@ impl<'a> Visitor<'a> for UseCounter {
         if let Expression::Value(Value::Register(r)) = expr {
             *self.use_count.entry(*r).or_insert(0) += 1;
         }
+        // A compound write target (e.g. inside Expression::Assignment) is a def.
+        if let Expression::Assignment { target, .. } = expr {
+            if let Expression::Value(Value::Register(r)) = &**target {
+                *self.def_count.entry(*r).or_insert(0) += 1;
+            }
+        }
         self.walk_expression(expr);
+    }
+
+    fn visit_assign_target(&mut self, target: &'a AssignTarget) {
+        if let AssignTarget::Register(r) = target {
+            *self.def_count.entry(*r).or_insert(0) += 1;
+        }
+        self.walk_assign_target(target);
     }
 }
 
@@ -61,13 +76,16 @@ struct ExpressionInliner {
     definitions: BTreeMap<u32, Expression>,
     // Count of uses for each register
     use_count: BTreeMap<u32, usize>,
+    // Count of definitions for each register
+    def_count: BTreeMap<u32, usize>,
 }
 
 impl ExpressionInliner {
-    fn new(use_count: BTreeMap<u32, usize>) -> Self {
+    fn new(use_count: BTreeMap<u32, usize>, def_count: BTreeMap<u32, usize>) -> Self {
         Self {
             definitions: BTreeMap::new(),
             use_count,
+            def_count,
         }
     }
 }
@@ -89,8 +107,12 @@ impl MutVisitor for ExpressionInliner {
                 if stmt_uses(&stmt, r) {
                     // Activate inline for this statement!
                     self.definitions.insert(r, expr);
-                } else if has_side_effects {
-                    // Flush to output unaffected by this statement
+                } else if has_side_effects || stmt_redefines_source(&stmt, &expr) {
+                    // Flush to output: either this statement has side effects
+                    // (ordering must be preserved), or it redefines a register
+                    // that the pending value reads — inlining the value at a
+                    // later use would then capture the NEW value, not the value
+                    // at the copy site (`tmp = sum; sum = undefined; print(tmp)`).
                     result.push(s);
                 } else {
                     // Keep waiting
@@ -112,7 +134,12 @@ impl MutVisitor for ExpressionInliner {
             } = &stmt
             {
                 let uses = self.use_count.get(r).copied().unwrap_or(0);
-                if uses == 1 {
+                let defs = self.def_count.get(r).copied().unwrap_or(0);
+                // Only inline registers defined exactly once. A register with
+                // multiple defs is loop-carried or reassigned; inlining one of its
+                // definitions into a use elsewhere (e.g. across a loop back-edge)
+                // is unsound — this is what silently broke counting loops.
+                if uses == 1 && defs == 1 {
                     // Candidate for pending (chaining)
                     pending.push((*r, stmt.clone(), value.clone()));
                     continue; // Do not emit yet
@@ -126,6 +153,19 @@ impl MutVisitor for ExpressionInliner {
         }
 
         *stmts = result;
+    }
+
+    fn visit_statement(&mut self, stmt: &mut Statement) {
+        // For a do-while, `walk_statement` visits the body before the condition,
+        // and processing the body clears `self.definitions` — so a definition
+        // activated for this statement (e.g. an inlined loop bound) would be lost
+        // before the condition is reached. Inline the condition FIRST.
+        if let Statement::DoWhile { body, condition } = stmt {
+            self.visit_expression(condition);
+            self.visit_statement_list(body);
+            return;
+        }
+        self.walk_statement(stmt);
     }
 
     fn visit_expression(&mut self, expr: &mut Expression) {
@@ -165,6 +205,59 @@ fn stmt_uses(stmt: &Statement, reg: u32) -> bool {
     let mut checker = UsesRegister(reg, false);
     checker.visit_statement(stmt);
     checker.1
+}
+
+// True if `stmt` assigns to any register that `value` reads. Such a write
+// invalidates a pending copy of `value`, since inlining it later would capture
+// the post-write register state.
+fn stmt_redefines_source(stmt: &Statement, value: &Expression) -> bool {
+    let mut reads: HashSet<u32> = HashSet::new();
+    collect_read_regs(value, &mut reads);
+    if reads.is_empty() {
+        return false;
+    }
+
+    struct DefChecker<'a> {
+        reads: &'a HashSet<u32>,
+        found: bool,
+    }
+    impl<'a> Visitor<'a> for DefChecker<'a> {
+        fn visit_assign_target(&mut self, target: &'a AssignTarget) {
+            if let AssignTarget::Register(r) = target {
+                if self.reads.contains(r) {
+                    self.found = true;
+                }
+            }
+            self.walk_assign_target(target);
+        }
+        fn visit_expression(&mut self, expr: &'a Expression) {
+            if let Expression::Assignment { target, .. } = expr {
+                if let Expression::Value(Value::Register(r)) = &**target {
+                    if self.reads.contains(r) {
+                        self.found = true;
+                    }
+                }
+            }
+            self.walk_expression(expr);
+        }
+    }
+    let mut checker = DefChecker { reads: &reads, found: false };
+    checker.visit_statement(stmt);
+    checker.found
+}
+
+fn collect_read_regs(expr: &Expression, out: &mut HashSet<u32>) {
+    struct Collector<'a>(&'a mut HashSet<u32>);
+    impl<'a> Visitor<'a> for Collector<'_> {
+        fn visit_expression(&mut self, expr: &'a Expression) {
+            if let Expression::Value(Value::Register(r)) = expr {
+                self.0.insert(*r);
+            }
+            self.walk_expression(expr);
+        }
+    }
+    let mut c = Collector(out);
+    c.visit_expression(expr);
 }
 
 #[cfg(test)]

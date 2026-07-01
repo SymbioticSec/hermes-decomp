@@ -14,6 +14,14 @@ pub fn transform_destructuring(stmts: &mut Vec<Statement>) {
                 continue;
             }
 
+            // Never destructure the global object: `r = globalThis.x` reads are
+            // independent global accesses, not a binding. Merging them produced
+            // nonsensical/invalid output like `const { print, a, b } = globalThis;`.
+            if is_global_object(&obj_expr) {
+                i += 1;
+                continue;
+            }
+
             let mut properties = Vec::new();
             properties.push((prop, target.clone(), None)); // (PropertyKey, AssignTarget, Option<Expression>)
 
@@ -137,6 +145,16 @@ pub fn transform_destructuring(stmts: &mut Vec<Statement>) {
             }
         }
         i += 1;
+    }
+}
+
+// The global object, however it is spelled, should never be destructured.
+fn is_global_object(e: &Expression) -> bool {
+    use crate::ir::Value;
+    match e {
+        Expression::Value(Value::Global) => true,
+        Expression::Value(Value::Variable(v)) => v == "globalThis" || v == "global",
+        _ => false,
     }
 }
 

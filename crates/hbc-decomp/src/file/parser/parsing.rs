@@ -2,7 +2,9 @@ use crate::debug::try_parse_debug_info;
 use crate::error::{Error, Result};
 use crate::file::structure::{ShapeTableEntry, StringKindEntry, TableEntry};
 use crate::file::{BytecodeFile, ExceptionHandler, SectionInfo};
-use crate::format::{BytecodeHeader, FunctionHeader, FunctionHeaderLayout, HeaderLayout};
+use crate::format::{
+    BytecodeHeader, FunctionHeader, FunctionHeaderLayout, HeaderLayout, FLAG_HAS_EXCEPTION_HANDLER,
+};
 use crate::io::ByteReader;
 use std::collections::BTreeMap;
 
@@ -341,11 +343,13 @@ fn parse_exception_handlers(
     for fh in function_headers {
         let (info_offset, flags, func_id) = match fh {
             FunctionHeader::Legacy(h) => (h.info_offset as usize, h.flags, h.function_id),
-            FunctionHeader::Modern(_) => continue, // Modern headers don't have info_offset
+            // HBC >=97: the FunctionInfo (exception table) follows the large
+            // header; parse_large_header_modern records its 4-byte-aligned offset.
+            FunctionHeader::Modern(h) => (h.info_offset as usize, h.flags, h.function_id),
         };
 
         // hasExceptionHandler = bit 3
-        if flags & 0x08 == 0 {
+        if flags & FLAG_HAS_EXCEPTION_HANDLER == 0 {
             continue;
         }
 

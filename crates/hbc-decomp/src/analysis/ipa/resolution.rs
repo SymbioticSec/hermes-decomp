@@ -188,3 +188,21 @@ pub(super) fn extract_object_name_from_method_call(callee: &Expression) -> Optio
     }
     None
 }
+
+// Like `extract_object_name_from_method_call`, but for naming a PARAMETER from a
+// call-site argument rather than a result. When an argument is `X.method(...)`
+// — including transformation methods such as `tokens.join("")` — the parameter
+// it feeds is reasonably named after `X`, the real source variable. Unlike the
+// result case, the transformation method is NOT skipped (the argument value
+// genuinely derives from `X`); generic object names are still rejected so we
+// only ever propagate a meaningful, source-derived identifier.
+pub(super) fn extract_method_object_name(callee: &Expression) -> Option<String> {
+    if let Expression::Member { object, .. } = callee {
+        if let Expression::Value(Value::Variable(name)) = object.as_ref() {
+            if !super::inference::is_generic_name(name) {
+                return Some(name.clone());
+            }
+        }
+    }
+    None
+}

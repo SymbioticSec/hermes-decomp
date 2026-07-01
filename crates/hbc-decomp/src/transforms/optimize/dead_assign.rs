@@ -5,9 +5,15 @@ pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut iter = stmts.into_iter().peekable();
 
     while let Some(stmt) = iter.next() {
-        if let Statement::Assign { target: AssignTarget::Register(r), .. } = &stmt {
+        if let Statement::Assign { target: AssignTarget::Register(r), value } = &stmt {
             if let Some(next) = iter.peek() {
-                if overwrites_register(next, *r) && !stmt_uses_register(next, *r) {
+                // Drop `r = v; r = w` (first def dead) only when `v` is pure — a
+                // call/await/etc. must still run for its side effect even if its
+                // result register is immediately overwritten.
+                if overwrites_register(next, *r)
+                    && !stmt_uses_register(next, *r)
+                    && !value.has_side_effects()
+                {
                     continue;
                 }
             }

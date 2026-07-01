@@ -8,7 +8,7 @@ pub fn encode_level_slot(level: u32, slot: u32) -> u32 {
     ((level & 0xFF) << 24) | (slot & 0xFFFFFF)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ClosureSlotValue {
     Function { id: u32, name: Option<String> },
     Constant(String),
@@ -16,7 +16,7 @@ pub enum ClosureSlotValue {
     Unknown,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ClosureInfo {
     pub slots: BTreeMap<u32, ClosureSlotValue>,
 }
@@ -101,6 +101,8 @@ impl ClosureInfo {
     }
 
     pub fn get_slot_name(&self, slot: u32) -> String {
+        // The raw slot index (the key may be level-encoded for ancestor scopes).
+        let raw_slot = slot & 0x00FF_FFFF;
         match self.slots.get(&slot) {
             Some(ClosureSlotValue::Function { id, name }) => {
                 if let Some(n) = name {
@@ -109,9 +111,15 @@ impl ClosureInfo {
                     format!("f{id}")
                 }
             }
-            Some(ClosureSlotValue::Constant(c)) => c.clone(),
+            // A slot initialised with a constant is a *mutable captured variable*
+            // (e.g. a counter `var c = 0` shared with an inner closure), not an
+            // alias for the constant. Its name must be a stable identifier — using
+            // the constant text would emit `0 = 0` in the parent and inline `0`
+            // for every read in the child. The init is rendered from the parent's
+            // own `closure_N = <const>` assignment.
+            Some(ClosureSlotValue::Constant(_)) => format!("closure_{raw_slot}"),
             Some(ClosureSlotValue::Variable(v)) => v.clone(),
-            Some(ClosureSlotValue::Unknown) | None => format!("closure_{slot}"),
+            Some(ClosureSlotValue::Unknown) | None => format!("closure_{raw_slot}"),
         }
     }
 }

@@ -22,7 +22,7 @@ pub fn rename_param_registers(statements: &mut [Statement], names: &[Option<Stri
                 }
                 // Legacy v1 IR: Expression::Unknown { opcode: "LoadParam", operands }
                 Expression::Unknown { opcode, operands } if opcode == "LoadParam" => {
-                    if let Ok(idx) = operands[0].parse::<usize>() {
+                    if let Some(idx) = operands.first().and_then(|o| o.parse::<usize>().ok()) {
                         if idx < names.len() {
                             if let Some(name) = &names[idx] {
                                 reg_rename_map.insert(*r, name.clone());

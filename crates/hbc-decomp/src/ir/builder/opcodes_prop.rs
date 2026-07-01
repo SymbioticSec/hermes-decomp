@@ -40,6 +40,42 @@ pub fn handle_get_by_id(
     })
 }
 
+// Handle GetByIdWithReceiver / GetByIdWithReceiverLong (HBC >=97).
+//   GetByIdWithReceiverLong dst, obj, cacheIdx, receiver, strIdx
+// Hermes emits these *only* for ES6 `super.prop` access: `obj` is the parent
+// prototype (Object.getPrototypeOf(homeObject)) and `receiver` is the distinct
+// `this`. Regular property reads use GetById (receiver == object, implicit).
+// We therefore reconstruct directly to `super.prop`; the parent-prototype `obj`
+// register becomes dead and is cleaned up. The following call's leading `this`
+// argument is dropped later by strip_hermes_this (Member callee).
+pub fn handle_get_by_id_with_receiver(
+    inst: &Instruction,
+    file: &BytecodeFile,
+    resolve_strings: bool,
+) -> Option<Statement> {
+    let dst = get_reg(&inst.operands, 0)?;
+    // Property name is the last operand (string index), after dst, obj, cache,
+    // receiver.
+    let prop_idx = inst.operands.last()?.value.as_u32()?;
+
+    let prop_name = if resolve_strings {
+        file.string_at(prop_idx)
+            .map(|e| e.value.clone())
+            .unwrap_or_else(|| format!("prop{prop_idx}"))
+    } else {
+        format!("prop{prop_idx}")
+    };
+
+    Some(Statement::Assign {
+        target: AssignTarget::Register(dst),
+        value: Expression::Member {
+            object: Box::new(Expression::Value(crate::ir::Value::Super)),
+            property: PropertyKey::Ident(prop_name),
+            optional: false,
+        },
+    })
+}
+
 // Handle TryGetById opcodes (with optional chaining semantics).
 pub fn handle_try_get_by_id(
     inst: &Instruction,

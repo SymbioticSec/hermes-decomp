@@ -145,6 +145,21 @@ impl MutVisitor for ConcatPropagator {
                 self.visit_assign_target(target);
                 self.walk_expression(value);
             }
+            // Control-flow barriers: a string assigned inside a branch/loop must
+            // NOT be assumed to hold after the merge (it is conditional). Recurse
+            // to propagate within the branch, then drop all tracking so nothing
+            // leaks past the join (this fixed `x = x ?? "anon"` becoming "anon").
+            Statement::If { .. }
+            | Statement::While { .. }
+            | Statement::DoWhile { .. }
+            | Statement::For { .. }
+            | Statement::ForIn { .. }
+            | Statement::ForOf { .. }
+            | Statement::Switch { .. }
+            | Statement::TryCatch { .. } => {
+                self.walk_statement(stmt);
+                self.tracked_strings.clear();
+            }
             _ => self.walk_statement(stmt),
         }
     }

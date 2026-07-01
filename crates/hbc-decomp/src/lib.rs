@@ -29,14 +29,14 @@
 // Suppress collapsible_match/collapsible_if: fixing these requires unstable let-chains (RFC #53667)
 #![allow(clippy::collapsible_match, clippy::collapsible_if)]
 
-/// Configure the global Rayon thread pool with a large worker stack.
-///
-/// Decompilation recurses deeply (CFG structure recovery, closure resolution)
-/// and runs across Rayon workers. Rayon's default worker stack (~2 MB) overflows
-/// and aborts the process on large real-world bundles (e.g. a Metro `global`
-/// function). Call this once at program start — before any decompilation — so
-/// every worker gets enough stack. It is idempotent and best-effort: if the pool
-/// is already initialized it does nothing.
+// Configure the global Rayon thread pool with a large worker stack.
+//
+// Decompilation recurses deeply (CFG structure recovery, closure resolution)
+// and runs across Rayon workers. Rayon's default worker stack (~2 MB) overflows
+// and aborts the process on large real-world bundles (e.g. a Metro `global`
+// function). Call this once at program start — before any decompilation — so
+// every worker gets enough stack. It is idempotent and best-effort: if the pool
+// is already initialized it does nothing.
 pub fn configure_thread_pool() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
@@ -58,6 +58,7 @@ pub mod util;
 
 pub mod analysis;
 pub mod constants;
+pub mod inspect;
 pub mod ir;
 pub mod transforms;
 
@@ -87,8 +88,14 @@ pub use transforms::{
 
 pub use debug::{DebugInfo, ScopeDescriptor, SourceLocation};
 
+pub use inspect::{
+    dump_table, dump_table_json, function_info_banner, render_call_graph, TableKind,
+};
+
 pub use pipeline::{
     analyze_module, build_closure_context_from_file as build_closure_context,
-    decompile_all_v2_with_closures, decompile_function_v2, decompile_function_v2_with_context,
-    generate_ir, DecompileOptionsV2, Decompiler, PipelineContext,
+    decompile_all_v2_with_closures, decompile_all_v2_with_closures_cached, decompile_filtered_v2,
+    decompile_filtered_v2_cached, decompile_function_v2, decompile_function_v2_with_context,
+    default_cache_path, generate_ir, DecompileOptionsV2, Decompiler, ModuleFilter, PipelineContext,
+    CACHE_VERSION,
 };

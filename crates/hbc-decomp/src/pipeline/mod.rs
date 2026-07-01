@@ -1,10 +1,15 @@
 mod batch;
+mod cache;
 mod context;
 mod decompiler;
 mod ir_gen;
 mod stages;
 
-pub use batch::{analyze_module, decompile_all_v2_with_closures};
+pub use batch::{
+    analyze_module, decompile_all_v2_with_closures, decompile_all_v2_with_closures_cached,
+    decompile_filtered_v2, decompile_filtered_v2_cached, ModuleFilter,
+};
+pub use cache::{default_cache_path, CACHE_VERSION};
 pub use context::PipelineContext;
 pub use decompiler::Decompiler;
 pub use ir_gen::{build_closure_context_from_file, generate_ir};
@@ -117,6 +122,11 @@ pub(crate) fn apply_register_naming(
     for name in debug_names.values() {
         used_names.insert(name.clone());
     }
+    // Reserve every source-level variable name already present (destructuring
+    // targets/keys, earlier-named variables, params). Generated register names
+    // must not collide with them — otherwise two distinct bindings end up sharing
+    // a name (`let {x, y}` clashing with a register also named `x`).
+    collect_existing_var_names(&statements, &mut used_names);
 
     let names: BTreeMap<u32, String> = reg_info
         .iter()
@@ -130,6 +140,63 @@ pub(crate) fn apply_register_naming(
         .collect();
 
     rename_registers(statements, &names)
+}
+
+// Collect every source-level variable name appearing in `statements` (variable
+// values/targets and destructuring-pattern names), so register naming can reserve
+// them and avoid collisions.
+fn collect_existing_var_names(
+    statements: &[crate::ir::Statement],
+    out: &mut std::collections::HashSet<String>,
+) {
+    use crate::ir::{AssignTarget, Expression, Value, Visitor};
+    struct C<'a>(&'a mut std::collections::HashSet<String>);
+    impl<'a, 'b> Visitor<'b> for C<'a> {
+        fn visit_expression(&mut self, e: &'b Expression) {
+            if let Expression::Value(Value::Variable(n)) = e {
+                self.0.insert(n.clone());
+            }
+            self.walk_expression(e);
+        }
+        fn visit_assign_target(&mut self, t: &'b AssignTarget) {
+            collect_target_names(t, self.0);
+            self.walk_assign_target(t);
+        }
+    }
+    fn collect_target_names(t: &AssignTarget, out: &mut std::collections::HashSet<String>) {
+        match t {
+            AssignTarget::Variable(n) => {
+                out.insert(n.clone());
+            }
+            AssignTarget::DestructuringArray(elems) => {
+                for e in elems.iter().flatten() {
+                    collect_target_names(&e.0, out);
+                }
+            }
+            AssignTarget::DestructuringArrayRest { elements, rest } => {
+                for e in elements.iter().flatten() {
+                    collect_target_names(&e.0, out);
+                }
+                collect_target_names(rest, out);
+            }
+            AssignTarget::DestructuringObject(props) => {
+                for p in props {
+                    collect_target_names(&p.1, out);
+                }
+            }
+            AssignTarget::DestructuringObjectRest { properties, rest } => {
+                for p in properties {
+                    collect_target_names(&p.1, out);
+                }
+                collect_target_names(rest, out);
+            }
+            _ => {}
+        }
+    }
+    let mut c = C(out);
+    for s in statements {
+        c.visit_statement(s);
+    }
 }
 
 fn get_function_name(file: &BytecodeFile, function_id: u32) -> String {
@@ -148,7 +215,12 @@ fn get_function_params(file: &BytecodeFile, function_id: u32) -> Vec<String> {
         .map(|h| h.param_count())
         .unwrap_or(0);
 
-    (0..param_count).map(|i| format!("arg{i}")).collect()
+    // param_count includes the implicit `this` (Hermes LoadParam index 0). The
+    // body names user arguments 0-indexed (LoadParam idx -> Parameter(idx-1) ->
+    // argN), so the signature must list the user args the same way and NOT show
+    // `this`. Otherwise the signature's argN is the body's arg(N-1) (off by one).
+    let user_params = param_count.saturating_sub(1);
+    (0..user_params).map(|i| format!("arg{i}")).collect()
 }
 
 fn build_function_name_index(file: &BytecodeFile) -> crate::analysis::FunctionNameIndex {

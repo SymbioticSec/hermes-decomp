@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::collections::BTreeMap;
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CallGraph {
     pub calls: BTreeMap<u32, Vec<u32>>,
     pub callers: BTreeMap<u32, Vec<u32>>,

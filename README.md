@@ -1,4 +1,4 @@
-# Hermes Bytecode Decompiler
+![Hermes Bytecode Decompiler](readme_banner.png)
 
 [![Build](https://github.com/SymbioticSec/hermes-decomp/actions/workflows/build.yml/badge.svg)](https://github.com/SymbioticSec/hermes-decomp/actions/workflows/build.yml)
 
@@ -50,6 +50,8 @@ hermes-decomp disasm app.hbc --function 5 --output disasm.txt
 #   --show-offsets    Show bytecode offsets
 #   --no-labels       Hide jump labels
 #   --no-strings      Don't resolve string IDs
+#   --info            Prepend a per-function metadata banner (params, frame,
+#                     registers, size, offset, flags, exception-handler count)
 ```
 
 ![Disassembly Example](disasm.png)
@@ -71,7 +73,15 @@ hermes-decomp decompile app.hbc --function 5
 #   --check-dead-code     Report functions unreachable from Metro roots
 #   --assembly            Binary Ninja-style output with absolute offsets
 #   --json                Export IR as JSON instead of JS
+#   --no-cache            Skip the on-disk analysis cache (always re-analyze)
 ```
+
+> **Analysis cache:** the first decompile/modules/deps/extract run on a file
+> writes a `<input>.hdcache` next to it holding the full analysis. Subsequent
+> runs (any of those commands, the TUI, and the MCP server) load it in ~0.2s
+> instead of re-running the multi-second pipeline. The cache is keyed by a
+> SHA-256 of the bytecode, so it rebuilds automatically when the file changes.
+> Delete the `.hdcache` file or pass `--no-cache` to force a fresh analysis.
 
 ![Decompilation Example](decompile.png)
 
@@ -105,13 +115,21 @@ hermes-decomp graphviz app.hbc --function 5 --open
 hermes-decomp graphviz app.hbc --function 5 --output cfg.dot
 ```
 
-**8. Extract**
-Extract all Metro modules into separate files.
+**8. Callgraph**
+Build the function call graph (text or Graphviz DOT), optionally a depth-limited subgraph from a root function.
+```bash
+hermes-decomp callgraph app.hbc
+hermes-decomp callgraph app.hbc --function 42 --depth 3
+hermes-decomp callgraph app.hbc --function 42 --dot --output calls.dot
+```
+
+**9. Extract**
+Extract all Metro modules into separate files (full-quality ESM per module).
 ```bash
 hermes-decomp extract app.hbc --output modules/
 ```
 
-**9. Modules / Deps**
+**10. Modules / Deps**
 Inspect Metro module registry and dependencies.
 ```bash
 hermes-decomp modules app.hbc
@@ -119,20 +137,23 @@ hermes-decomp modules app.hbc --limit 50
 hermes-decomp deps app.hbc --module 0 --depth 3
 ```
 
-**10. Dump**
-Extract raw data from the bytecode file.
+**11. Dump**
+Extract raw structural data from the bytecode file. `--json` emits machine-readable output.
 ```bash
 hermes-decomp dump app.hbc --kind strings
 hermes-decomp dump app.hbc --kind functions
+hermes-decomp dump app.hbc --kind obj-shapes --json
+# --kind values: strings, functions, identifiers, cjs-modules, regexp,
+#   obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer
 ```
 
-**11. Closures**
+**12. Closures**
 Show closure slot mappings for a function.
 ```bash
 hermes-decomp closures app.hbc --function 5
 ```
 
-**12. Debug**
+**13. Debug**
 Show debug info (variable names, scopes, callees).
 ```bash
 hermes-decomp debug app.hbc --vars
@@ -140,13 +161,13 @@ hermes-decomp debug app.hbc --scopes
 hermes-decomp debug app.hbc --callees
 ```
 
-**13. Versions**
+**14. Versions**
 List all supported Hermes bytecode versions.
 ```bash
 hermes-decomp versions
 ```
 
-**14. JSON Export**
+**15. JSON Export**
 Export the Intermediate Representation (IR) in JSON format for external tools.
 ```bash
 hermes-decomp decompile app.hbc --function 5 --json
@@ -165,7 +186,8 @@ cargo build --release -p hbc-decomp-mcp
 
 ### Configuration
 
-Add to your AI assistant's MCP config (e.g. `claude_desktop_config.json`, Cursor, etc.):
+Add to your AI assistant's MCP config (e.g. `claude_desktop_config.json`, Cursor, etc.).
+A ready-to-edit template is provided at [`mcp-config.example.json`](mcp-config.example.json):
 
 ```json
 {
@@ -177,21 +199,49 @@ Add to your AI assistant's MCP config (e.g. `claude_desktop_config.json`, Cursor
 }
 ```
 
+### Transports
+
+By default the server speaks MCP over **stdio** (the config above launches it as a
+subprocess). It can also serve over **Streamable HTTP** for remote/multiple clients —
+each connection gets its own isolated session:
+
+```bash
+hermes-mcp                                  # stdio (default)
+hermes-mcp --transport http                 # Streamable HTTP on 127.0.0.1:8744/mcp
+hermes-mcp --transport http --host 0.0.0.0 --port 9000 --path /mcp
+```
+
+Point an HTTP-capable MCP client at the URL instead of a command:
+
+```json
+{ "mcpServers": { "hermes-decompiler": { "url": "http://127.0.0.1:8744/mcp" } } }
+```
+
 ### Available Tools
 
 | Tool | Description |
 |------|-------------|
 | `load_file` | Load a `.hbc` file (must be called first) |
 | `file_info` | File header info (version, counts) |
-| `decompile_function` | Decompile one function to JS |
-| `decompile_all` | Decompile all functions |
+| `decompile_function` | Decompile one function to JS (fast, single-function) |
+| `decompile_function_full` | Decompile one function with the full pipeline (IPA, closures, ESM) |
+| `decompile_all` | Decompile all functions, grouped by Metro module |
+| `decompile_module` | Decompile a whole Metro module as ESM |
 | `get_ir_json` | Structured JSON IR for analysis |
 | `disassemble` | Raw bytecode disassembly |
 | `xref_search` | Cross-references to strings or functions |
-| `list_modules` | List Metro modules |
-| `module_deps` | Module dependency tree |
+| `list_modules` | List Metro modules (names + export counts) |
+| `module_deps` | Module dependency tree (named) |
+| `module_exports` | List a module's exported names and their function IDs |
+| `callgraph` | Function call graph (text or DOT), optional depth-limited subgraph |
+| `function_info` | Per-function metadata banner (params, frame, regs, flags) |
+| `closures` | Closure slot mappings for a function |
+| `debug_info` | Debug info (variable names, scopes, callees) |
+| `dead_code` | Functions unreachable from Metro roots |
+| `graphviz` | Control-flow graph of a function (DOT) |
 | `dump` | Dump strings or function headers |
-| `list_versions` | Supported bytecode versions |
+| `dump_table` | Dump a structural table (cjs-modules, regexp, obj-shapes, sections, …) |
+| `list_versions` | Supported bytecode versions (HBC 40-99) |
 
 ## Library Usage (Core API)
 

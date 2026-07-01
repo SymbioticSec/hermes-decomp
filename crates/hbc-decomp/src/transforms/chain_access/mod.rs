@@ -5,14 +5,22 @@ use std::collections::HashSet;
 use crate::ir::{map_nested_bodies, AssignTarget, Expression, Statement};
 use inlining::inline_chains_in_stmt;
 use std::collections::BTreeMap;
-use usage::{count_register_uses, is_chain_candidate};
+use usage::{count_register_defs, count_register_uses, is_chain_candidate};
 
 pub fn optimize_chain_access(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut use_count: BTreeMap<u32, usize> = BTreeMap::new();
     let mut def_map: BTreeMap<u32, (usize, Expression)> = BTreeMap::new();
+    // Count ALL register definitions — INCLUDING those nested inside branch/loop
+    // bodies. A register defined once at the top level but reassigned inside an
+    // `if` (e.g. a merge-carried value: `r = a; if (c) { r = b }; use(r)`) is
+    // multi-def; inlining its top-level definition would drop the conditional
+    // reassignment. `count_register_uses` already recurses, so the def count must
+    // too — otherwise a flat count reports 1 def and the value is wrongly inlined.
+    let mut def_count: BTreeMap<u32, usize> = BTreeMap::new();
 
     for (idx, stmt) in stmts.iter().enumerate() {
         count_register_uses(stmt, &mut use_count);
+        count_register_defs(stmt, &mut def_count);
 
         if let Statement::Assign {
             target: AssignTarget::Register(r),
@@ -28,7 +36,9 @@ pub fn optimize_chain_access(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut to_inline: BTreeMap<u32, Expression> = BTreeMap::new();
 
     for (reg, (_, expr)) in &def_map {
-        if use_count.get(reg).copied().unwrap_or(0) == 1 {
+        if use_count.get(reg).copied().unwrap_or(0) == 1
+            && def_count.get(reg).copied().unwrap_or(0) == 1
+        {
             to_inline.insert(*reg, expr.clone());
         }
     }

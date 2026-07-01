@@ -14,21 +14,130 @@ pub fn handle_new_object(inst: &Instruction) -> Option<Statement> {
     })
 }
 
-// Handle NewObjectWithParent opcode.
+// Handle CreateBaseClass / CreateDerivedClass (HBC ≥97 ES6 class opcodes).
+//   CreateBaseClass    dstClass, dstHomeObject, env, funcIdx
+//   CreateDerivedClass dstClass, dstHomeObject, superClass, funcIdx
+// Desugar to the constructor function + its prototype so the existing
+// function-and-prototype class reconstruction can pick it up:
+//   class = function <ctor>(...) { ... }
+//   homeObject = class.prototype
+// (methods/getters are then defined on the home object by DefineOwnByVal /
+// DefineOwnGetterSetterByVal that follow).
+pub fn handle_create_class(
+    inst: &Instruction,
+    file: &BytecodeFile,
+    resolve_strings: bool,
+    derived: bool,
+) -> Option<Statement> {
+    let class_reg = get_reg(&inst.operands, 0)?;
+    let home_reg = get_reg(&inst.operands, 1)?;
+    // funcIdx is the last operand.
+    let func_idx = inst.operands.last()?.value.as_u32()?;
+
+    let func_header = file.function_headers.get(func_idx as usize);
+    let name = if resolve_strings {
+        func_header
+            .and_then(|h| file.string_at(h.function_name()))
+            .map(|e| e.value.clone())
+            .filter(|n| !n.is_empty())
+    } else {
+        None
+    };
+    let class_fn = Expression::Function {
+        id: crate::ir::FunctionId(func_idx),
+        name,
+        is_arrow: false,
+        is_async: false,
+        is_generator: false,
+    };
+    let class_assign = Statement::Assign {
+        target: AssignTarget::Register(class_reg),
+        value: class_fn,
+    };
+    let proto_assign = Statement::Assign {
+        target: AssignTarget::Register(home_reg),
+        value: Expression::member(
+            Expression::Value(crate::ir::Value::Register(class_reg)),
+            "prototype",
+        ),
+    };
+
+    // For a derived class (`class B extends A`), CreateDerivedClass carries the
+    // superClass in operand 3 (dst, home, env, superClass, funcIdx). We must:
+    //   1. Capture the superclass register *before* `class_assign` overwrites
+    //      `class_reg` (Hermes reuses the same register for dst and super), so it
+    //      still reads the base class. Capturing also keeps the base class's
+    //      constructor alive (an extra use) so propagation does not inline it
+    //      away into an invalid `function A(){}.prototype[...]` expression.
+    //   2. Emit a recognizable `__hermes_class_extends__(class, super)` marker
+    //      that the class reconstruction pass turns into `extends`. Both reads
+    //      resolve correctly after SSA (capture = base, class_reg = derived).
+    if derived {
+        if let Some(super_reg) = get_reg(&inst.operands, 3) {
+            // Synthetic, collision-free temp: above physical registers, unique
+            // per derived constructor. SSA renumbers it regardless.
+            let super_tmp = 0xFFFF_0000u32 | (func_idx & 0xFFFF);
+            let capture = Statement::Assign {
+                target: AssignTarget::Register(super_tmp),
+                value: Expression::Value(crate::ir::Value::Register(super_reg)),
+            };
+            let extends_marker = Statement::Expr(Expression::Call {
+                callee: Box::new(Expression::Value(crate::ir::Value::Variable(
+                    EXTENDS_MARKER.to_string(),
+                ))),
+                arguments: vec![
+                    Expression::Value(crate::ir::Value::Register(class_reg)),
+                    Expression::Value(crate::ir::Value::Register(super_tmp)),
+                ],
+            });
+            return Some(Statement::Block(vec![
+                capture,
+                class_assign,
+                proto_assign,
+                extends_marker,
+            ]));
+        }
+    }
+
+    Some(Statement::Block(vec![class_assign, proto_assign]))
+}
+
+// Sentinel callee name for the synthetic `extends` marker emitted by
+// CreateDerivedClass desugaring and consumed by class reconstruction
+// (transforms/class_patterns). Never appears in real bytecode.
+pub const EXTENDS_MARKER: &str = "__hermes_class_extends__";
+
+// Handle NewObjectWithParent opcode → `Object.create(parent)`.
 pub fn handle_new_object_with_parent(inst: &Instruction) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
-    let _parent = reg_expr(&inst.operands, 1)?;
+    let parent = reg_expr(&inst.operands, 1)?;
 
-    // Object.create(parent)
+    // `Object.create(parent)` — a single genuine argument, NOT the Hermes call
+    // ABI (no `this` receiver: NewObjectWithParent is its own opcode, not a Call).
+    // strip_hermes_this() special-cases single-arg `Object.create` so it does not
+    // mistake `parent` for an ABI receiver and drop it. (A real source
+    // `Object.create(proto)` compiles to a Call with two args — receiver + proto
+    // — and is stripped normally.)
+    let object_create = Expression::member(
+        Expression::member(Expression::Value(crate::ir::Value::Global), "Object"),
+        "create",
+    );
     Some(Statement::Assign {
         target: AssignTarget::Register(dst),
-        value: Expression::Object { properties: vec![] },
+        value: Expression::Call {
+            callee: Box::new(object_create),
+            arguments: vec![parent],
+        },
     })
 }
 
 // Handle NewObjectWithBuffer opcode.
-// Old format (5 operands): Reg8 dst, UInt16 prealloc, UInt16 numProps, UInt16 keyIdx, UInt16 valIdx
-// New format (3 operands): Reg8 dst, UInt16/UInt32 numProps, UInt16/UInt32 bufferIdx
+// Old format (5 operands, HBC ≤96): Reg8 dst, UInt16 prealloc, UInt16 numProps,
+//   UInt16 keyIdx, UInt16 valIdx — keys and values are directly at their offsets.
+// New format (3 operands, HBC ≥97): Reg8 dst, shapeId, valBufOffset — Hermes
+//   added an "object shape table" (hidden-class dedup): shapeId indexes the
+//   shape table to get (key buffer offset, prop count); keys live in the object
+//   key buffer, values at valBufOffset in the (unified) literal value buffer.
 pub fn handle_new_object_with_buffer(
     inst: &Instruction,
     file: &BytecodeFile,
@@ -37,36 +146,32 @@ pub fn handle_new_object_with_buffer(
     let dst = get_reg(&inst.operands, 0)?;
     let mut properties = Vec::new();
 
-    if inst.operands.len() >= 5 {
-        // Old format: 5 operands
+    let key_vals = if inst.operands.len() >= 5 {
+        // Old format: 5 operands.
         let num_props = inst.operands.get(2)?.value.as_u32()?;
         let key_offset = inst.operands.get(3)?.value.as_u32()?;
         let val_offset = inst.operands.get(4)?.value.as_u32()?;
+        Some((key_offset, val_offset, num_props))
+    } else if inst.operands.len() >= 3 {
+        // New format: 3 operands. Resolve keys through the shape table.
+        let shape_id = inst.operands.get(1)?.value.as_u32()?;
+        let val_offset = inst.operands.get(2)?.value.as_u32()?;
+        let shape = file.shape_at(shape_id)?;
+        Some((shape.key_buffer_offset, val_offset, shape.num_props))
+    } else {
+        None
+    };
 
+    if let Some((key_offset, val_offset, num_props)) = key_vals {
         if let (Ok(keys), Ok(vals)) = (
             file.read_key_buffer_series(key_offset, num_props),
             file.read_value_buffer_series(val_offset, num_props),
         ) {
             for (key, val) in keys.into_iter().zip(vals.into_iter()) {
-                let key = literal_to_property_key(&key);
-                let value = literal_to_expression(&val);
-                properties.push(ObjectProperty { key, value });
-            }
-        }
-    } else if inst.operands.len() >= 3 {
-        // New format: 3 operands (numProps, bufferIdx)
-        // In newer Hermes, key and value buffers share the same index
-        let num_props = inst.operands.get(1)?.value.as_u32()?;
-        let buf_idx = inst.operands.get(2)?.value.as_u32()?;
-
-        if let (Ok(keys), Ok(vals)) = (
-            file.read_key_buffer_series(buf_idx, num_props),
-            file.read_value_buffer_series(buf_idx, num_props),
-        ) {
-            for (key, val) in keys.into_iter().zip(vals.into_iter()) {
-                let key = literal_to_property_key(&key);
-                let value = literal_to_expression(&val);
-                properties.push(ObjectProperty { key, value });
+                properties.push(ObjectProperty {
+                    key: literal_to_property_key(&key),
+                    value: literal_to_expression(&val),
+                });
             }
         }
     }
@@ -163,9 +268,12 @@ pub fn handle_get_by_index(inst: &Instruction) -> Option<Statement> {
 
 // Handle PutOwnByVal opcode.
 pub fn handle_put_own_by_val(inst: &Instruction) -> Option<Statement> {
+    // Hermes `PutOwnByVal obj, value, key, enumerable`: operand 1 is the value,
+    // operand 2 the (computed) key/index. (Was read swapped, yielding
+    // `arr[value] = key` for array-spread tails such as `[...a, 4, 5]`.)
     let obj = reg_expr(&inst.operands, 0)?;
-    let key = reg_expr(&inst.operands, 1)?;
-    let value = reg_expr(&inst.operands, 2)?;
+    let value = reg_expr(&inst.operands, 1)?;
+    let key = reg_expr(&inst.operands, 2)?;
 
     Some(Statement::Assign {
         target: AssignTarget::Index { object: obj, key },
@@ -317,10 +425,11 @@ pub fn handle_reify_arguments(inst: &Instruction) -> Option<Statement> {
 
 // Handle CreateThis opcode.
 pub fn handle_create_this(inst: &Instruction) -> Option<Statement> {
+    // Allocates the constructor's `this`. The real instance is produced by the
+    // following Construct + SelectObject, which overwrites this register, so this
+    // assignment is a placeholder that later cleanup drops. (operands 1/2 are the
+    // prototype and closure, not needed here.)
     let dst = get_reg(&inst.operands, 0)?;
-    let _proto = reg_expr(&inst.operands, 1)?;
-    let _closure = reg_expr(&inst.operands, 2)?;
-
     Some(Statement::Assign {
         target: AssignTarget::Register(dst),
         value: Expression::Value(crate::ir::Value::NewTarget),

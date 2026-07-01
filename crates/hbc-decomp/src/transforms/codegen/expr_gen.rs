@@ -329,16 +329,45 @@ impl Codegen {
             }
             Expression::Await(value) => format!("await {}", self.generate_expr(value)),
             Expression::JSXElement { tag, attributes, children } => {
+                use crate::ir::{Constant, Value};
                 let mut attrs = Vec::new();
                 for (key, val) in attributes {
-                    attrs.push(format!("{}={{{}}}", key, self.generate_expr(val)));
+                    if key == "..." {
+                        // Spread props: `{...obj}`.
+                        attrs.push(format!("{{...{}}}", self.generate_expr(val)));
+                    } else if let Expression::Value(Value::Constant(Constant::String(s))) = val {
+                        // String value → `name="..."` (idiomatic JSX, not `={"..."}`).
+                        attrs.push(format!("{key}={s:?}"));
+                    } else if matches!(val, Expression::Value(Value::Constant(Constant::Bool(true)))) {
+                        // `name={true}` → shorthand bare `name`.
+                        attrs.push(key.clone());
+                    } else {
+                        attrs.push(format!("{}={{{}}}", key, self.generate_expr(val)));
+                    }
                 }
+                // A Fragment carries an empty tag → `<>...</>`.
+                let (open, close) = if tag.is_empty() {
+                    (String::new(), String::new())
+                } else {
+                    (tag.clone(), tag.clone())
+                };
                 let attr_str = if attrs.is_empty() { String::new() } else { format!(" {}", attrs.join(" ")) };
                 if children.is_empty() {
-                    format!("<{tag}{attr_str} />")
+                    if tag.is_empty() {
+                        return "<></>".to_string();
+                    }
+                    format!("<{open}{attr_str} />")
                 } else {
-                    let child_str: Vec<String> = children.iter().map(|c| self.generate_expr(c)).collect();
-                    format!("<{tag}{attr_str}>{}</{tag}>", child_str.join(""))
+                    // A nested element renders inline; any other expression child
+                    // (variable, call, string, ...) must be wrapped in `{ }`.
+                    let child_str: Vec<String> = children
+                        .iter()
+                        .map(|c| match c {
+                            crate::ir::Expression::JSXElement { .. } => self.generate_expr(c),
+                            _ => format!("{{{}}}", self.generate_expr(c)),
+                        })
+                        .collect();
+                    format!("<{open}{attr_str}>{}</{close}>", child_str.join(""))
                 }
             }
             Expression::Unknown { opcode, operands } => format!("/* {} {} */", opcode, operands.join(", ")),

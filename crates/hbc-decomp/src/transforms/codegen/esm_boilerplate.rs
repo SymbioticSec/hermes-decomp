@@ -203,16 +203,20 @@ impl Codegen {
             }
         }
 
-        // Pattern 2: const X = globalThis (direct Global value)
-        // Skip known aliases: window, self, global, and mis-named "Object" etc.
-        match value {
-            Expression::Value(Value::Global) => {
-                return true; // Any alias of globalThis is redundant
+        // Pattern 2: const X = globalThis (direct Global value). Only redundant
+        // when X is a conventional global alias (window/self/global/globalThis) —
+        // those are interchangeable with `globalThis`. For any other name, dropping
+        // the binding is unsafe: the variable may be reused as a plain value (e.g.
+        // `print = globalThis; print = print.print`), and removing its definition
+        // leaves later uses referencing `undefined`.
+        let is_global_alias_name =
+            matches!(name, "window" | "self" | "global" | "globalThis" | "globalObject");
+        if is_global_alias_name {
+            match value {
+                Expression::Value(Value::Global) => return true,
+                Expression::Value(Value::Variable(v)) if v == "globalThis" => return true,
+                _ => {}
             }
-            Expression::Value(Value::Variable(v)) if v == "globalThis" => {
-                return true;
-            }
-            _ => {}
         }
 
         false

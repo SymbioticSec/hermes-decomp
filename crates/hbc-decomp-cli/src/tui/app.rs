@@ -10,6 +10,30 @@ use hbc_decomp::{BytecodeFile, BytecodeFormat, PipelineContext};
 use super::debug_log;
 use super::gitdiff::{self, GitDiffJob, GitMsg, GitRow};
 
+// Build the analysis pipeline, reusing the on-disk cache (`<path>.hdcache`) when
+// possible. The cache key needs the raw file bytes, which the App doesn't keep,
+// so we re-read them from `path` (the same bytes the other commands hash, so the
+// cache is shared). An empty or unreadable path falls back to an uncached build.
+fn build_pipeline_cached(
+    file: &BytecodeFile,
+    format: &BytecodeFormat,
+    path: &str,
+) -> hbc_decomp::error::Result<PipelineContext> {
+    if !path.is_empty() {
+        if let Ok(bytes) = std::fs::read(path) {
+            let cache_path = hbc_decomp::default_cache_path(std::path::Path::new(path));
+            return PipelineContext::build_cached(
+                file,
+                format,
+                &hbc_decomp::DecompileOptionsV2::optimized(),
+                &bytes,
+                &cache_path,
+            );
+        }
+    }
+    PipelineContext::build(file, format)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode {
     Disasm,
@@ -313,16 +337,17 @@ impl App {
         app
     }
 
-    /// Start building the decompiler pipeline context(s) in the background, if
-    /// not already built or in progress. Idempotent.
+    // Start building the decompiler pipeline context(s) in the background, if
+    // not already built or in progress. Idempotent.
     pub fn ensure_pipeline_building(&mut self) {
         if self.pipeline_ctx.is_none() && !self.pipeline_building {
             let file = self.file.clone();
             let format = self.format.clone();
+            let path = self.path.clone();
             let (tx, rx) = std::sync::mpsc::channel();
             self.pipeline_rx = Some(rx);
             self.pipeline_building = true;
-            std::thread::spawn(move || match PipelineContext::build(&file, &format) {
+            std::thread::spawn(move || match build_pipeline_cached(&file, &format, &path) {
                 Ok(ctx) => {
                     let _ = tx.send(ctx);
                 }
@@ -331,10 +356,11 @@ impl App {
         }
         if let (Some(file2), Some(format2)) = (self.file2.clone(), self.format2.clone()) {
             if self.pipeline_ctx2.is_none() && !self.pipeline_building2 {
+                let path2 = self.path2.clone().unwrap_or_default();
                 let (tx, rx) = std::sync::mpsc::channel();
                 self.pipeline_rx2 = Some(rx);
                 self.pipeline_building2 = true;
-                std::thread::spawn(move || match PipelineContext::build(&file2, &format2) {
+                std::thread::spawn(move || match build_pipeline_cached(&file2, &format2, &path2) {
                     Ok(ctx) => {
                         let _ = tx.send(ctx);
                     }
@@ -398,9 +424,9 @@ impl App {
         }
     }
 
-    /// File-2 id for the selected function, resolving renames. Lets us show the
-    /// code of functions that exist only in file 2 ("added"), which have no
-    /// file-1 id.
+    // File-2 id for the selected function, resolving renames. Lets us show the
+    // code of functions that exist only in file 2 ("added"), which have no
+    // file-1 id.
     pub fn selected_function_id2(&self) -> Option<u32> {
         let name = self.selected_function_name()?;
         if let Some(id) = self.map2.get(name) {
@@ -412,8 +438,8 @@ impl App {
         None
     }
 
-    /// Select the function clicked at the given terminal cell, if it falls
-    /// inside the function list.
+    // Select the function clicked at the given terminal cell, if it falls
+    // inside the function list.
     pub fn select_at_row(&mut self, col: u16, row: u16) {
         let a = self.list_inner;
         let inside = col >= a.x && col < a.x + a.width && row >= a.y && row < a.y + a.height;
@@ -459,8 +485,8 @@ impl App {
         }
     }
 
-    /// Drop the cached git-diff rows (e.g. after switching disasm/decompile),
-    /// so the next `request_git_diff` recomputes.
+    // Drop the cached git-diff rows (e.g. after switching disasm/decompile),
+    // so the next `request_git_diff` recomputes.
     pub fn invalidate_git_diff(&mut self) {
         self.git_rows = Arc::new(Vec::new());
         self.git_built_kind = None;
@@ -471,8 +497,8 @@ impl App {
         self.git_visible.clear();
     }
 
-    /// Recompute which git_rows are visible given the current fold state. Folded
-    /// functions show only their header; their body rows are hidden.
+    // Recompute which git_rows are visible given the current fold state. Folded
+    // functions show only their header; their body rows are hidden.
     pub fn rebuild_git_visible(&mut self) {
         let mut visible = Vec::with_capacity(self.git_rows.len());
         let mut hiding = false;
@@ -492,8 +518,8 @@ impl App {
         self.git_visible = visible;
     }
 
-    /// Toggle the fold of the function whose header is at the given display row
-    /// (terminal cell). No-op if the click isn't on a header.
+    // Toggle the fold of the function whose header is at the given display row
+    // (terminal cell). No-op if the click isn't on a header.
     pub fn git_toggle_fold_at(&mut self, row: u16) {
         if row < self.git_view_top {
             return;
@@ -510,11 +536,11 @@ impl App {
         }
     }
 
-    /// Kick off the background build of the full-program git diff if it is
-    /// enabled and not already built/building for the current kind. Both disasm
-    /// and decompiled modes stream per function off-thread, so neither waits for
-    /// the full PipelineContext to build.
-    /// Safe to call every tick — it early-returns when there's nothing to do.
+    // Kick off the background build of the full-program git diff if it is
+    // enabled and not already built/building for the current kind. Both disasm
+    // and decompiled modes stream per function off-thread, so neither waits for
+    // the full PipelineContext to build.
+    // Safe to call every tick — it early-returns when there's nothing to do.
     pub fn request_git_diff(&mut self) {
         if !self.git_diff || self.git_computing || self.git_built_kind == Some(self.git_kind) {
             return;
@@ -559,10 +585,10 @@ impl App {
         self.git_computing = true;
     }
 
-    /// Scroll to the next git-diff row matching `git_search` (case-insensitive,
-    /// wrapping). No-op if the query is empty or there are no rows.
-    /// Incremental search (used while typing): jump to the first match at or
-    /// after the current position.
+    // Scroll to the next git-diff row matching `git_search` (case-insensitive,
+    // wrapping). No-op if the query is empty or there are no rows.
+    // Incremental search (used while typing): jump to the first match at or
+    // after the current position.
     pub fn git_search_live(&mut self) {
         self.git_search_jump(true, true);
     }
@@ -575,9 +601,9 @@ impl App {
         self.git_search_jump(false, false);
     }
 
-    /// Find the next/previous visible row matching `git_search` (wrapping),
-    /// update scroll, the total match count and the 1-based current index.
-    /// `inclusive` lets incremental typing match the current row in place.
+    // Find the next/previous visible row matching `git_search` (wrapping),
+    // update scroll, the total match count and the 1-based current index.
+    // `inclusive` lets incremental typing match the current row in place.
     fn git_search_jump(&mut self, forward: bool, inclusive: bool) {
         let query = self.git_search.to_lowercase();
         let n = self.git_visible.len();

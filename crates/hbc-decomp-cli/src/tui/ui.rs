@@ -225,8 +225,8 @@ fn draw_content_pane(
     frame.render_widget(paragraph, area);
 }
 
-/// Split `text` into spans, highlighting case-insensitive occurrences of the
-/// (lowercase, ASCII) search query. Falls back to a single plain span.
+// Split `text` into spans, highlighting case-insensitive occurrences of the
+// (lowercase, ASCII) search query. Falls back to a single plain span.
 fn highlight_spans(text: &str, base: Style, query: Option<&str>) -> Vec<Span<'static>> {
     let hl = Style::default().fg(Color::Black).bg(Color::Yellow);
     match query {
@@ -255,9 +255,9 @@ fn highlight_spans(text: &str, base: Style, query: Option<&str>) -> Vec<Span<'st
     }
 }
 
-/// One side of a diff row: git-style sign (`+`/`-`/space), a line-number
-/// gutter, then the text — either syntax-highlighted or diff-tinted, with the
-/// active search term highlighted on top.
+// One side of a diff row: git-style sign (`+`/`-`/space), a line-number
+// gutter, then the text — either syntax-highlighted or diff-tinted, with the
+// active search term highlighted on top.
 #[allow(clippy::too_many_arguments)]
 fn git_side_line(
     sign: char,
@@ -289,8 +289,8 @@ fn git_side_line(
     Line::from(spans)
 }
 
-/// Full-program git diff: base (file 1) on the left, modified (file 2) on the
-/// right, aligned line by line, both columns scrolled together.
+// Full-program git diff: base (file 1) on the left, modified (file 2) on the
+// right, aligned line by line, both columns scrolled together.
 fn draw_git_diff(frame: &mut Frame, app: &mut App) {
     use super::gitdiff::GitRow;
 
@@ -513,7 +513,7 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
     }
 }
 
-/// A `Rect` of the given size centered within `area`.
+// A `Rect` of the given size centered within `area`.
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let w = width.min(area.width);
     let h = height.min(area.height);

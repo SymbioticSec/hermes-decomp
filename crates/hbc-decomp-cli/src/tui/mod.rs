@@ -39,10 +39,10 @@ pub(crate) fn debug_log(message: &str) {
     }
 }
 
-/// Decompile a single function, logging (never silently swallowing) any error
-/// and returning a visible comment instead of an empty string. Used everywhere
-/// the TUI needs per-function code so failures show up in the log and on screen
-/// rather than vanishing into `unwrap_or_default()`.
+// Decompile a single function, logging (never silently swallowing) any error
+// and returning a visible comment instead of an empty string. Used everywhere
+// the TUI needs per-function code so failures show up in the log and on screen
+// rather than vanishing into `unwrap_or_default()`.
 pub(crate) fn decompile_or_log(
     file: &BytecodeFile,
     format: &BytecodeFormat,
@@ -58,8 +58,8 @@ pub(crate) fn decompile_or_log(
     }
 }
 
-/// Disassemble a single function, logging any error and returning a visible
-/// comment instead of an empty string.
+// Disassemble a single function, logging any error and returning a visible
+// comment instead of an empty string.
 pub(crate) fn disasm_or_log(file: &BytecodeFile, format: &BytecodeFormat, id: u32) -> String {
     match hbc_decomp::disassemble_function(file, format, id, &hbc_decomp::DisasmOptions::default()) {
         Ok(s) => s,

@@ -192,13 +192,20 @@ pub fn handle_throw(inst: &Instruction) -> Option<FlowResult> {
 
 // Handle SelectObject opcode.
 pub fn handle_select_object(inst: &Instruction) -> Option<FlowResult> {
+    // Hermes `SelectObject dst, thisObject, constructorReturn`: the result of
+    // `new Ctor(...)` is the constructor's return value when it is an object,
+    // otherwise the freshly-created `this`. The constructor return (operand 2)
+    // holds our reconstructed `new Ctor(...)` expression, so prefer it — using
+    // operand 1 (the CreateThis placeholder) surfaced the instance as
+    // `new.target`.
+    // operand 1 is `thisObject` (the CreateThis placeholder); we only need the
+    // constructor return (operand 2).
     let dst = get_reg(&inst.operands, 0)?;
-    let result = reg_expr(&inst.operands, 1)?;
-    let _this_obj = reg_expr(&inst.operands, 2)?;
+    let ctor_return = reg_expr(&inst.operands, 2)?;
 
     Some(FlowResult::Statement(Statement::Assign {
         target: crate::ir::AssignTarget::Register(dst),
-        value: result,
+        value: ctor_return,
     }))
 }
 

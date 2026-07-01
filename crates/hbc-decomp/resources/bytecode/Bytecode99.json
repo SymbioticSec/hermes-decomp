@@ -40,6 +40,18 @@
     },
     {
       "Opcode": 4,
+      "Name": "NewTypedObjectWithBuffer",
+      "OperandTypes": [
+        "Reg8",
+        "Reg8",
+        "UInt32",
+        "UInt32",
+        "UInt8"
+      ],
+      "IsJump": false
+    },
+    {
+      "Opcode": 5,
       "Name": "NewObject",
       "OperandTypes": [
         "Reg8"
@@ -47,7 +59,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 5,
+      "Opcode": 6,
       "Name": "NewObjectWithParent",
       "OperandTypes": [
         "Reg8",
@@ -56,7 +68,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 6,
+      "Opcode": 7,
       "Name": "NewArrayWithBuffer",
       "OperandTypes": [
         "Reg8",
@@ -67,7 +79,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 7,
+      "Opcode": 8,
       "Name": "NewArrayWithBufferLong",
       "OperandTypes": [
         "Reg8",
@@ -78,7 +90,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 8,
+      "Opcode": 9,
       "Name": "NewArray",
       "OperandTypes": [
         "Reg8",
@@ -87,7 +99,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 9,
+      "Opcode": 10,
       "Name": "NewFastArray",
       "OperandTypes": [
         "Reg8",
@@ -96,7 +108,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 10,
+      "Opcode": 11,
       "Name": "FastArrayLength",
       "OperandTypes": [
         "Reg8",
@@ -105,7 +117,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 11,
+      "Opcode": 12,
       "Name": "FastArrayLoad",
       "OperandTypes": [
         "Reg8",
@@ -115,7 +127,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 12,
+      "Opcode": 13,
       "Name": "FastArrayStore",
       "OperandTypes": [
         "Reg8",
@@ -125,7 +137,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 13,
+      "Opcode": 14,
       "Name": "FastArrayPush",
       "OperandTypes": [
         "Reg8",
@@ -134,7 +146,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 14,
+      "Opcode": 15,
       "Name": "FastArrayAppend",
       "OperandTypes": [
         "Reg8",
@@ -143,7 +155,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 15,
+      "Opcode": 16,
       "Name": "Mov",
       "OperandTypes": [
         "Reg8",
@@ -152,7 +164,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 16,
+      "Opcode": 17,
       "Name": "MovLong",
       "OperandTypes": [
         "Reg32",
@@ -161,7 +173,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 17,
+      "Opcode": 18,
       "Name": "Negate",
       "OperandTypes": [
         "Reg8",
@@ -170,7 +182,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 18,
+      "Opcode": 19,
       "Name": "Not",
       "OperandTypes": [
         "Reg8",
@@ -179,7 +191,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 19,
+      "Opcode": 20,
       "Name": "BitNot",
       "OperandTypes": [
         "Reg8",
@@ -188,7 +200,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 20,
+      "Opcode": 21,
       "Name": "TypeOf",
       "OperandTypes": [
         "Reg8",
@@ -197,7 +209,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 21,
+      "Opcode": 22,
       "Name": "Eq",
       "OperandTypes": [
         "Reg8",
@@ -207,7 +219,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 22,
+      "Opcode": 23,
       "Name": "StrictEq",
       "OperandTypes": [
         "Reg8",
@@ -217,7 +229,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 23,
+      "Opcode": 24,
       "Name": "Neq",
       "OperandTypes": [
         "Reg8",
@@ -227,7 +239,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 24,
+      "Opcode": 25,
       "Name": "StrictNeq",
       "OperandTypes": [
         "Reg8",
@@ -237,7 +249,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 25,
+      "Opcode": 26,
       "Name": "Less",
       "OperandTypes": [
         "Reg8",
@@ -247,7 +259,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 26,
+      "Opcode": 27,
       "Name": "LessEq",
       "OperandTypes": [
         "Reg8",
@@ -257,7 +269,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 27,
+      "Opcode": 28,
       "Name": "Greater",
       "OperandTypes": [
         "Reg8",
@@ -267,7 +279,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 28,
+      "Opcode": 29,
       "Name": "GreaterEq",
       "OperandTypes": [
         "Reg8",
@@ -277,7 +289,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 29,
+      "Opcode": 30,
       "Name": "Add",
       "OperandTypes": [
         "Reg8",
@@ -287,7 +299,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 30,
+      "Opcode": 31,
       "Name": "AddN",
       "OperandTypes": [
         "Reg8",
@@ -297,7 +309,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 31,
+      "Opcode": 32,
       "Name": "AddS",
       "OperandTypes": [
         "Reg8",
@@ -307,7 +319,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 32,
+      "Opcode": 33,
       "Name": "Mul",
       "OperandTypes": [
         "Reg8",
@@ -317,7 +329,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 33,
+      "Opcode": 34,
       "Name": "MulN",
       "OperandTypes": [
         "Reg8",
@@ -327,7 +339,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 34,
+      "Opcode": 35,
       "Name": "Div",
       "OperandTypes": [
         "Reg8",
@@ -337,7 +349,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 35,
+      "Opcode": 36,
       "Name": "DivN",
       "OperandTypes": [
         "Reg8",
@@ -347,7 +359,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 36,
+      "Opcode": 37,
       "Name": "Mod",
       "OperandTypes": [
         "Reg8",
@@ -357,7 +369,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 37,
+      "Opcode": 38,
       "Name": "Sub",
       "OperandTypes": [
         "Reg8",
@@ -367,7 +379,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 38,
+      "Opcode": 39,
       "Name": "SubN",
       "OperandTypes": [
         "Reg8",
@@ -377,7 +389,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 39,
+      "Opcode": 40,
       "Name": "LShift",
       "OperandTypes": [
         "Reg8",
@@ -387,7 +399,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 40,
+      "Opcode": 41,
       "Name": "RShift",
       "OperandTypes": [
         "Reg8",
@@ -397,7 +409,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 41,
+      "Opcode": 42,
       "Name": "URshift",
       "OperandTypes": [
         "Reg8",
@@ -407,7 +419,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 42,
+      "Opcode": 43,
       "Name": "BitAnd",
       "OperandTypes": [
         "Reg8",
@@ -417,7 +429,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 43,
+      "Opcode": 44,
       "Name": "BitXor",
       "OperandTypes": [
         "Reg8",
@@ -427,7 +439,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 44,
+      "Opcode": 45,
       "Name": "BitOr",
       "OperandTypes": [
         "Reg8",
@@ -437,7 +449,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 45,
+      "Opcode": 46,
       "Name": "Inc",
       "OperandTypes": [
         "Reg8",
@@ -446,7 +458,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 46,
+      "Opcode": 47,
       "Name": "Dec",
       "OperandTypes": [
         "Reg8",
@@ -455,7 +467,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 47,
+      "Opcode": 48,
       "Name": "InstanceOf",
       "OperandTypes": [
         "Reg8",
@@ -465,7 +477,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 48,
+      "Opcode": 49,
       "Name": "IsIn",
       "OperandTypes": [
         "Reg8",
@@ -475,7 +487,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 49,
+      "Opcode": 50,
       "Name": "PrivateIsIn",
       "OperandTypes": [
         "Reg8",
@@ -486,7 +498,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 50,
+      "Opcode": 51,
       "Name": "TypeOfIs",
       "OperandTypes": [
         "Reg8",
@@ -496,7 +508,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 51,
+      "Opcode": 52,
       "Name": "GetParentEnvironment",
       "OperandTypes": [
         "Reg8",
@@ -505,7 +517,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 52,
+      "Opcode": 53,
       "Name": "GetEnvironment",
       "OperandTypes": [
         "Reg8",
@@ -515,7 +527,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 53,
+      "Opcode": 54,
       "Name": "GetClosureEnvironment",
       "OperandTypes": [
         "Reg8",
@@ -524,7 +536,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 54,
+      "Opcode": 55,
       "Name": "StoreToEnvironment",
       "OperandTypes": [
         "Reg8",
@@ -534,7 +546,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 55,
+      "Opcode": 56,
       "Name": "StoreToEnvironmentL",
       "OperandTypes": [
         "Reg8",
@@ -544,7 +556,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 56,
+      "Opcode": 57,
       "Name": "StoreNPToEnvironment",
       "OperandTypes": [
         "Reg8",
@@ -554,7 +566,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 57,
+      "Opcode": 58,
       "Name": "StoreNPToEnvironmentL",
       "OperandTypes": [
         "Reg8",
@@ -564,7 +576,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 58,
+      "Opcode": 59,
       "Name": "LoadFromEnvironment",
       "OperandTypes": [
         "Reg8",
@@ -574,7 +586,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 59,
+      "Opcode": 60,
       "Name": "LoadFromEnvironmentL",
       "OperandTypes": [
         "Reg8",
@@ -584,7 +596,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 60,
+      "Opcode": 61,
       "Name": "GetGlobalObject",
       "OperandTypes": [
         "Reg8"
@@ -592,7 +604,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 61,
+      "Opcode": 62,
       "Name": "GetNewTarget",
       "OperandTypes": [
         "Reg8"
@@ -600,7 +612,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 62,
+      "Opcode": 63,
       "Name": "LoadParentNoTraps",
       "OperandTypes": [
         "Reg8",
@@ -609,7 +621,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 63,
+      "Opcode": 64,
       "Name": "CreateFunctionEnvironment",
       "OperandTypes": [
         "Reg8",
@@ -618,7 +630,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 64,
+      "Opcode": 65,
       "Name": "CreateTopLevelEnvironment",
       "OperandTypes": [
         "Reg8",
@@ -627,7 +639,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 65,
+      "Opcode": 66,
       "Name": "CreateEnvironment",
       "OperandTypes": [
         "Reg8",
@@ -637,7 +649,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 66,
+      "Opcode": 67,
       "Name": "DeclareGlobalVar",
       "OperandTypes": [
         "UInt32S"
@@ -645,7 +657,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 67,
+      "Opcode": 68,
       "Name": "GetByIdShort",
       "OperandTypes": [
         "Reg8",
@@ -656,7 +668,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 68,
+      "Opcode": 69,
       "Name": "GetById",
       "OperandTypes": [
         "Reg8",
@@ -667,7 +679,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 69,
+      "Opcode": 70,
       "Name": "GetByIdLong",
       "OperandTypes": [
         "Reg8",
@@ -678,7 +690,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 70,
+      "Opcode": 71,
       "Name": "GetByIdWithReceiverLong",
       "OperandTypes": [
         "Reg8",
@@ -690,7 +702,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 71,
+      "Opcode": 72,
       "Name": "TryGetById",
       "OperandTypes": [
         "Reg8",
@@ -701,7 +713,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 72,
+      "Opcode": 73,
       "Name": "TryGetByIdLong",
       "OperandTypes": [
         "Reg8",
@@ -712,7 +724,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 73,
+      "Opcode": 74,
       "Name": "PutByIdLoose",
       "OperandTypes": [
         "Reg8",
@@ -723,7 +735,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 74,
+      "Opcode": 75,
       "Name": "PutByIdStrict",
       "OperandTypes": [
         "Reg8",
@@ -734,7 +746,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 75,
+      "Opcode": 76,
       "Name": "PutByIdLooseLong",
       "OperandTypes": [
         "Reg8",
@@ -745,7 +757,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 76,
+      "Opcode": 77,
       "Name": "PutByIdStrictLong",
       "OperandTypes": [
         "Reg8",
@@ -756,7 +768,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 77,
+      "Opcode": 78,
       "Name": "TryPutByIdLoose",
       "OperandTypes": [
         "Reg8",
@@ -767,7 +779,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 78,
+      "Opcode": 79,
       "Name": "TryPutByIdStrict",
       "OperandTypes": [
         "Reg8",
@@ -778,7 +790,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 79,
+      "Opcode": 80,
       "Name": "TryPutByIdLooseLong",
       "OperandTypes": [
         "Reg8",
@@ -789,7 +801,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 80,
+      "Opcode": 81,
       "Name": "TryPutByIdStrictLong",
       "OperandTypes": [
         "Reg8",
@@ -800,7 +812,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 81,
+      "Opcode": 82,
       "Name": "PutOwnBySlotIdx",
       "OperandTypes": [
         "Reg8",
@@ -810,7 +822,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 82,
+      "Opcode": 83,
       "Name": "PutOwnBySlotIdxLong",
       "OperandTypes": [
         "Reg8",
@@ -820,7 +832,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 83,
+      "Opcode": 84,
       "Name": "GetOwnBySlotIdx",
       "OperandTypes": [
         "Reg8",
@@ -830,7 +842,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 84,
+      "Opcode": 85,
       "Name": "GetOwnBySlotIdxLong",
       "OperandTypes": [
         "Reg8",
@@ -840,7 +852,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 85,
+      "Opcode": 86,
       "Name": "DefineOwnById",
       "OperandTypes": [
         "Reg8",
@@ -851,7 +863,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 86,
+      "Opcode": 87,
       "Name": "DefineOwnByIdLong",
       "OperandTypes": [
         "Reg8",
@@ -862,7 +874,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 87,
+      "Opcode": 88,
       "Name": "DefineOwnByIndex",
       "OperandTypes": [
         "Reg8",
@@ -872,7 +884,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 88,
+      "Opcode": 89,
       "Name": "DefineOwnByIndexL",
       "OperandTypes": [
         "Reg8",
@@ -882,7 +894,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 89,
+      "Opcode": 90,
       "Name": "DefineOwnInDenseArray",
       "OperandTypes": [
         "Reg8",
@@ -892,7 +904,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 90,
+      "Opcode": 91,
       "Name": "DefineOwnInDenseArrayL",
       "OperandTypes": [
         "Reg8",
@@ -902,7 +914,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 91,
+      "Opcode": 92,
       "Name": "DefineOwnByVal",
       "OperandTypes": [
         "Reg8",
@@ -913,7 +925,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 92,
+      "Opcode": 93,
       "Name": "GetByVal",
       "OperandTypes": [
         "Reg8",
@@ -923,7 +935,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 93,
+      "Opcode": 94,
       "Name": "GetByIndex",
       "OperandTypes": [
         "Reg8",
@@ -933,7 +945,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 94,
+      "Opcode": 95,
       "Name": "GetByValWithReceiver",
       "OperandTypes": [
         "Reg8",
@@ -944,7 +956,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 95,
+      "Opcode": 96,
       "Name": "PutByValLoose",
       "OperandTypes": [
         "Reg8",
@@ -954,7 +966,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 96,
+      "Opcode": 97,
       "Name": "PutByValStrict",
       "OperandTypes": [
         "Reg8",
@@ -964,7 +976,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 97,
+      "Opcode": 98,
       "Name": "PutByValWithReceiver",
       "OperandTypes": [
         "Reg8",
@@ -976,7 +988,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 98,
+      "Opcode": 99,
       "Name": "DelByVal",
       "OperandTypes": [
         "Reg8",
@@ -987,7 +999,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 99,
+      "Opcode": 100,
       "Name": "AddOwnPrivateBySym",
       "OperandTypes": [
         "Reg8",
@@ -997,7 +1009,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 100,
+      "Opcode": 101,
       "Name": "GetOwnPrivateBySym",
       "OperandTypes": [
         "Reg8",
@@ -1008,7 +1020,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 101,
+      "Opcode": 102,
       "Name": "PutOwnPrivateBySym",
       "OperandTypes": [
         "Reg8",
@@ -1019,7 +1031,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 102,
+      "Opcode": 103,
       "Name": "DefineOwnGetterSetterByVal",
       "OperandTypes": [
         "Reg8",
@@ -1031,7 +1043,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 103,
+      "Opcode": 104,
       "Name": "GetPNameList",
       "OperandTypes": [
         "Reg8",
@@ -1042,7 +1054,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 104,
+      "Opcode": 105,
       "Name": "GetNextPName",
       "OperandTypes": [
         "Reg8",
@@ -1054,7 +1066,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 105,
+      "Opcode": 106,
       "Name": "Call",
       "OperandTypes": [
         "Reg8",
@@ -1064,7 +1076,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 106,
+      "Opcode": 107,
       "Name": "Construct",
       "OperandTypes": [
         "Reg8",
@@ -1074,7 +1086,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 107,
+      "Opcode": 108,
       "Name": "Call1",
       "OperandTypes": [
         "Reg8",
@@ -1084,7 +1096,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 108,
+      "Opcode": 109,
       "Name": "CallWithNewTarget",
       "OperandTypes": [
         "Reg8",
@@ -1095,7 +1107,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 109,
+      "Opcode": 110,
       "Name": "Call2",
       "OperandTypes": [
         "Reg8",
@@ -1106,7 +1118,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 110,
+      "Opcode": 111,
       "Name": "Call3",
       "OperandTypes": [
         "Reg8",
@@ -1118,7 +1130,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 111,
+      "Opcode": 112,
       "Name": "Call4",
       "OperandTypes": [
         "Reg8",
@@ -1131,7 +1143,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 112,
+      "Opcode": 113,
       "Name": "CallWithNewTargetLong",
       "OperandTypes": [
         "Reg8",
@@ -1142,7 +1154,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 113,
+      "Opcode": 114,
       "Name": "CallRequire",
       "OperandTypes": [
         "Reg8",
@@ -1152,7 +1164,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 114,
+      "Opcode": 115,
       "Name": "CallBuiltin",
       "OperandTypes": [
         "Reg8",
@@ -1162,7 +1174,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 115,
+      "Opcode": 116,
       "Name": "CallBuiltinLong",
       "OperandTypes": [
         "Reg8",
@@ -1172,7 +1184,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 116,
+      "Opcode": 117,
       "Name": "GetBuiltinClosure",
       "OperandTypes": [
         "Reg8",
@@ -1181,7 +1193,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 117,
+      "Opcode": 118,
       "Name": "Ret",
       "OperandTypes": [
         "Reg8"
@@ -1189,7 +1201,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 118,
+      "Opcode": 119,
       "Name": "Catch",
       "OperandTypes": [
         "Reg8"
@@ -1197,7 +1209,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 119,
+      "Opcode": 120,
       "Name": "DirectEval",
       "OperandTypes": [
         "Reg8",
@@ -1207,7 +1219,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 120,
+      "Opcode": 121,
       "Name": "Throw",
       "OperandTypes": [
         "Reg8"
@@ -1215,7 +1227,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 121,
+      "Opcode": 122,
       "Name": "ThrowIfEmpty",
       "OperandTypes": [
         "Reg8",
@@ -1224,15 +1236,16 @@
       "IsJump": false
     },
     {
-      "Opcode": 122,
+      "Opcode": 123,
       "Name": "ThrowIfUndefined",
       "OperandTypes": [
+        "Reg8",
         "Reg8"
       ],
       "IsJump": false
     },
     {
-      "Opcode": 123,
+      "Opcode": 124,
       "Name": "ThrowIfThisInitialized",
       "OperandTypes": [
         "Reg8"
@@ -1240,19 +1253,19 @@
       "IsJump": false
     },
     {
-      "Opcode": 124,
+      "Opcode": 125,
       "Name": "Debugger",
       "OperandTypes": [],
       "IsJump": false
     },
     {
-      "Opcode": 125,
+      "Opcode": 126,
       "Name": "AsyncBreakCheck",
       "OperandTypes": [],
       "IsJump": false
     },
     {
-      "Opcode": 126,
+      "Opcode": 127,
       "Name": "ProfilePoint",
       "OperandTypes": [
         "UInt16"
@@ -1260,7 +1273,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 127,
+      "Opcode": 128,
       "Name": "CreateBaseClass",
       "OperandTypes": [
         "Reg8",
@@ -1271,7 +1284,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 128,
+      "Opcode": 129,
       "Name": "CreateBaseClassLongIndex",
       "OperandTypes": [
         "Reg8",
@@ -1282,7 +1295,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 129,
+      "Opcode": 130,
       "Name": "CreateDerivedClass",
       "OperandTypes": [
         "Reg8",
@@ -1294,7 +1307,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 130,
+      "Opcode": 131,
       "Name": "CreateDerivedClassLongIndex",
       "OperandTypes": [
         "Reg8",
@@ -1306,7 +1319,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 131,
+      "Opcode": 132,
       "Name": "CreateClosure",
       "OperandTypes": [
         "Reg8",
@@ -1316,7 +1329,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 132,
+      "Opcode": 133,
       "Name": "CreateClosureLongIndex",
       "OperandTypes": [
         "Reg8",
@@ -1326,7 +1339,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 133,
+      "Opcode": 134,
       "Name": "CreateThisForNew",
       "OperandTypes": [
         "Reg8",
@@ -1336,7 +1349,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 134,
+      "Opcode": 135,
       "Name": "CreateThisForSuper",
       "OperandTypes": [
         "Reg8",
@@ -1347,7 +1360,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 135,
+      "Opcode": 136,
       "Name": "SelectObject",
       "OperandTypes": [
         "Reg8",
@@ -1357,7 +1370,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 136,
+      "Opcode": 137,
       "Name": "LoadParam",
       "OperandTypes": [
         "Reg8",
@@ -1366,7 +1379,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 137,
+      "Opcode": 138,
       "Name": "LoadParamLong",
       "OperandTypes": [
         "Reg8",
@@ -1375,7 +1388,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 138,
+      "Opcode": 139,
       "Name": "LoadConstUInt8",
       "OperandTypes": [
         "Reg8",
@@ -1384,7 +1397,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 139,
+      "Opcode": 140,
       "Name": "LoadConstInt",
       "OperandTypes": [
         "Reg8",
@@ -1393,7 +1406,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 140,
+      "Opcode": 141,
       "Name": "LoadConstDouble",
       "OperandTypes": [
         "Reg8",
@@ -1402,7 +1415,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 141,
+      "Opcode": 142,
       "Name": "LoadConstBigInt",
       "OperandTypes": [
         "Reg8",
@@ -1411,7 +1424,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 142,
+      "Opcode": 143,
       "Name": "LoadConstBigIntLongIndex",
       "OperandTypes": [
         "Reg8",
@@ -1420,7 +1433,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 143,
+      "Opcode": 144,
       "Name": "LoadConstString",
       "OperandTypes": [
         "Reg8",
@@ -1429,7 +1442,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 144,
+      "Opcode": 145,
       "Name": "LoadConstStringLongIndex",
       "OperandTypes": [
         "Reg8",
@@ -1438,7 +1451,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 145,
+      "Opcode": 146,
       "Name": "LoadConstEmpty",
       "OperandTypes": [
         "Reg8"
@@ -1446,7 +1459,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 146,
+      "Opcode": 147,
       "Name": "LoadConstUndefined",
       "OperandTypes": [
         "Reg8"
@@ -1454,7 +1467,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 147,
+      "Opcode": 148,
       "Name": "LoadConstNull",
       "OperandTypes": [
         "Reg8"
@@ -1462,7 +1475,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 148,
+      "Opcode": 149,
       "Name": "LoadConstTrue",
       "OperandTypes": [
         "Reg8"
@@ -1470,7 +1483,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 149,
+      "Opcode": 150,
       "Name": "LoadConstFalse",
       "OperandTypes": [
         "Reg8"
@@ -1478,7 +1491,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 150,
+      "Opcode": 151,
       "Name": "LoadConstZero",
       "OperandTypes": [
         "Reg8"
@@ -1486,7 +1499,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 151,
+      "Opcode": 152,
       "Name": "CoerceThisNS",
       "OperandTypes": [
         "Reg8",
@@ -1495,7 +1508,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 152,
+      "Opcode": 153,
       "Name": "LoadThisNS",
       "OperandTypes": [
         "Reg8"
@@ -1503,7 +1516,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 153,
+      "Opcode": 154,
       "Name": "ToNumber",
       "OperandTypes": [
         "Reg8",
@@ -1512,7 +1525,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 154,
+      "Opcode": 155,
       "Name": "ToNumeric",
       "OperandTypes": [
         "Reg8",
@@ -1521,7 +1534,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 155,
+      "Opcode": 156,
       "Name": "ToInt32",
       "OperandTypes": [
         "Reg8",
@@ -1530,7 +1543,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 156,
+      "Opcode": 157,
       "Name": "ToUint32",
       "OperandTypes": [
         "Reg8",
@@ -1539,7 +1552,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 157,
+      "Opcode": 158,
       "Name": "AddEmptyString",
       "OperandTypes": [
         "Reg8",
@@ -1548,7 +1561,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 158,
+      "Opcode": 159,
       "Name": "CreatePrivateName",
       "OperandTypes": [
         "Reg8",
@@ -1557,7 +1570,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 159,
+      "Opcode": 160,
       "Name": "GetArgumentsPropByValLoose",
       "OperandTypes": [
         "Reg8",
@@ -1567,7 +1580,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 160,
+      "Opcode": 161,
       "Name": "GetArgumentsPropByValStrict",
       "OperandTypes": [
         "Reg8",
@@ -1577,7 +1590,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 161,
+      "Opcode": 162,
       "Name": "GetArgumentsLength",
       "OperandTypes": [
         "Reg8",
@@ -1586,7 +1599,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 162,
+      "Opcode": 163,
       "Name": "ReifyArgumentsStrict",
       "OperandTypes": [
         "Reg8"
@@ -1594,7 +1607,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 163,
+      "Opcode": 164,
       "Name": "ReifyArgumentsLoose",
       "OperandTypes": [
         "Reg8"
@@ -1602,7 +1615,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 164,
+      "Opcode": 165,
       "Name": "ToPropertyKey",
       "OperandTypes": [
         "Reg8",
@@ -1611,7 +1624,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 165,
+      "Opcode": 166,
       "Name": "CreateRegExp",
       "OperandTypes": [
         "Reg8",
@@ -1622,7 +1635,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 166,
+      "Opcode": 167,
       "Name": "UIntSwitchImm",
       "OperandTypes": [
         "Reg8",
@@ -1631,10 +1644,10 @@
         "UInt32",
         "UInt32"
       ],
-      "IsJump": false
+      "IsJump": true
     },
     {
-      "Opcode": 167,
+      "Opcode": 168,
       "Name": "StringSwitchImm",
       "OperandTypes": [
         "Reg8",
@@ -1643,10 +1656,10 @@
         "Addr32",
         "UInt32"
       ],
-      "IsJump": false
+      "IsJump": true
     },
     {
-      "Opcode": 168,
+      "Opcode": 169,
       "Name": "CreateGenerator",
       "OperandTypes": [
         "Reg8",
@@ -1656,7 +1669,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 169,
+      "Opcode": 170,
       "Name": "CreateGeneratorLongIndex",
       "OperandTypes": [
         "Reg8",
@@ -1666,7 +1679,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 170,
+      "Opcode": 171,
       "Name": "IteratorBegin",
       "OperandTypes": [
         "Reg8",
@@ -1675,7 +1688,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 171,
+      "Opcode": 172,
       "Name": "IteratorNext",
       "OperandTypes": [
         "Reg8",
@@ -1685,7 +1698,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 172,
+      "Opcode": 173,
       "Name": "IteratorClose",
       "OperandTypes": [
         "Reg8",
@@ -1694,7 +1707,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 173,
+      "Opcode": 174,
       "Name": "TypedLoadParent",
       "OperandTypes": [
         "Reg8",
@@ -1703,7 +1716,7 @@
       "IsJump": false
     },
     {
-      "Opcode": 174,
+      "Opcode": 175,
       "Name": "Jmp",
       "OperandTypes": [
         "Addr8"
@@ -1711,7 +1724,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 175,
+      "Opcode": 176,
       "Name": "JmpLong",
       "OperandTypes": [
         "Addr32"
@@ -1719,7 +1732,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 176,
+      "Opcode": 177,
       "Name": "JmpTrue",
       "OperandTypes": [
         "Addr8",
@@ -1728,7 +1741,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 177,
+      "Opcode": 178,
       "Name": "JmpTrueLong",
       "OperandTypes": [
         "Addr32",
@@ -1737,7 +1750,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 178,
+      "Opcode": 179,
       "Name": "JmpFalse",
       "OperandTypes": [
         "Addr8",
@@ -1746,7 +1759,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 179,
+      "Opcode": 180,
       "Name": "JmpFalseLong",
       "OperandTypes": [
         "Addr32",
@@ -1755,7 +1768,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 180,
+      "Opcode": 181,
       "Name": "JmpUndefined",
       "OperandTypes": [
         "Addr8",
@@ -1764,7 +1777,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 181,
+      "Opcode": 182,
       "Name": "JmpUndefinedLong",
       "OperandTypes": [
         "Addr32",
@@ -1773,7 +1786,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 182,
+      "Opcode": 183,
       "Name": "JmpTypeOfIs",
       "OperandTypes": [
         "Addr32",
@@ -1783,7 +1796,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 183,
+      "Opcode": 184,
       "Name": "JLess",
       "OperandTypes": [
         "Addr8",
@@ -1793,7 +1806,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 184,
+      "Opcode": 185,
       "Name": "JLessLong",
       "OperandTypes": [
         "Addr32",
@@ -1803,7 +1816,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 185,
+      "Opcode": 186,
       "Name": "JNotLess",
       "OperandTypes": [
         "Addr8",
@@ -1813,7 +1826,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 186,
+      "Opcode": 187,
       "Name": "JNotLessLong",
       "OperandTypes": [
         "Addr32",
@@ -1823,7 +1836,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 187,
+      "Opcode": 188,
       "Name": "JLessN",
       "OperandTypes": [
         "Addr8",
@@ -1833,7 +1846,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 188,
+      "Opcode": 189,
       "Name": "JLessNLong",
       "OperandTypes": [
         "Addr32",
@@ -1843,7 +1856,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 189,
+      "Opcode": 190,
       "Name": "JNotLessN",
       "OperandTypes": [
         "Addr8",
@@ -1853,7 +1866,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 190,
+      "Opcode": 191,
       "Name": "JNotLessNLong",
       "OperandTypes": [
         "Addr32",
@@ -1863,7 +1876,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 191,
+      "Opcode": 192,
       "Name": "JLessEqual",
       "OperandTypes": [
         "Addr8",
@@ -1873,7 +1886,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 192,
+      "Opcode": 193,
       "Name": "JLessEqualLong",
       "OperandTypes": [
         "Addr32",
@@ -1883,7 +1896,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 193,
+      "Opcode": 194,
       "Name": "JNotLessEqual",
       "OperandTypes": [
         "Addr8",
@@ -1893,7 +1906,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 194,
+      "Opcode": 195,
       "Name": "JNotLessEqualLong",
       "OperandTypes": [
         "Addr32",
@@ -1903,7 +1916,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 195,
+      "Opcode": 196,
       "Name": "JLessEqualN",
       "OperandTypes": [
         "Addr8",
@@ -1913,7 +1926,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 196,
+      "Opcode": 197,
       "Name": "JLessEqualNLong",
       "OperandTypes": [
         "Addr32",
@@ -1923,7 +1936,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 197,
+      "Opcode": 198,
       "Name": "JNotLessEqualN",
       "OperandTypes": [
         "Addr8",
@@ -1933,7 +1946,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 198,
+      "Opcode": 199,
       "Name": "JNotLessEqualNLong",
       "OperandTypes": [
         "Addr32",
@@ -1943,7 +1956,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 199,
+      "Opcode": 200,
       "Name": "JGreater",
       "OperandTypes": [
         "Addr8",
@@ -1953,7 +1966,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 200,
+      "Opcode": 201,
       "Name": "JGreaterLong",
       "OperandTypes": [
         "Addr32",
@@ -1963,7 +1976,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 201,
+      "Opcode": 202,
       "Name": "JNotGreater",
       "OperandTypes": [
         "Addr8",
@@ -1973,7 +1986,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 202,
+      "Opcode": 203,
       "Name": "JNotGreaterLong",
       "OperandTypes": [
         "Addr32",
@@ -1983,47 +1996,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 203,
-      "Name": "JGreaterN",
-      "OperandTypes": [
-        "Addr8",
-        "Reg8",
-        "Reg8"
-      ],
-      "IsJump": true
-    },
-    {
       "Opcode": 204,
-      "Name": "JGreaterNLong",
-      "OperandTypes": [
-        "Addr32",
-        "Reg8",
-        "Reg8"
-      ],
-      "IsJump": true
-    },
-    {
-      "Opcode": 205,
-      "Name": "JNotGreaterN",
-      "OperandTypes": [
-        "Addr8",
-        "Reg8",
-        "Reg8"
-      ],
-      "IsJump": true
-    },
-    {
-      "Opcode": 206,
-      "Name": "JNotGreaterNLong",
-      "OperandTypes": [
-        "Addr32",
-        "Reg8",
-        "Reg8"
-      ],
-      "IsJump": true
-    },
-    {
-      "Opcode": 207,
       "Name": "JGreaterEqual",
       "OperandTypes": [
         "Addr8",
@@ -2033,7 +2006,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 208,
+      "Opcode": 205,
       "Name": "JGreaterEqualLong",
       "OperandTypes": [
         "Addr32",
@@ -2043,7 +2016,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 209,
+      "Opcode": 206,
       "Name": "JNotGreaterEqual",
       "OperandTypes": [
         "Addr8",
@@ -2053,7 +2026,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 210,
+      "Opcode": 207,
       "Name": "JNotGreaterEqualLong",
       "OperandTypes": [
         "Addr32",
@@ -2063,7 +2036,47 @@
       "IsJump": true
     },
     {
+      "Opcode": 208,
+      "Name": "JGreaterN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 209,
+      "Name": "JGreaterNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 210,
+      "Name": "JNotGreaterN",
+      "OperandTypes": [
+        "Addr8",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
       "Opcode": 211,
+      "Name": "JNotGreaterNLong",
+      "OperandTypes": [
+        "Addr32",
+        "Reg8",
+        "Reg8"
+      ],
+      "IsJump": true
+    },
+    {
+      "Opcode": 212,
       "Name": "JGreaterEqualN",
       "OperandTypes": [
         "Addr8",
@@ -2073,7 +2086,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 212,
+      "Opcode": 213,
       "Name": "JGreaterEqualNLong",
       "OperandTypes": [
         "Addr32",
@@ -2083,7 +2096,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 213,
+      "Opcode": 214,
       "Name": "JNotGreaterEqualN",
       "OperandTypes": [
         "Addr8",
@@ -2093,7 +2106,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 214,
+      "Opcode": 215,
       "Name": "JNotGreaterEqualNLong",
       "OperandTypes": [
         "Addr32",
@@ -2103,7 +2116,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 215,
+      "Opcode": 216,
       "Name": "JEqual",
       "OperandTypes": [
         "Addr8",
@@ -2113,7 +2126,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 216,
+      "Opcode": 217,
       "Name": "JEqualLong",
       "OperandTypes": [
         "Addr32",
@@ -2123,7 +2136,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 217,
+      "Opcode": 218,
       "Name": "JNotEqual",
       "OperandTypes": [
         "Addr8",
@@ -2133,7 +2146,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 218,
+      "Opcode": 219,
       "Name": "JNotEqualLong",
       "OperandTypes": [
         "Addr32",
@@ -2143,7 +2156,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 219,
+      "Opcode": 220,
       "Name": "JStrictEqual",
       "OperandTypes": [
         "Addr8",
@@ -2153,7 +2166,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 220,
+      "Opcode": 221,
       "Name": "JStrictEqualLong",
       "OperandTypes": [
         "Addr32",
@@ -2163,7 +2176,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 221,
+      "Opcode": 222,
       "Name": "JStrictNotEqual",
       "OperandTypes": [
         "Addr8",
@@ -2173,7 +2186,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 222,
+      "Opcode": 223,
       "Name": "JStrictNotEqualLong",
       "OperandTypes": [
         "Addr32",
@@ -2183,7 +2196,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 223,
+      "Opcode": 224,
       "Name": "JmpBuiltinIs",
       "OperandTypes": [
         "Addr8",
@@ -2193,7 +2206,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 224,
+      "Opcode": 225,
       "Name": "JmpBuiltinIsLong",
       "OperandTypes": [
         "Addr32",
@@ -2203,7 +2216,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 225,
+      "Opcode": 226,
       "Name": "JmpBuiltinIsNot",
       "OperandTypes": [
         "Addr8",
@@ -2213,7 +2226,7 @@
       "IsJump": true
     },
     {
-      "Opcode": 226,
+      "Opcode": 227,
       "Name": "JmpBuiltinIsNotLong",
       "OperandTypes": [
         "Addr32",
@@ -2222,5 +2235,7 @@
       ],
       "IsJump": true
     }
-  ]
+  ],
+  "AbstractDefinitions": [],
+  "GitCommitHash": "913d31acd10aff31e0856657c9c566c3e72bd24a"
 }

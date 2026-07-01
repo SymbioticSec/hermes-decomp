@@ -3,6 +3,22 @@ use crate::ir::{AssignTarget, Expression, ObjectProperty, PropertyKey, Statement
 use std::collections::HashSet;
 
 pub fn transform_object_literals(statements: &mut Vec<Statement>) {
+    // HBC ≥97 emits a shape-table object literal with placeholder values for
+    // non-serializable properties (`{a:1, b:null}`), then fills them via
+    // `PutOwnBySlotIdx obj, val, slot` — which lowers to `obj[slot] = val`. Fold
+    // those slot fills back into the literal's Nth property before the rest of
+    // the object-literal handling runs.
+    fold_slot_index_fills(statements);
+
+    // A register assigned more than once in the whole body is a genuine
+    // re-assignment: referencing it as a property value is unsafe because its
+    // value may differ at the fold point. A register defined exactly once (the
+    // common case for nested object construction — `r1 = {}; r1.c = 42` then
+    // `r0.b = r1`) is safe to reference; it will be inlined later. (The previous
+    // forward-tracking wrongly counted an inner object's own definition as a
+    // reassignment, blocking nested `{a:{b:{c:42}}}` reconstruction.)
+    let multi_assigned = registers_assigned_multiple_times(statements);
+
     let mut i = 0;
     while i < statements.len() {
         // Look for: let obj_reg = NewObject(parent);
@@ -11,22 +27,17 @@ pub fn transform_object_literals(statements: &mut Vec<Statement>) {
             let mut properties = Vec::new();
             let mut j = i + 1;
             let mut consumed_indices = Vec::new();
-            // Track registers that get reassigned between the NewObject and property assignments.
-            // If a property value references a reassigned register, we must stop folding
-            // because the value no longer refers to what it did at the point of the fold.
-            let mut reassigned_regs: HashSet<u32> = HashSet::new();
 
             while j < statements.len() {
                 let stmt = &statements[j];
 
                 if is_put_prop(stmt, obj_reg, &mut properties) {
-                    // Check if the property value references any register that was reassigned
                     let prop = match properties.last() {
                         Some(p) => p,
                         None => break,
                     };
-                    if value_uses_any_reg(&prop.value, &reassigned_regs) {
-                        // Undo: remove the property we just added, stop folding
+                    if value_uses_any_reg(&prop.value, &multi_assigned) {
+                        // Value references a re-assigned register: unsafe to fold.
                         properties.pop();
                         break;
                     }
@@ -34,15 +45,9 @@ pub fn transform_object_literals(statements: &mut Vec<Statement>) {
                 } else if is_reg_used(stmt, obj_reg) || is_reg_assigned(stmt, obj_reg) {
                     // Block boundary
                     break;
-                } else {
-                    // Track register reassignments
-                    if let Some(assigned_reg) = get_assigned_register(stmt) {
-                        reassigned_regs.insert(assigned_reg);
-                    }
+                } else if stmt_has_side_effects(stmt) {
                     // Stop on any statement with side effects for safety
-                    if stmt_has_side_effects(stmt) {
-                        break;
-                    }
+                    break;
                 }
                 j += 1;
             }
@@ -67,6 +72,201 @@ pub fn transform_object_literals(statements: &mut Vec<Statement>) {
         }
         i += 1;
     }
+
+    // Hermes constructs nested objects outer-first (`r4={}; r0={}; r1={}; ...`)
+    // then populates them inner-first, so after folding the literals reference
+    // registers defined *later* (`r4 = {a:r0}` before `r0 = {b:r1}`). Inline
+    // single-use, single-def pure object/array literals into their use site so
+    // `{a:{b:{c:42}}}` is reconstructed (order-independent — these values are pure).
+    inline_single_use_literals(statements);
+}
+
+// Fold `obj = { k0:v0, k1:<placeholder>, ... }; obj[N] = val` (a slot-index
+// fill from PutOwnBySlotIdx) into the literal's Nth property. Only replaces a
+// placeholder value (null/undefined/empty), which is what the shape-table form
+// leaves for non-serializable property values — so a genuine numeric-key write
+// is never absorbed.
+fn fold_slot_index_fills(statements: &mut Vec<Statement>) {
+    let mut i = 0;
+    while i < statements.len() {
+        let prop_count = match &statements[i] {
+            Statement::Assign {
+                target: AssignTarget::Register(_),
+                value: Expression::Object { properties },
+            } if !properties.is_empty() => properties.len(),
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        let obj_reg = match &statements[i] {
+            Statement::Assign { target: AssignTarget::Register(r), .. } => *r,
+            _ => unreachable!(),
+        };
+
+        let mut j = i + 1;
+        let mut remove = Vec::new();
+        while j < statements.len() {
+            if let Some((slot, val)) = slot_index_fill(&statements[j], obj_reg, prop_count) {
+                // Replace the placeholder at `slot` in the literal at `i`.
+                if let Statement::Assign { value: Expression::Object { properties }, .. } =
+                    &mut statements[i]
+                {
+                    if is_placeholder(&properties[slot].value) {
+                        properties[slot].value = val;
+                        remove.push(j);
+                        j += 1;
+                        continue;
+                    }
+                }
+                break;
+            } else if is_reg_used(&statements[j], obj_reg)
+                || is_reg_assigned(&statements[j], obj_reg)
+                || stmt_has_side_effects(&statements[j])
+            {
+                break;
+            }
+            j += 1;
+        }
+        for &idx in remove.iter().rev() {
+            statements.remove(idx);
+        }
+        i += 1;
+    }
+}
+
+// `obj[N] = val` with a constant N < prop_count → (N, val).
+fn slot_index_fill(stmt: &Statement, obj_reg: u32, prop_count: usize) -> Option<(usize, Expression)> {
+    if let Statement::Assign {
+        target: AssignTarget::Index { object: Expression::Value(Value::Register(r)), key },
+        value,
+    } = stmt
+    {
+        if *r != obj_reg {
+            return None;
+        }
+        let n = match key {
+            Expression::Value(Value::Constant(crate::ir::Constant::Integer(n))) if *n >= 0 => {
+                *n as usize
+            }
+            _ => return None,
+        };
+        if n < prop_count {
+            return Some((n, value.clone()));
+        }
+    }
+    None
+}
+
+fn is_placeholder(expr: &Expression) -> bool {
+    matches!(
+        expr,
+        Expression::Value(Value::Constant(
+            crate::ir::Constant::Null | crate::ir::Constant::Undefined
+        ))
+    )
+}
+
+// Inline registers defined once as a pure object/array literal and used exactly
+// once, regardless of statement order. Repeats to a fixed point so deep nests
+// collapse fully.
+fn inline_single_use_literals(statements: &mut Vec<Statement>) {
+    loop {
+        let mut def_count: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        let mut use_count: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        for stmt in statements.iter() {
+            if let Statement::Assign { target: AssignTarget::Register(r), .. } = stmt {
+                *def_count.entry(*r).or_insert(0) += 1;
+            }
+            collect_value_reg_uses(stmt, &mut use_count);
+        }
+
+        // Find a register: defined once as a pure object/array literal, used
+        // exactly once. Restricted to composite literals (not bare constants /
+        // register copies) — those are handled by the general inliner and folding
+        // them here would wrongly substitute e.g. an accumulator's init `0` into a
+        // later `return`.
+        let mut chosen: Option<(u32, Expression)> = None;
+        for stmt in statements.iter() {
+            if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
+                let is_composite =
+                    matches!(value, Expression::Object { .. } | Expression::Array { .. });
+                if is_composite
+                    && def_count.get(r) == Some(&1)
+                    && use_count.get(r) == Some(&1)
+                    && is_pure_literal(value)
+                {
+                    chosen = Some((*r, value.clone()));
+                    break;
+                }
+            }
+        }
+
+        let Some((reg, value)) = chosen else { break };
+        // Substitute the value into its single use, then drop the definition.
+        for stmt in statements.iter_mut() {
+            substitute_register_in_stmt(stmt, reg, &value);
+        }
+        statements.retain(|stmt| {
+            !matches!(stmt, Statement::Assign { target: AssignTarget::Register(r), .. } if *r == reg)
+        });
+    }
+}
+
+fn is_pure_literal(expr: &Expression) -> bool {
+    match expr {
+        Expression::Object { properties } => properties.iter().all(|p| is_pure_literal(&p.value)),
+        Expression::Array { elements } => elements.iter().flatten().all(is_pure_literal),
+        Expression::Value(Value::Constant(_)) => true,
+        Expression::Value(Value::Register(_)) => true,
+        _ => false,
+    }
+}
+
+fn collect_value_reg_uses(stmt: &Statement, counts: &mut std::collections::HashMap<u32, usize>) {
+    use crate::ir::Visitor;
+    struct C<'a>(&'a mut std::collections::HashMap<u32, usize>);
+    impl<'a, 'b> Visitor<'b> for C<'a> {
+        fn visit_assign_target(&mut self, target: &'b AssignTarget) {
+            // Count register reads that occur inside a member/index target
+            // (e.g. `r0.b = ...` reads r0), but NOT the plain register def.
+            match target {
+                AssignTarget::Member { object, .. } => self.visit_expression(object),
+                AssignTarget::Index { object, key } => {
+                    self.visit_expression(object);
+                    self.visit_expression(key);
+                }
+                _ => {}
+            }
+        }
+        fn visit_expression(&mut self, e: &'b Expression) {
+            if let Expression::Value(Value::Register(r)) = e {
+                *self.0.entry(*r).or_insert(0) += 1;
+            }
+            self.walk_expression(e);
+        }
+    }
+    C(counts).visit_statement(stmt);
+}
+
+fn substitute_register_in_stmt(stmt: &mut Statement, reg: u32, value: &Expression) {
+    use crate::ir::MutVisitor;
+    struct S<'a> {
+        reg: u32,
+        value: &'a Expression,
+    }
+    impl<'a> MutVisitor for S<'a> {
+        fn visit_expression(&mut self, e: &mut Expression) {
+            if let Expression::Value(Value::Register(r)) = e {
+                if *r == self.reg {
+                    *e = self.value.clone();
+                    return;
+                }
+            }
+            self.walk_expression(e);
+        }
+    }
+    S { reg, value }.visit_statement(stmt);
 }
 
 fn is_new_object(stmt: &Statement) -> Option<(u32, usize)> {
@@ -208,13 +408,49 @@ fn value_uses_any_reg(expr: &Expression, regs: &HashSet<u32>) -> bool {
     }
 }
 
-// Extract the register being assigned by a statement, if any.
-fn get_assigned_register(stmt: &Statement) -> Option<u32> {
-    match stmt {
-        Statement::Assign {
-            target: AssignTarget::Register(r),
-            ..
-        } => Some(*r),
-        _ => None,
+// Registers that are the target of a register assignment more than once across
+// the whole body (recursively). These are genuine re-assignments whose value is
+// unsafe to capture into a folded object literal.
+fn registers_assigned_multiple_times(stmts: &[Statement]) -> HashSet<u32> {
+    let mut counts = std::collections::HashMap::new();
+    count_register_assigns(stmts, &mut counts);
+    counts
+        .into_iter()
+        .filter(|(_, c)| *c >= 2)
+        .map(|(r, _)| r)
+        .collect()
+}
+
+fn count_register_assigns(stmts: &[Statement], counts: &mut std::collections::HashMap<u32, usize>) {
+    for stmt in stmts {
+        if let Statement::Assign { target: AssignTarget::Register(r), .. } = stmt {
+            *counts.entry(*r).or_insert(0) += 1;
+        }
+        match stmt {
+            Statement::If { then_body, else_body, .. } => {
+                count_register_assigns(then_body, counts);
+                count_register_assigns(else_body, counts);
+            }
+            Statement::While { body, .. }
+            | Statement::DoWhile { body, .. }
+            | Statement::For { body, .. }
+            | Statement::ForIn { body, .. }
+            | Statement::ForOf { body, .. } => count_register_assigns(body, counts),
+            Statement::Block(inner) => count_register_assigns(inner, counts),
+            Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+                count_register_assigns(try_body, counts);
+                count_register_assigns(catch_body, counts);
+                count_register_assigns(finally_body, counts);
+            }
+            Statement::Switch { cases, default, .. } => {
+                for (_, body) in cases {
+                    count_register_assigns(body, counts);
+                }
+                if let Some(d) = default {
+                    count_register_assigns(d, counts);
+                }
+            }
+            _ => {}
+        }
     }
 }

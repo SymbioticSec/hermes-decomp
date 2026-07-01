@@ -36,7 +36,12 @@ pub fn generate_ir(
     let mut builder = IRBuilder::new(file, format, builder_options);
     let mut cfg = builder.build_function(function_id)?;
 
-    // STAGE F2: SSA / Live Range Splitting
+    // STAGE F2: SSA / Live Range Splitting.
+    // First resolve `globalThis` reads to the invariant value so the register
+    // that held it is freed — the HBC >=97 allocator reuses it for unrelated
+    // values, and an un-resolved read would force the SSA merge-freeze to
+    // collapse the two live ranges under one name.
+    transforms::resolve_global_reads(&mut cfg);
     transforms::transform_to_ssa(&mut cfg);
 
     // STAGE F3: Copy/Constant Propagation
@@ -97,6 +102,22 @@ pub fn generate_ir(
             }
         }
         stmts
+    };
+
+    // Reconstruct for-of / for-in loops from the iterator protocol right after
+    // structure recovery, BEFORE inlining folds the iterator registers away
+    // (later detect_patterns can no longer see `iter = src[Symbol.iterator]()`).
+    let statements = if options.recover_structures {
+        // Modern protocol (HBC >= 74: IteratorBegin/IteratorNext/IteratorClose).
+        let s = transforms::detect_for_of_loops(statements);
+        // Legacy protocol (HBC 59-71: full spec {value,done} iterator).
+        let s = transforms::detect_legacy_for_of(s);
+        let s = transforms::detect_for_in_loops(s);
+        // Array destructuring shares the iterator protocol; match it here, before
+        // inlining folds the iterator registers away.
+        transforms::detect_iterator_destructuring(s)
+    } else {
+        statements
     };
 
     // Check if this function contains generator patterns

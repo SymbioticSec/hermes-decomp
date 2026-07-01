@@ -32,9 +32,6 @@ impl VariableNamer {
         self.inferred_names.insert(key.to_string(), name);
     }
 
-    pub fn suggest_name_from_property(&mut self, var_name: &str, prop: &str) {
-        self.suggest_name(var_name, prop);
-    }
 
     fn get_unique_name(&mut self, base: &str) -> String {
         // Clean the base name

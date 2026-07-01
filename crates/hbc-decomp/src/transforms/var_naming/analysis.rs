@@ -179,29 +179,12 @@ fn analyze_expr_with_suggestion(
                 analyze_expr_with_suggestion(namer, arg, suggestion);
             }
         }
-        Expression::Member {
-            object, property, ..
-        } => {
-            if let (Expression::Value(val), PropertyKey::Ident(prop)) = (&**object, property) {
-                // Skip common array/string methods - they don't describe what the variable contains
-                if crate::constants::is_transformation_method(prop) {
-                    // Don't rename based on method access
-                } else {
-                    let var_name = match val {
-                        Value::Variable(name) => Some(name.clone()),
-                        Value::Register(r) => Some(format!("r{r}")),
-                        Value::Parameter(idx) => Some(format!("arg{idx}")),
-                        _ => None,
-                    };
-
-                    if let Some(v) = var_name {
-                        log::debug!(
-                            "Property access '.{prop}' suggests name for variable '{v}'"
-                        );
-                        namer.suggest_name_from_property(&v, prop);
-                    }
-                }
-            }
+        Expression::Member { object, .. } => {
+            // NOTE: do NOT name the object register after a property read from it
+            // (`iter.done` does not make `iter` mean "done"). That backwards
+            // heuristic both produced nonsense names and created collisions — the
+            // object reg and a sibling reg holding the *value* `x.done` both became
+            // "done", so the generator consumer's `r` and `r.done` aliased.
             analyze_expr_with_suggestion(namer, object, suggestion);
         }
         Expression::Binary { left, right, .. } => {

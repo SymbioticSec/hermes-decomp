@@ -9,6 +9,11 @@ pub mod registry;
 pub(crate) const GENERIC_NAME_PREFIXES: &[&str] = &[
     "tmp", "closure_", "fnResult", "arg", "module_",
     "_interopRequire", "_interopDefault", "_interopNamespace",
+    // Metro factory role names get a `_` prefix when they collide with a
+    // builtin/reserved word during register naming, and are deduped to
+    // `_module`, `_module1`, `_exports2`, … — none are real module names.
+    "_module", "_exports", "_require", "_global", "_dependencyMap",
+    "_importDefault", "_importAll",
 ];
 
 // Exact generic names that should not be used as module names.
@@ -17,6 +22,10 @@ pub(crate) const GENERIC_EXACT_NAMES: &[&str] = &[
     "item", "self", "key", "value", "merged",
     "exports", "wrapper", "require", "anonymous", "global",
     "__esModule", "module", "dependencyMap",
+    // Metro factory parameter role names (and their reserved-word-escaped
+    // `_`-prefixed forms) must never be mistaken for a module's own name.
+    "_module", "_exports", "_require", "_global", "_dependencyMap",
+    "importDefault", "importAll", "_importDefault", "_importAll",
     "Object", "Object2", "Object3", "Array", "Array2", "Array3",
     "num", "str", "val", "res",
 ];
@@ -45,12 +54,22 @@ pub use registry::{FactoryRoles, MetroModule, MetroRegistry};
 impl MetroRegistry {
     pub fn analyze(statements: &[crate::ir::Statement]) -> Self {
         let mut registry = Self::new();
-        MetroDetector::analyze_statements(statements, &mut registry);
+        MetroDetector::analyze_statements(statements, &mut registry, &std::collections::HashMap::new());
         registry
     }
 
     pub fn analyze_statements(&mut self, statements: &[crate::ir::Statement]) {
-        MetroDetector::analyze_statements(statements, self);
+        MetroDetector::analyze_statements(statements, self, &std::collections::HashMap::new());
+    }
+
+    // Variant that supplies factory parameter counts (function_id -> declared
+    // param count, this-excluded) so module roles match the Metro convention.
+    pub fn analyze_statements_with_params(
+        &mut self,
+        statements: &[crate::ir::Statement],
+        param_counts: &std::collections::HashMap<u32, u32>,
+    ) {
+        MetroDetector::analyze_statements(statements, self, param_counts);
     }
 }
 

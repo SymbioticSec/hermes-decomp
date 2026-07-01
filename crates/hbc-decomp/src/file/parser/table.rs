@@ -4,16 +4,45 @@ use crate::file::structure::{
 };
 use crate::io::ByteReader;
 
+// --- String-kind entry bitfields (one u32 per kind run) ---
+// The high bit selects the kind (0 = String, 1 = Identifier); the low 31 bits
+// hold the run length (number of consecutive strings of that kind).
+// High bit of a string-kind entry: set => Identifier, clear => String.
+const STRING_KIND_TYPE_BIT: u32 = 1 << 31;
+// Mask for the run-length portion (low 31 bits) of a string-kind entry.
+const STRING_KIND_COUNT_MASK: u32 = 0x7fff_ffff;
+
+// --- Small string-table entry bitfields (one u32 per string) ---
+// Bit layout:
+//   bit 0       : isUTF16
+//   bits 1..=23 : storage offset (23 bits)
+//   bits 24..=31: length (8 bits)
+// Sentinels signal that the real offset/length live in the overflow table.
+// isUTF16 flag (bit 0) of a small string-table entry.
+const STRING_ENTRY_UTF16_BIT: u32 = 0x1;
+// Shift to reach the 23-bit storage offset (bits 1..=23).
+const STRING_ENTRY_OFFSET_SHIFT: u32 = 1;
+// Mask for the 23-bit storage offset after shifting.
+const STRING_ENTRY_OFFSET_MASK: u32 = 0x7f_ffff;
+// Shift to reach the 8-bit length (bits 24..=31).
+const STRING_ENTRY_LENGTH_SHIFT: u32 = 24;
+// Mask for the 8-bit length after shifting.
+const STRING_ENTRY_LENGTH_MASK: u32 = 0xff;
+// Length sentinel (all 8 bits set): real length is in the overflow table.
+const STRING_ENTRY_LENGTH_OVERFLOW: u32 = 0xff;
+// Offset sentinel (top of the 23-bit range): real offset is in the overflow table.
+const STRING_ENTRY_OFFSET_OVERFLOW: u32 = 0x800000;
+
 pub fn parse_string_kinds(reader: &mut ByteReader<'_>, count: u32) -> Result<Vec<StringKindEntry>> {
     let mut entries = Vec::with_capacity(reader.capacity_hint(count as usize));
     for _ in 0..count {
         let raw = reader.read_u32()?;
-        let kind = if (raw & (1 << 31)) == 0 {
+        let kind = if (raw & STRING_KIND_TYPE_BIT) == 0 {
             StringKindType::String
         } else {
             StringKindType::Identifier
         };
-        let count = raw & 0x7fff_ffff;
+        let count = raw & STRING_KIND_COUNT_MASK;
         entries.push(StringKindEntry { kind, count });
     }
     Ok(entries)
@@ -110,20 +139,21 @@ pub fn decode_string_table(
             .copied()
             .ok_or_else(|| Error::Parse("string table entry missing".to_string()))?;
 
-        let is_utf16 = (raw & 0x1) != 0;
-        let offset = (raw >> 1) & 0x7f_ffff;
-        let length = (raw >> 24) & 0xff;
+        let is_utf16 = (raw & STRING_ENTRY_UTF16_BIT) != 0;
+        let offset = (raw >> STRING_ENTRY_OFFSET_SHIFT) & STRING_ENTRY_OFFSET_MASK;
+        let length = (raw >> STRING_ENTRY_LENGTH_SHIFT) & STRING_ENTRY_LENGTH_MASK;
 
-        let (offset, length) = if length == 0xff || offset == 0x800000 {
-            let (ov_offset, ov_length) = overflow_entries
-                .get(overflow_index)
-                .copied()
-                .ok_or_else(|| Error::Parse("overflow string entry missing".to_string()))?;
-            overflow_index += 1;
-            (ov_offset, ov_length)
-        } else {
-            (offset, length)
-        };
+        let (offset, length) =
+            if length == STRING_ENTRY_LENGTH_OVERFLOW || offset == STRING_ENTRY_OFFSET_OVERFLOW {
+                let (ov_offset, ov_length) = overflow_entries
+                    .get(overflow_index)
+                    .copied()
+                    .ok_or_else(|| Error::Parse("overflow string entry missing".to_string()))?;
+                overflow_index += 1;
+                (ov_offset, ov_length)
+            } else {
+                (offset, length)
+            };
 
         let value = if is_utf16 {
             // saturating math: an overflowing offset/length just fails the

@@ -1,10 +1,14 @@
 mod arrays;
+mod iterator;
 mod transformer;
 mod utils;
+mod v98;
 
 use crate::ir::Statement;
 
+pub use v98::reconstruct_v98_array_destructuring;
 use arrays::transform_rest_destructuring;
+pub use iterator::detect_iterator_destructuring;
 pub(crate) use transformer::transform_destructuring;
 
 pub fn detect_destructuring(stmts: Vec<Statement>) -> Vec<Statement> {

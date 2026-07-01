@@ -1,52 +1,51 @@
-use hbc_decomp::{
-    BytecodeFile, BytecodeFormat, DecompileOptionsV2, IRBuilder, IRBuilderOptions, MetroRegistry,
-    StructureAnalysis,
-};
+use hbc_decomp::{BytecodeFile, BytecodeFormat, DecompileOptionsV2, PipelineContext};
 use std::error::Error;
 use std::fs;
 use std::path::Path;
+
+// Build (or load from the on-disk cache) the full analysis pipeline for a file.
+fn build_cached_pipeline(
+    file: &BytecodeFile,
+    format: &BytecodeFormat,
+    bytes: &[u8],
+    cache_path: &Path,
+) -> Result<PipelineContext, Box<dyn Error>> {
+    Ok(PipelineContext::build_cached(
+        file,
+        format,
+        &DecompileOptionsV2::optimized(),
+        bytes,
+        cache_path,
+    )?)
+}
 
 pub fn run_extract(
     file: &BytecodeFile,
     format: &BytecodeFormat,
     output_dir: &Path,
-    resolve_strings: bool,
+    bytes: &[u8],
+    cache_path: &Path,
+    // The full pipeline always resolves strings; kept for CLI signature stability.
+    _resolve_strings: bool,
 ) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(output_dir)?;
     println!("Extracting modules to {}...", output_dir.display());
 
-    // 1. Analyze global function to find modules
-    let options = IRBuilderOptions {
-        resolve_strings: true,
-        include_offsets: false,
-        ..Default::default()
-    };
-    let mut builder = IRBuilder::new(file, format, options);
-    let cfg = builder.build_function(0)?;
-    let analysis = StructureAnalysis::analyze(&cfg);
-    let statements = analysis.root.to_statements(&cfg);
-    let registry = MetroRegistry::analyze(&statements);
+    // Build the full analysis pipeline once (cached): this resolves module names,
+    // exports and produces the same full-quality (ESM) output as `decompile`.
+    let ctx = build_cached_pipeline(file, format, bytes, cache_path)?;
 
-    println!("Found {} modules.", registry.modules.len());
+    println!("Found {} modules.", ctx.registry.modules.len());
 
-    // 2. Decompile each module
-    let decompile_opts = DecompileOptionsV2 {
-        resolve_strings,
-        include_offsets: false,
-        propagate: true,
-        simplify: true,
-        recover_structures: true,
-        ..Default::default()
-    };
+    let mut modules: Vec<_> = ctx.registry.modules.values().cloned().collect();
+    modules.sort_by_key(|m| m.module_id);
 
-    // Pre-calculate closure contexts
-    let ctx = hbc_decomp::build_closure_context(file, format)?;
-
-    for module in registry.modules.values() {
+    for module in &modules {
+        // Prefix with the module ID so distinct modules that share an inferred
+        // name (common in large bundles) never overwrite each other.
         let filename = if let Some(name) = &module.name {
-            // Sanitize filename
             let safe_name = name.replace(['/', '\\'], "_");
-            format!("{safe_name}.js")
+            format!("{}_{safe_name}.js", module.module_id)
         } else {
             format!("module_{}.js", module.module_id)
         };
@@ -57,31 +56,26 @@ pub fn run_extract(
             module.module_id, module.function_id
         );
 
-        match hbc_decomp::decompile_function_v2_with_context(
-            file,
-            format,
-            module.function_id,
-            &decompile_opts,
-            Some(&ctx),
-        ) {
-            Ok(code) => {
-                // Add header
-                let mut content = String::new();
-                content.push_str(&format!("// Module ID: {}\n", module.module_id));
-                content.push_str(&format!("// Function ID: {}\n", module.function_id));
-                if let Some(name) = &module.name {
-                    content.push_str(&format!("// Name: {name}\n"));
-                }
-                content.push_str(&format!("// Dependencies: {:?}\n\n", module.dependencies));
-                content.push_str(&code);
+        let code = ctx.generate_function_code(file, module.function_id);
 
-                fs::write(&path, content)?;
-                println!("OK");
-            }
-            Err(e) => {
-                println!("Error: {e}");
-            }
+        // Add header
+        let mut content = String::new();
+        content.push_str(&format!("// Module ID: {}\n", module.module_id));
+        content.push_str(&format!("// Function ID: {}\n", module.function_id));
+        if let Some(name) = &module.name {
+            content.push_str(&format!("// Name: {name}\n"));
         }
+        content.push_str(&format!("// Dependencies: {:?}\n", module.dependencies));
+        if !module.exports.is_empty() {
+            let mut names: Vec<_> = module.exports.keys().cloned().collect();
+            names.sort();
+            content.push_str(&format!("// Exports: {}\n", names.join(", ")));
+        }
+        content.push('\n');
+        content.push_str(&code);
+
+        fs::write(&path, content)?;
+        println!("OK");
     }
 
     Ok(())
@@ -90,22 +84,14 @@ pub fn run_extract(
 pub fn print_modules(
     file: &BytecodeFile,
     format: &hbc_decomp::BytecodeFormat,
+    bytes: &[u8],
+    cache_path: &Path,
     limit: Option<usize>,
 ) -> Result<(), Box<dyn Error>> {
-    // The global function (F0) contains all module registrations
-    let options = IRBuilderOptions {
-        resolve_strings: true,
-        include_offsets: false,
-        ..Default::default()
-    };
-    let mut builder = IRBuilder::new(file, format, options);
-    let cfg = builder.build_function(0)?;
-
-    let analysis = StructureAnalysis::analyze(&cfg);
-    let statements = analysis.root.to_statements(&cfg);
-
-    // Build the Metro registry
-    let registry = MetroRegistry::analyze(&statements);
+    // Use the full analysis pipeline so module names and exports are resolved
+    // (the lightweight detection registry only knows IDs and dependencies).
+    let ctx = build_cached_pipeline(file, format, bytes, cache_path)?;
+    let registry = &ctx.registry;
 
     println!("=== Metro Modules ===\n");
     println!("Total modules: {}\n", registry.modules.len());
@@ -134,9 +120,14 @@ pub fn print_modules(
                     .join(", ")
             )
         };
+        let exports_str = if module.exports.is_empty() {
+            String::new()
+        } else {
+            format!(" exports: {}", module.exports.len())
+        };
         println!(
-            "Module {} (F{}){}{}",
-            module.module_id, module.function_id, name_str, deps_str
+            "Module {} (F{}){}{}{}",
+            module.module_id, module.function_id, name_str, deps_str, exports_str
         );
     }
 
@@ -150,23 +141,14 @@ pub fn print_modules(
 pub fn print_module_deps(
     file: &BytecodeFile,
     format: &hbc_decomp::BytecodeFormat,
+    bytes: &[u8],
+    cache_path: &Path,
     module_id: u32,
     depth: usize,
 ) -> Result<(), Box<dyn Error>> {
-    // The global function (F0) contains all module registrations
-    let options = IRBuilderOptions {
-        resolve_strings: true,
-        include_offsets: false,
-        ..Default::default()
-    };
-    let mut builder = IRBuilder::new(file, format, options);
-    let cfg = builder.build_function(0)?;
-
-    let analysis = StructureAnalysis::analyze(&cfg);
-    let statements = analysis.root.to_statements(&cfg);
-
-    // Build the Metro registry
-    let registry = MetroRegistry::analyze(&statements);
+    // Full pipeline so dependency names (not just IDs) are available.
+    let ctx = build_cached_pipeline(file, format, bytes, cache_path)?;
+    let registry = &ctx.registry;
 
     println!("=== Module {module_id} dependencies ===\n");
 

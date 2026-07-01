@@ -5,7 +5,50 @@
 // This pass strips it at the IR level so that dead assignment elimination
 // can catch variables that were only used as `this` arguments.
 
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement};
+use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+
+// `HermesInternal.concat(a, b, c, ...)` (emitted for template literals / string
+// concatenation) takes real operands, NOT a `this` receiver. Its first argument
+// must never be stripped.
+fn is_hermes_internal_concat(callee: &Expression) -> bool {
+    if let Expression::Member { object, property, .. } = callee {
+        let is_concat = matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "concat");
+        if is_concat {
+            return mentions_hermes_internal(object);
+        }
+    }
+    false
+}
+
+// `Object.create` — `<...>.Object.create` or `Object.create`, regardless of how
+// the global `Object` is rendered (bare variable, member on globalThis, etc.).
+fn is_object_create(callee: &Expression) -> bool {
+    if let Expression::Member { object, property, .. } = callee {
+        let is_create =
+            matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "create");
+        if is_create {
+            return match object.as_ref() {
+                Expression::Value(Value::Variable(v)) => v == "Object",
+                Expression::Member { property, .. } => {
+                    matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "Object")
+                }
+                _ => false,
+            };
+        }
+    }
+    false
+}
+
+fn mentions_hermes_internal(e: &Expression) -> bool {
+    match e {
+        Expression::Value(Value::Variable(v)) => v == "HermesInternal",
+        Expression::Member { object, property, .. } => {
+            matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "HermesInternal")
+                || mentions_hermes_internal(object)
+        }
+        _ => false,
+    }
+}
 
 // Strip meaningless `this` from Call expressions at the IR level.
 // - For method calls (callee is Member, object == args[0]): strip args[0]
@@ -90,6 +133,23 @@ fn strip_this_in_expr(expr: &mut Expression) {
             // Now strip `this` (arguments[0]) if appropriate.
             // In Hermes bytecode, ALL function calls pass `this` as arguments[0].
             if arguments.is_empty() {
+                return;
+            }
+            // Builtins whose first argument is a real operand, not a receiver.
+            if is_hermes_internal_concat(callee) {
+                return;
+            }
+            // `Object.create(parent)` synthesized from the NewObjectWithParent
+            // opcode carries a single genuine argument and no ABI `this`
+            // receiver. A real source `Object.create(proto)` compiles to a Call
+            // with two arguments (receiver + proto), so only the single-arg form
+            // is the synthetic one whose argument must be preserved.
+            if arguments.len() == 1 && is_object_create(callee) {
+                return;
+            }
+            // A reconstructed spread call (`f(...a)`) has a real first argument,
+            // never a Hermes `this` receiver (which is a plain value).
+            if matches!(arguments.first(), Some(Expression::Spread(_))) {
                 return;
             }
             let first = &arguments[0];

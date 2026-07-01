@@ -190,3 +190,19 @@ impl BytecodeFormat {
 }
 
 include!(concat!(env!("OUT_DIR"), "/bytecode_formats.rs"));
+
+// CallBuiltin index -> name table for a given HBC version. The builtin ordering
+// is version-specific (parsed from each Hermes release's Builtins.def). If the
+// exact version has no table, fall back to the nearest available version that is
+// `<= version` (the table changes only on release boundaries).
+pub fn builtins_for_version(version: u32) -> Vec<String> {
+    let json = builtins_json_for_version(version).or_else(|| {
+        builtin_table_versions()
+            .iter()
+            .rev()
+            .find(|&&v| v <= version)
+            .and_then(|&v| builtins_json_for_version(v))
+    });
+    json.and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
+        .unwrap_or_default()
+}

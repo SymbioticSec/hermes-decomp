@@ -12,13 +12,19 @@ fn is_self_assign_value(name: &str, value: &Expression) -> bool {
         Expression::Value(Value::Constant(crate::ir::Constant::Null)) => name == "null",
         Expression::Value(Value::Constant(crate::ir::Constant::Undefined)) => name == "undefined",
         Expression::Value(Value::Global) => name == "globalThis",
-        // globalThis.Error -> Error (codegen simplifies this, creating apparent self-assign)
+        // `Error = globalThis.Error` — the Babel pattern that captures a global
+        // BUILTIN into a same-named local (redundant, since bare `Error` already
+        // resolves to the global). Only safe for actual builtins: for a user-local
+        // like `f`, `f = globalThis.f` reads the global property into the local and
+        // must NOT be dropped (it is a real, possibly-conditional assignment).
         Expression::Member { object, property: crate::ir::PropertyKey::Ident(prop), .. } => {
-            prop == name && match &**object {
-                Expression::Value(Value::Global) => true,
-                Expression::Value(Value::Variable(v)) => v == "globalThis",
-                _ => false,
-            }
+            prop == name
+                && crate::ir::expr::display::is_builtin_global(name)
+                && match &**object {
+                    Expression::Value(Value::Global) => true,
+                    Expression::Value(Value::Variable(v)) => v == "globalThis",
+                    _ => false,
+                }
         }
         _ => false,
     }

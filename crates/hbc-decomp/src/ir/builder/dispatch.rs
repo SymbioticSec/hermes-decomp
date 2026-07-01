@@ -26,6 +26,7 @@ pub fn dispatch_instruction(
     format: &BytecodeFormat,
     resolve_strings: bool,
     func_bytecode_offset: u32,
+    frame_size: u32,
 ) -> FlowResult {
     let def = match format.definitions.get(inst.opcode as usize) {
         Some(d) => d,
@@ -44,7 +45,7 @@ pub fn dispatch_instruction(
     if let Some(result) = try_prop_handlers(name, inst, file, resolve_strings) {
         return result;
     }
-    if let Some(result) = try_call_handlers(name, inst, file, resolve_strings) {
+    if let Some(result) = try_call_handlers(name, inst, file, resolve_strings, frame_size, format.version) {
         return result;
     }
     if let Some(result) = try_obj_handlers(name, inst, file, resolve_strings) {
@@ -117,8 +118,11 @@ fn try_prop_handlers(
     resolve_strings: bool,
 ) -> Option<FlowResult> {
     match name {
-        "GetById" | "GetByIdLong" | "GetByIdShort" | "GetByIdWithReceiverLong" => {
+        "GetById" | "GetByIdLong" | "GetByIdShort" => {
             handle_get_by_id(inst, file, resolve_strings).map(FlowResult::Statement)
+        }
+        "GetByIdWithReceiver" | "GetByIdWithReceiverLong" => {
+            handle_get_by_id_with_receiver(inst, file, resolve_strings).map(FlowResult::Statement)
         }
         "TryGetById" | "TryGetByIdLong" => {
             handle_try_get_by_id(inst, file, resolve_strings).map(FlowResult::Statement)
@@ -168,14 +172,16 @@ fn try_call_handlers(
     inst: &Instruction,
     file: &BytecodeFile,
     resolve_strings: bool,
+    frame_size: u32,
+    version: u32,
 ) -> Option<FlowResult> {
     match name {
         "Call1" | "Call2" | "Call3" | "Call4" => {
             handle_call_fixed(name, inst).map(FlowResult::Statement)
         }
-        "Call" | "CallLong" => handle_call(inst).map(FlowResult::Statement),
+        "Call" | "CallLong" => handle_call(inst, frame_size, version).map(FlowResult::Statement),
         "Construct" | "ConstructLong" | "CallWithNewTarget" | "CallWithNewTargetLong" => {
-            handle_construct(inst).map(FlowResult::Statement)
+            handle_construct(inst, frame_size, version).map(FlowResult::Statement)
         }
         "CreateClosure" | "CreateClosureLongIndex" => {
             handle_create_closure(inst, file, resolve_strings).map(FlowResult::Statement)
@@ -187,7 +193,7 @@ fn try_call_handlers(
             handle_create_generator_closure(inst, file, resolve_strings).map(FlowResult::Statement)
         }
         "CallBuiltin" | "CallBuiltinLong" => {
-            handle_call_builtin(inst).map(FlowResult::Statement)
+            handle_call_builtin(inst, frame_size, version).map(FlowResult::Statement)
         }
         "GetBuiltinClosure" => handle_get_builtin_closure(inst).map(FlowResult::Statement),
         "CallRequire" => handle_call_require(inst).map(FlowResult::Statement),
@@ -203,6 +209,12 @@ fn try_obj_handlers(
 ) -> Option<FlowResult> {
     match name {
         "NewObject" | "CacheNewObject" => handle_new_object(inst).map(FlowResult::Statement),
+        "CreateBaseClass" | "CreateBaseClassLongIndex" => {
+            handle_create_class(inst, file, resolve_strings, false).map(FlowResult::Statement)
+        }
+        "CreateDerivedClass" | "CreateDerivedClassLongIndex" => {
+            handle_create_class(inst, file, resolve_strings, true).map(FlowResult::Statement)
+        }
         "NewObjectWithParent" | "NewObjectWithBufferAndParent" => {
             handle_new_object_with_parent(inst).map(FlowResult::Statement)
         }
@@ -246,7 +258,11 @@ fn try_obj_handlers(
         "ReifyArguments" | "ReifyArgumentsLoose" | "ReifyArgumentsStrict" => {
             handle_reify_arguments(inst).map(FlowResult::Statement)
         }
-        "CreateThis" | "CreateThisForNew" => {
+        // CreateThisForSuper (HBC >=97): allocates the derived `this` from the
+        // parent class. Operand 0 is the destination; the super-constructor result
+        // overwrites it and cleanup drops the placeholder. Treat like CreateThis
+        // so it no longer leaves an unhandled-opcode comment + dangling temps.
+        "CreateThis" | "CreateThisForNew" | "CreateThisForSuper" => {
             handle_create_this(inst).map(FlowResult::Statement)
         }
         "GetNewTarget" => handle_get_new_target(inst).map(FlowResult::Statement),

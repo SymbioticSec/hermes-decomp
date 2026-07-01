@@ -65,6 +65,32 @@ pub(super) fn recover_loop(
             let true_in_loop = loop_info.body.contains(&true_target);
             let false_in_loop = loop_info.body.contains(&false_target);
 
+            // Single-block do-while: the header branches back to itself, so its
+            // own statements ARE the loop body. Emit `do { header } while(cond)`
+            // instead of hoisting the body out and leaving the loop empty (which
+            // silently dropped counting loops).
+            if true_target == loop_info.header || false_target == loop_info.header {
+                let loops_on_true = true_target == loop_info.header;
+                let exit_target = if loops_on_true {
+                    false_target
+                } else {
+                    true_target
+                };
+                let cond = if loops_on_true {
+                    condition
+                } else {
+                    Expression::unary(crate::ir::UnaryOp::Not, condition)
+                };
+                let mut parts = vec![Structure::DoWhile {
+                    body: Box::new(Structure::Block(loop_info.header, header_stmts)),
+                    condition: cond,
+                }];
+                if !ctx.visited.contains(&exit_target) {
+                    parts.push(recover_structure(ctx, exit_target, loop_stack));
+                }
+                return Structure::Sequence(parts);
+            }
+
             if true_in_loop && !false_in_loop {
                 let body = recover_structure(ctx, true_target, &new_stack);
                 let mut parts = vec![Structure::Block(loop_info.header, header_stmts)];

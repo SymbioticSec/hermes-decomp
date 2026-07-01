@@ -4,11 +4,13 @@ use std::collections::BTreeMap;
 pub mod analysis;
 pub mod cleanup;
 pub mod state_machine;
+pub mod state_machine_v98;
 pub mod transform;
 
 pub use analysis::*;
 pub use cleanup::cleanup_generator_comments;
 pub use state_machine::simplify_state_machine;
+pub use state_machine_v98::reconstruct_generator_v98;
 
 use transform::*;
 

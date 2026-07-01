@@ -7,7 +7,7 @@
 //
 // Refactored to use Visitor pattern.
 
-use crate::ir::{is_simple_value, AssignTarget, Expression, MutVisitor, Statement, Value, Visitor};
+use crate::ir::{is_simple_value, stmt_uses_register, AssignTarget, Constant, Expression, MutVisitor, Statement, Value, Visitor};
 use std::collections::{BTreeMap, HashSet};
 
 // Apply advanced cleanup transformations.
@@ -23,7 +23,88 @@ pub fn cleanup_advanced(stmts: Vec<Statement>) -> Vec<Statement> {
     // Pass 3: Remove dead assignments (assigned but never read)
     remove_dead_assignments(&mut stmts);
 
+    // Pass 4: Remove dead `register = undefined` GC-clears (position-aware)
+    stmts = remove_dead_undefined_clears(stmts);
+
     stmts
+}
+
+// Remove `r = undefined` clears that Hermes emits to release a register once it
+// is dead. These are safe to drop when `r` is not read in the statements that
+// follow — and leaving them in is actively harmful: when register naming later
+// collapses `r` and a saved copy of its value onto the same name, the clear
+// shadows the live value (e.g. `tmp = sum; sum = undefined; print(tmp)` renders
+// as `sum = undefined; print(sum)` → prints `undefined`). Only register targets
+// holding the literal `undefined` are touched; user `x = undefined` (Variable
+// target) and any register read later are preserved.
+fn remove_dead_undefined_clears(stmts: Vec<Statement>) -> Vec<Statement> {
+    let mut result: Vec<Statement> = Vec::with_capacity(stmts.len());
+    for (i, stmt) in stmts.iter().enumerate() {
+        if let Statement::Assign {
+            target: AssignTarget::Register(r),
+            value: Expression::Value(Value::Constant(Constant::Undefined)),
+        } = stmt
+        {
+            let used_later = stmts[i + 1..].iter().any(|s| stmt_uses_register(s, *r));
+            if !used_later {
+                continue;
+            }
+        }
+        result.push(recurse_undefined_clears(stmt.clone()));
+    }
+    result
+}
+
+fn recurse_undefined_clears(stmt: Statement) -> Statement {
+    match stmt {
+        Statement::If { condition, then_body, else_body } => Statement::If {
+            condition,
+            then_body: remove_dead_undefined_clears(then_body),
+            else_body: remove_dead_undefined_clears(else_body),
+        },
+        Statement::While { condition, body } => Statement::While {
+            condition,
+            body: remove_dead_undefined_clears(body),
+        },
+        Statement::DoWhile { body, condition } => Statement::DoWhile {
+            body: remove_dead_undefined_clears(body),
+            condition,
+        },
+        Statement::For { init, condition, update, body } => Statement::For {
+            init,
+            condition,
+            update,
+            body: remove_dead_undefined_clears(body),
+        },
+        Statement::ForIn { variable, object, body } => Statement::ForIn {
+            variable,
+            object,
+            body: remove_dead_undefined_clears(body),
+        },
+        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+            variable,
+            iterable,
+            body: remove_dead_undefined_clears(body),
+        },
+        Statement::Block(inner) => Statement::Block(remove_dead_undefined_clears(inner)),
+        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => {
+            Statement::TryCatch {
+                try_body: remove_dead_undefined_clears(try_body),
+                catch_param,
+                catch_body: remove_dead_undefined_clears(catch_body),
+                finally_body: remove_dead_undefined_clears(finally_body),
+            }
+        }
+        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+            discriminant,
+            cases: cases
+                .into_iter()
+                .map(|(e, body)| (e, remove_dead_undefined_clears(body)))
+                .collect(),
+            default: default.map(remove_dead_undefined_clears),
+        },
+        other => other,
+    }
 }
 
 // Remove redundant assignments where same target is assigned multiple times
@@ -36,7 +117,7 @@ fn remove_redundant_assignments(stmts: &mut Vec<Statement>) {
             if let (
                 Statement::Assign {
                     target: t1,
-                    value: _,
+                    value: v1,
                 },
                 Statement::Assign {
                     target: t2,
@@ -44,8 +125,10 @@ fn remove_redundant_assignments(stmts: &mut Vec<Statement>) {
                 },
             ) = (&stmts[i], &stmts[i + 1])
             {
-                if t1 == t2 && !expr_uses_target(v2, t1) {
-                    // The first assignment is dead, remove it
+                // The first assignment is dead only if its value is pure — a
+                // call/await must still run even when its result is immediately
+                // overwritten (otherwise `r = print(x); r = 0` drops the call).
+                if t1 == t2 && !expr_uses_target(v2, t1) && !v1.has_side_effects() {
                     stmts.remove(i);
                     continue; // Don't increment, check new position
                 }
@@ -61,6 +144,17 @@ fn inline_single_use(stmts: &mut Vec<Statement>) {
     let mut use_count: BTreeMap<u32, usize> = BTreeMap::new();
     let mut def_value: BTreeMap<u32, Expression> = BTreeMap::new();
     let mut def_index: BTreeMap<u32, usize> = BTreeMap::new();
+
+    // Count ALL definitions across the whole function (including nested loop
+    // bodies). A register defined more than once is loop-carried/reassigned, and
+    // inlining one of its definitions into a use elsewhere is unsound.
+    let mut def_count: BTreeMap<u32, usize> = BTreeMap::new();
+    {
+        let mut dc = DefCounter { counts: &mut def_count };
+        for stmt in stmts.iter() {
+            dc.visit_statement(stmt);
+        }
+    }
 
     // First pass: collect definitions and count uses
     {
@@ -82,13 +176,18 @@ fn inline_single_use(stmts: &mut Vec<Statement>) {
         }
     }
 
-    // Find registers used exactly once and defined with simple expressions
+    // Find registers used exactly once, defined EXACTLY once, with a simple value.
     let mut to_inline: HashSet<u32> = HashSet::new();
     for (reg, count) in &use_count {
-        if *count == 1 {
+        if *count == 1 && def_count.get(reg).copied().unwrap_or(0) == 1 {
             if let Some(value) = def_value.get(reg) {
                 // Only inline simple values (not complex expressions that might have side effects)
-                if is_simple_value(value) {
+                // AND only when every register the value reads is defined exactly
+                // once. Inlining a copy of a multiply-defined register (e.g. the
+                // accumulator in `tmp = sum; sum = undefined; print(tmp)`) would
+                // bind `tmp` to the LATEST value of that register, not the value
+                // at the copy site.
+                if is_simple_value(value) && source_regs_single_def(value, &def_count) {
                     to_inline.insert(*reg);
                 }
             }
@@ -165,6 +264,27 @@ impl<'a> Visitor<'a> for UseCounter<'a> {
     }
 }
 
+struct DefCounter<'a> {
+    counts: &'a mut BTreeMap<u32, usize>,
+}
+
+impl<'a> Visitor<'a> for DefCounter<'a> {
+    fn visit_assign_target(&mut self, target: &'a AssignTarget) {
+        if let AssignTarget::Register(r) = target {
+            *self.counts.entry(*r).or_insert(0) += 1;
+        }
+        self.walk_assign_target(target);
+    }
+    fn visit_expression(&mut self, expr: &'a Expression) {
+        if let Expression::Assignment { target, .. } = expr {
+            if let Expression::Value(Value::Register(r)) = &**target {
+                *self.counts.entry(*r).or_insert(0) += 1;
+            }
+        }
+        self.walk_expression(expr);
+    }
+}
+
 struct UseCollector<'a> {
     used: &'a mut HashSet<u32>,
 }
@@ -198,6 +318,15 @@ impl<'a> MutVisitor for Inliner<'a> {
 }
 
 // -- Helpers --
+
+// True if every register read by `value` is defined exactly once across the
+// function (so inlining the value cannot capture a later redefinition).
+fn source_regs_single_def(value: &Expression, def_count: &BTreeMap<u32, usize>) -> bool {
+    let mut regs: HashSet<u32> = HashSet::new();
+    let mut collector = UseCollector { used: &mut regs };
+    collector.visit_expression(value);
+    regs.iter().all(|r| def_count.get(r).copied().unwrap_or(0) <= 1)
+}
 
 fn expr_uses_target(expr: &Expression, target: &AssignTarget) -> bool {
     let mut checker = TargetUseChecker {

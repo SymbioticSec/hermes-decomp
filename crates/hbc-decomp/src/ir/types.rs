@@ -59,6 +59,10 @@ pub enum Value {
     ClosureVar { level: u32, slot: u32 },
     Arguments,
     NewTarget,
+    // The `super` keyword (ES6 class). Only valid inside a class method body;
+    // produced when reconstructing `super.method()` from Hermes
+    // GetByIdWithReceiver opcodes (emitted exclusively for super property access).
+    Super,
 }
 
 impl fmt::Display for Value {
@@ -83,6 +87,7 @@ impl fmt::Display for Value {
             }
             Value::Arguments => write!(f, "arguments"),
             Value::NewTarget => write!(f, "new.target"),
+            Value::Super => write!(f, "super"),
         }
     }
 }

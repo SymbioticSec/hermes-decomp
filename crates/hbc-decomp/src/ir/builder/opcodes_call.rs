@@ -4,10 +4,41 @@ use super::opcodes_load::{get_reg, reg_expr};
 use crate::ir::{AssignTarget, Expression, Statement, Value};
 use crate::{BytecodeFile, Instruction};
 
-/// Upper bound for a call's argument count when pre-allocating. `arg_count`
-/// comes from a u32 operand; a corrupt value would otherwise abort the process
-/// in `Vec::with_capacity`. Real call sites have far fewer arguments than this.
+// Upper bound for a call's argument count when pre-allocating. `arg_count`
+// comes from a u32 operand; a corrupt value would otherwise abort the process
+// in `Vec::with_capacity`. Real call sites have far fewer arguments than this.
 const MAX_CALL_ARGS: usize = 1 << 16;
+
+// Hermes stack-frame offset of the `this` argument for an outgoing call,
+// derived from the engine's StackFrameLayout (ThisArg is at frame offset -7,
+// arg0 at -8, arg1 at -9, ...). In the caller's register file these outgoing
+// slots sit at the very top of the frame, so register `frame_size - 7` holds
+// `this`, `frame_size - 8` holds arg0, and so on. The instruction only encodes
+// (dst, callee, argCount) — the argument *registers* are implied by this layout,
+// not by `dst`.
+const THIS_ARG_FROM_TOP: u32 = 7;
+
+// Resolve the argument registers (including the leading `this`) for an
+// implicit-argument call/construct, with an explicit `this`-from-top offset.
+// HBC ≥97 reserves an extra outgoing frame slot (for `new.target`), so
+// implicit-arg calls' args sit one register lower than on HBC ≤96.
+fn resolve_implicit_args_from(arg_count: usize, frame_size: u32, this_from_top: u32) -> Vec<Expression> {
+    let mut arguments = Vec::with_capacity(arg_count.min(MAX_CALL_ARGS));
+    if frame_size < this_from_top {
+        return arguments; // malformed / no room for the call frame
+    }
+    for i in 0..arg_count.min(MAX_CALL_ARGS) {
+        match (frame_size - this_from_top).checked_sub(i as u32) {
+            Some(reg) => arguments.push(Expression::Value(Value::Register(reg))),
+            None => break,
+        }
+    }
+    arguments
+}
+
+// HBC version at which construct-style calls gained an extra `new.target`
+// outgoing frame slot, shifting their implicit args down by one register.
+const NEW_TARGET_FRAME_SLOT_MIN_VERSION: u32 = 97;
 
 // Handle Call1, Call2, Call3, Call4 opcodes (fixed argument count).
 pub fn handle_call_fixed(name: &str, inst: &Instruction) -> Option<Statement> {
@@ -40,19 +71,19 @@ pub fn handle_call_fixed(name: &str, inst: &Instruction) -> Option<Statement> {
 }
 
 // Handle Call and CallLong opcodes (variable argument count).
-pub fn handle_call(inst: &Instruction) -> Option<Statement> {
+pub fn handle_call(inst: &Instruction, frame_size: u32, version: u32) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
     let callee = reg_expr(&inst.operands, 1)?;
     let arg_count = inst.operands.get(2)?.value.as_u32()? as usize;
 
-    // Arguments are in registers dst-arg_count to dst-1.
-    let mut arguments = Vec::with_capacity(arg_count.min(MAX_CALL_ARGS));
-    if arg_count > 0 && dst >= arg_count as u32 {
-        let first_arg = dst - arg_count as u32;
-        for i in 0..arg_count {
-            arguments.push(Expression::Value(Value::Register(first_arg + i as u32)));
-        }
-    }
+    // Argument registers are implied by the Hermes frame layout, not by `dst`.
+    // HBC ≥97 shifted the implicit-call frame down by one slot.
+    let this_from_top = if version >= NEW_TARGET_FRAME_SLOT_MIN_VERSION {
+        THIS_ARG_FROM_TOP + 1
+    } else {
+        THIS_ARG_FROM_TOP
+    };
+    let arguments = resolve_implicit_args_from(arg_count, frame_size, this_from_top);
 
     Some(Statement::Assign {
         target: AssignTarget::Register(dst),
@@ -64,18 +95,23 @@ pub fn handle_call(inst: &Instruction) -> Option<Statement> {
 }
 
 // Handle Construct opcode.
-pub fn handle_construct(inst: &Instruction) -> Option<Statement> {
+pub fn handle_construct(inst: &Instruction, frame_size: u32, version: u32) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
     let callee = reg_expr(&inst.operands, 1)?;
     let arg_count = inst.operands.get(2)?.value.as_u32()? as usize;
 
-    // Arguments are in registers dst-arg_count to dst-1.
-    let mut arguments = Vec::with_capacity(arg_count.min(MAX_CALL_ARGS));
-    if arg_count > 0 && dst >= arg_count as u32 {
-        let first_arg = dst - arg_count as u32;
-        for i in 0..arg_count {
-            arguments.push(Expression::Value(Value::Register(first_arg + i as u32)));
-        }
+    // Argument registers are implied by the Hermes frame layout. arg[0] is the
+    // construct's `this` (the freshly-created object), which is not a source-level
+    // argument — drop it so `new Ctor(a, b)` keeps only the explicit args.
+    // HBC ≥97 reserves an extra `new.target` outgoing slot, shifting args down.
+    let this_from_top = if version >= NEW_TARGET_FRAME_SLOT_MIN_VERSION {
+        THIS_ARG_FROM_TOP + 1
+    } else {
+        THIS_ARG_FROM_TOP
+    };
+    let mut arguments = resolve_implicit_args_from(arg_count, frame_size, this_from_top);
+    if !arguments.is_empty() {
+        arguments.remove(0);
     }
 
     Some(Statement::Assign {
@@ -191,137 +227,76 @@ pub fn handle_create_generator_closure(
     })
 }
 
-// Handle CallBuiltin opcode.
-pub fn handle_call_builtin(inst: &Instruction) -> Option<Statement> {
+// Handle CallBuiltin opcode. The builtin index -> name mapping is VERSION
+// SPECIFIC (parsed from each Hermes release's Builtins.def), so it is resolved
+// from the per-version table rather than hardcoded.
+pub fn handle_call_builtin(inst: &Instruction, frame_size: u32, version: u32) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
     let builtin_idx = inst.operands.get(1)?.value.as_u32()?;
     let arg_count = inst.operands.get(2)?.value.as_u32()? as usize;
 
-    // Arguments are in registers dst-arg_count to dst-1.
-    let mut arguments = Vec::with_capacity(arg_count.min(MAX_CALL_ARGS));
-    if arg_count > 0 && dst >= arg_count as u32 {
-        let first_arg = dst - arg_count as u32;
-        for i in 0..arg_count {
-            arguments.push(Expression::Value(Value::Register(first_arg + i as u32)));
-        }
+    // Argument registers follow the Hermes frame layout (like Call/Construct).
+    // arg[0] is the `this` slot (undefined for builtins); drop it so the call
+    // keeps only the real arguments. HBC ≥97 shifted the implicit-call frame
+    // down by one slot (same change that affects Construct).
+    let this_from_top = if version >= NEW_TARGET_FRAME_SLOT_MIN_VERSION {
+        THIS_ARG_FROM_TOP + 1
+    } else {
+        THIS_ARG_FROM_TOP
+    };
+    let mut arguments = resolve_implicit_args_from(arg_count, frame_size, this_from_top);
+    if !arguments.is_empty() {
+        arguments.remove(0);
     }
 
-    // Hermes builtin index table (from Builtins.def).
-    // Indices 0-41  = static native builtins (only with -fstatic-builtins).
-    //   OBJECT entries (0, 4, 7, 28, 40) return the constructor/namespace.
-    //   METHOD entries are the callable static methods.
-    // Indices 42-56 = private compiler helpers (HermesBuiltin_*).
-    // Index 57     = JS builtin (spawnAsync).
+    // Resolve the builtin name from this version's table. The raw name is e.g.
+    // "Math.acos", "HermesInternal.ensureObject" (old) or "HermesBuiltin.ensureObject"
+    // (new) / "HermesBuiltin.silentSetPrototypeOf".
+    let table = crate::opcode::builtins_for_version(version);
+    let raw = table.get(builtin_idx as usize).map(|s| s.as_str());
+    let assign = |dst, value| Some(Statement::Assign { target: AssignTarget::Register(dst), value });
 
-    // Special semantic handling: exponentiationOperator → binary **
-    if builtin_idx == 54 && arguments.len() >= 3 {
-        return Some(Statement::Assign {
-            target: AssignTarget::Register(dst),
-            value: Expression::Binary {
+    // Name-based semantic rewrites (work across versions where the index differs).
+    let suffix = raw.and_then(|n| n.rsplit('.').next()).unwrap_or("");
+    match suffix {
+        // x ** y
+        "exponentiationOperator" if arguments.len() >= 2 => {
+            return assign(dst, Expression::Binary {
                 op: crate::ir::BinaryOp::Exp,
-                left: Box::new(arguments[1].clone()),
-                right: Box::new(arguments[2].clone()),
-            },
-        });
-    }
-
-    let builtin_name = match builtin_idx {
-        // Static native builtins (indices 0-41, only with -fstatic-builtins)
-        0 => "Array",
-        1 => "Array.isArray",
-        2 => "Date.UTC",
-        3 => "Date.parse",
-        4 => "JSON",
-        5 => "JSON.parse",
-        6 => "JSON.stringify",
-        7 => "Math",
-        8 => "Math.abs",
-        9 => "Math.acos",
-        10 => "Math.asin",
-        11 => "Math.atan",
-        12 => "Math.atan2",
-        13 => "Math.ceil",
-        14 => "Math.cos",
-        15 => "Math.exp",
-        16 => "Math.floor",
-        17 => "Math.hypot",
-        18 => "Math.imul",
-        19 => "Math.log",
-        20 => "Math.max",
-        21 => "Math.min",
-        22 => "Math.pow",
-        23 => "Math.round",
-        24 => "Math.sin",
-        25 => "Math.sqrt",
-        26 => "Math.tan",
-        27 => "Math.trunc",
-        28 => "Object",
-        29 => "Object.create",
-        30 => "Object.defineProperties",
-        31 => "Object.defineProperty",
-        32 => "Object.freeze",
-        33 => "Object.getOwnPropertyDescriptor",
-        34 => "Object.getOwnPropertyNames",
-        35 => "Object.getPrototypeOf",
-        36 => "Object.isExtensible",
-        37 => "Object.isFrozen",
-        38 => "Object.keys",
-        39 => "Object.seal",
-        40 => "String",
-        41 => "String.fromCharCode",
-        // Private compiler builtins (indices 42-57)
-        // Remap builtins with clean JS equivalents:
-        42 => "Object.setPrototypeOf",      // silentSetPrototypeOf
-        49 => "Object.assign",              // copyDataProperties
-        53 => "Object.assign",              // exportAll
-        // requireFast → just require
-        43 => {
-            return Some(Statement::Assign {
-                target: AssignTarget::Register(dst),
-                value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Variable("require".to_string()))),
-                    arguments,
-                },
+                left: Box::new(arguments[0].clone()),
+                right: Box::new(arguments[1].clone()),
             });
         }
-        // Builtins with no clean JS equivalent — keep as HermesBuiltin.X
-        // (protected from renaming by Value::Global chain in builtin_name_to_expr)
-        44 => "HermesBuiltin.getTemplateObject",
-        45 => "HermesBuiltin.ensureObject",
-        46 => "HermesBuiltin.getMethod",
-        47 => "HermesBuiltin.throwTypeError",
-        48 => "HermesBuiltin.generatorSetDelegated",
-        50 => "HermesBuiltin.copyRestArgs",
-        51 => "HermesBuiltin.arraySpread",
-        52 => "HermesBuiltin.apply",
-        54 => "HermesBuiltin.exponentiationOperator",
-        55 => "HermesBuiltin.initRegexNamedGroups",
-        56 => "HermesBuiltin.getOriginalNativeErrorConstructor",
-        57 => "HermesBuiltin.spawnAsync",
-        _ => {
-            return Some(Statement::Assign {
-                target: AssignTarget::Register(dst),
-                value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Variable(format!(
-                        "__builtin{builtin_idx}"
-                    )))),
-                    arguments,
-                },
-            })
+        // require(...)
+        "requireFast" => {
+            return assign(dst, Expression::Call {
+                callee: Box::new(Expression::Value(Value::Variable("require".to_string()))),
+                arguments,
+            });
         }
+        _ => {}
+    }
+
+    // Clean JS equivalents for some private helpers.
+    let name: String = match suffix {
+        "silentSetPrototypeOf" => "Object.setPrototypeOf".to_string(),
+        "copyDataProperties" | "exportAll" => "Object.assign".to_string(),
+        _ => match raw {
+            Some(n) => n.to_string(),
+            None => {
+                // Unknown index for this version: keep a debuggable placeholder.
+                return assign(dst, Expression::Call {
+                    callee: Box::new(Expression::Value(Value::Variable(format!("__builtin{builtin_idx}")))),
+                    arguments,
+                });
+            }
+        },
     };
 
     // Build proper Member expression for dotted names (e.g. "Object.defineProperty")
-    // instead of a flat Variable which would get sanitized (dots → underscores)
-    let callee = builtin_name_to_expr(builtin_name);
-
-    Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
-        value: Expression::Call {
-            callee: Box::new(callee),
-            arguments,
-        },
-    })
+    // instead of a flat Variable which would get sanitized (dots → underscores).
+    let callee = builtin_name_to_expr(&name);
+    assign(dst, Expression::Call { callee: Box::new(callee), arguments })
 }
 
 // Convert a dotted builtin name like "Object.defineProperty" into a proper

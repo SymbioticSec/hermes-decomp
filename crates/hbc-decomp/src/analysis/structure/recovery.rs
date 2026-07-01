@@ -23,10 +23,29 @@ pub fn analyze(cfg: &CFG) -> (Structure, Vec<LoopInfo>) {
     let mut visited = HashSet::new();
     let loop_stack = Vec::new();
 
-    // Build a map: try_block_start → exception handler info
-    let mut try_starts: BTreeMap<BlockId, _> = BTreeMap::new();
+    // Build a map: try_block_start → exception handler info.
+    //
+    // A single source-level `try` can compile to several handler ranges that all
+    // target the *same* catch block — the compiler splits the protected region
+    // around an inner branch (e.g. the `throw` arm gets its own range). Keying
+    // naively by start would then emit one nested try/catch per range. Collapse
+    // them: register a single try per catch block, at its earliest start, so the
+    // body recovery folds the remaining ranges in as ordinary control flow.
+    let mut earliest_for_catch: BTreeMap<BlockId, &crate::ir::CfgExceptionHandler> =
+        BTreeMap::new();
     for handler in &cfg.exception_handlers {
-        try_starts.insert(handler.try_block_start, handler);
+        earliest_for_catch
+            .entry(handler.catch_block)
+            .and_modify(|h| {
+                if handler.try_block_start < h.try_block_start {
+                    *h = handler;
+                }
+            })
+            .or_insert(handler);
+    }
+    let mut try_starts: BTreeMap<BlockId, _> = BTreeMap::new();
+    for handler in earliest_for_catch.values() {
+        try_starts.insert(handler.try_block_start, *handler);
     }
 
     let mut ctx = RecoveryCtx {
@@ -230,6 +249,33 @@ pub(super) fn recover_structure_inner(
                 }
             }
 
+            // Diamond: if the two branches reconverge at a merge block, recover
+            // each branch only UP TO that merge, then emit the merge AFTER the
+            // if. Otherwise the merge (the common tail, e.g. a shared `return`)
+            // is wrongly absorbed into the `then` branch and the `else` becomes
+            // empty.
+            if let Some(merge) = find_merge_point(ctx.cfg, true_target, false_target) {
+                if merge != true_target || merge != false_target {
+                    let merge_was_visited = ctx.visited.contains(&merge);
+                    ctx.visited.insert(merge);
+                    let then_ = recover_structure(ctx, true_target, loop_stack);
+                    let else_ = recover_structure(ctx, false_target, loop_stack);
+                    if !merge_was_visited {
+                        ctx.visited.remove(&merge);
+                    }
+                    let mut parts = vec![
+                        Structure::Block(block_id, stmts),
+                        Structure::If {
+                            condition,
+                            then_: Box::new(then_),
+                            else_: Box::new(else_),
+                        },
+                    ];
+                    parts.push(recover_structure(ctx, merge, loop_stack));
+                    return Structure::Sequence(parts);
+                }
+            }
+
             let then_ = recover_structure(ctx, true_target, loop_stack);
             let else_ = recover_structure(ctx, false_target, loop_stack);
             let mut parts = vec![Structure::Block(block_id, stmts)];
@@ -285,4 +331,43 @@ pub(super) fn recover_structure_inner(
             Structure::Block(block_id, stmts)
         }
     }
+}
+
+// Find the merge (join) point of a branch: the nearest block reachable from
+// BOTH the true and false targets. This is the block where the two arms of an
+// `if`/`else` diamond reconverge (its immediate post-dominator for simple
+// diamonds). Returns None when the branches never reconverge (e.g. both return).
+fn find_merge_point(cfg: &CFG, a: BlockId, b: BlockId) -> Option<BlockId> {
+    use std::collections::VecDeque;
+    // All blocks reachable from `a` (cycle-safe).
+    let mut reach_a: HashSet<BlockId> = HashSet::new();
+    let mut stack = vec![a];
+    while let Some(n) = stack.pop() {
+        if !reach_a.insert(n) {
+            continue;
+        }
+        if let Some(blk) = cfg.get(n) {
+            for s in blk.successors() {
+                stack.push(s);
+            }
+        }
+    }
+    // Breadth-first from `b` for the NEAREST block that is also reachable from a.
+    let mut seen: HashSet<BlockId> = HashSet::new();
+    let mut queue: VecDeque<BlockId> = VecDeque::new();
+    queue.push_back(b);
+    while let Some(n) = queue.pop_front() {
+        if !seen.insert(n) {
+            continue;
+        }
+        if reach_a.contains(&n) {
+            return Some(n);
+        }
+        if let Some(blk) = cfg.get(n) {
+            for s in blk.successors() {
+                queue.push_back(s);
+            }
+        }
+    }
+    None
 }

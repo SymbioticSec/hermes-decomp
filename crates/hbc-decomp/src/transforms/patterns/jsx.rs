@@ -9,6 +9,17 @@ impl JSXReconstructor {
     }
 }
 
+// Run JSX reconstruction over a statement list. Idempotent (already-built
+// JSXElements are left alone). Intended to run on the fully-assembled,
+// whole-program IR, where props objects and children arrays are materialized —
+// the in-pipeline F10 pass runs too early (before object-literal reconstruction)
+// to catch most calls.
+pub fn reconstruct_jsx(mut stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::Statement> {
+    use crate::ir::MutVisitor;
+    JSXReconstructor::new().visit_statement_list(&mut stmts);
+    stmts
+}
+
 impl MutVisitor for JSXReconstructor {
     fn visit_expression(&mut self, expr: &mut Expression) {
         // Walk children first to reconstruct nested JSX
@@ -25,24 +36,33 @@ impl MutVisitor for JSXReconstructor {
     }
 }
 
-// Checks if the callee expression represents a JSX factory function.
+// The JSX factory name behind a call, if any — the property of a member callee
+// (`React.createElement`, `jsxProd.jsx`) or a bare/imported function
+// (`_jsx`, `jsx`, `createElement`). The leading `_` of minified runtime imports
+// is stripped so `_jsxs` and `jsxs` are treated alike.
+fn jsx_factory_name(callee: &Expression) -> Option<&str> {
+    let raw = match callee {
+        Expression::Member {
+            property: PropertyKey::Ident(p) | PropertyKey::String(p),
+            ..
+        } => p.as_str(),
+        Expression::Value(Value::Variable(n)) => n.as_str(),
+        _ => return None,
+    };
+    Some(raw.strip_prefix('_').unwrap_or(raw))
+}
+
+// classic `createElement(type, props, ...children)` vs the automatic runtime
+// `jsx`/`jsxs`/`jsxDEV(type, props)` (children live in `props.children`).
 fn is_jsx_call(callee: &Expression) -> bool {
-    match callee {
-        // Match `React.createElement` or `_react.createElement`
-        Expression::Member { property, .. } => {
-            if let PropertyKey::Ident(prop_name) = property {
-                if prop_name == "createElement" || prop_name == "jsx" || prop_name == "jsxs" || prop_name == "jsxDEV" {
-                    return true;
-                }
-            }
-            false
-        }
-        // Match modern JSX runtimes directly: `_jsx`, `_jsxs`, `_jsxDEV`, or direct `createElement` import
-        Expression::Value(Value::Variable(name)) => {
-            name == "_jsx" || name == "_jsxs" || name == "_jsxDEV" || name == "createElement"
-        }
-        _ => false,
-    }
+    matches!(
+        jsx_factory_name(callee),
+        Some("createElement" | "jsx" | "jsxs" | "jsxDEV")
+    )
+}
+
+fn is_modern_factory(callee: &Expression) -> bool {
+    matches!(jsx_factory_name(callee), Some("jsx" | "jsxs" | "jsxDEV"))
 }
 
 // Constructs a JSXElement from the arguments of the factory call.
@@ -62,36 +82,59 @@ fn build_jsx_element(callee: &Expression, arguments: &[Expression]) -> Option<Ex
         _ => return None, // Unknown tag type
     };
 
-    let is_modern = match callee {
-        Expression::Value(Value::Variable(name)) => name.starts_with("_jsx"),
-        _ => false,
+    // `<>...</>`: the runtime Fragment marker renders as an empty tag.
+    let tag_name = if tag_name == "Fragment"
+        || tag_name == "_Fragment"
+        || tag_name.ends_with(".Fragment")
+    {
+        String::new()
+    } else {
+        tag_name
     };
+
+    let is_modern = is_modern_factory(callee);
 
     let mut jsx_attributes = Vec::new();
     let mut jsx_children = Vec::new();
 
+    // Automatic runtime: `jsx(type, config, key)` — the key is the separate 3rd
+    // argument, hoisted out of config into a `key` attribute.
+    if is_modern && arguments.len() >= 3 {
+        if !matches!(
+            arguments[2],
+            Expression::Value(Value::Constant(Constant::Undefined | Constant::Null))
+        ) {
+            jsx_attributes.push(("key".to_string(), arguments[2].clone()));
+        }
+    }
+
     // 2. Parse Attributes and Children
     if is_modern {
-        // Modern JSX: _jsx("div", { className: "foo", children: "bar" })
+        // Modern JSX: jsx("div", { className: "foo", children: "bar" })  — children
+        // live inside the props object under the `children` key.
         if arguments.len() >= 2 {
-            if let Expression::Object { properties } = &arguments[1] {
-                for prop in properties {
-                    match &prop.key {
-                        PropertyKey::Ident(k) | PropertyKey::String(k) => {
-                            if k == "children" {
-                                // Extract children
-                                if let Expression::Array { elements } = &prop.value {
-                                    jsx_children.extend(elements.iter().flatten().cloned());
+            match &arguments[1] {
+                Expression::Object { properties } => {
+                    for prop in properties {
+                        match &prop.key {
+                            PropertyKey::Ident(k) | PropertyKey::String(k) => {
+                                if k == "children" {
+                                    if let Expression::Array { elements } = &prop.value {
+                                        jsx_children.extend(elements.iter().flatten().cloned());
+                                    } else {
+                                        jsx_children.push(prop.value.clone());
+                                    }
                                 } else {
-                                    jsx_children.push(prop.value.clone());
+                                    jsx_attributes.push((k.clone(), prop.value.clone()));
                                 }
-                            } else {
-                                jsx_attributes.push((k.clone(), prop.value.clone()));
                             }
+                            _ => {} // computed keys: ignore
                         }
-                        _ => {} // Ignore computed keys in JSX props for now
                     }
                 }
+                // Opaque props (a variable / spread): `<Tag {...props}/>`.
+                Expression::Value(Value::Constant(Constant::Null | Constant::Undefined)) => {}
+                other => jsx_attributes.push(("...".to_string(), other.clone())),
             }
         }
     } else {
@@ -167,6 +210,89 @@ mod tests {
             assert_eq!(children.len(), 1);
         } else {
             panic!("Expected JSXElement, got: {:?}", expr);
+        }
+    }
+
+    // Helper: a modern-runtime call `factory(type, config[, key])`.
+    fn modern_call(factory: &str, args: Vec<Expression>) -> Expression {
+        Expression::call(Expression::Value(Value::Variable(factory.to_string())), args)
+    }
+
+    #[test]
+    fn test_modern_jsx_member_factory_extracts_children() {
+        // jsxProd.jsxs("ul", { className: "x", children: [a, b] })
+        let mut expr = Expression::call(
+            Expression::member(Expression::Value(Value::Variable("jsxProd".into())), "jsxs"),
+            vec![
+                Expression::constant(Constant::String("ul".into())),
+                Expression::Object {
+                    properties: vec![
+                        ObjectProperty { key: PropertyKey::Ident("className".into()), value: Expression::constant(Constant::String("x".into())) },
+                        ObjectProperty { key: PropertyKey::Ident("children".into()), value: Expression::Array { elements: vec![
+                            Some(Expression::Value(Value::Variable("a".into()))),
+                            Some(Expression::Value(Value::Variable("b".into()))),
+                        ] } },
+                    ],
+                },
+            ],
+        );
+        JSXReconstructor::new().visit_expression(&mut expr);
+        match expr {
+            Expression::JSXElement { tag, attributes, children } => {
+                assert_eq!(tag, "ul");
+                assert_eq!(attributes.len(), 1); // className only; children pulled out
+                assert_eq!(attributes[0].0, "className");
+                assert_eq!(children.len(), 2);
+            }
+            other => panic!("expected JSXElement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_modern_key_third_arg() {
+        // _jsx(Foo, { title: "x" }, k) -> key + title
+        let mut expr = modern_call(
+            "_jsx",
+            vec![
+                Expression::Value(Value::Variable("Foo".into())),
+                Expression::Object { properties: vec![ObjectProperty {
+                    key: PropertyKey::Ident("title".into()),
+                    value: Expression::constant(Constant::String("x".into())),
+                }] },
+                Expression::Value(Value::Variable("k".into())),
+            ],
+        );
+        JSXReconstructor::new().visit_expression(&mut expr);
+        match expr {
+            Expression::JSXElement { tag, attributes, .. } => {
+                assert_eq!(tag, "Foo");
+                assert!(attributes.iter().any(|(k, _)| k == "key"));
+                assert!(attributes.iter().any(|(k, _)| k == "title"));
+            }
+            other => panic!("expected JSXElement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_fragment_empty_tag() {
+        // jsxs(_Fragment, { children: [a] }) -> empty tag (renders <>...</>)
+        let mut expr = modern_call(
+            "jsxs",
+            vec![
+                Expression::Value(Value::Variable("_Fragment".into())),
+                Expression::Object { properties: vec![ObjectProperty {
+                    key: PropertyKey::Ident("children".into()),
+                    value: Expression::Array { elements: vec![Some(Expression::Value(Value::Variable("a".into())))] },
+                }] },
+            ],
+        );
+        JSXReconstructor::new().visit_expression(&mut expr);
+        match expr {
+            Expression::JSXElement { tag, children, .. } => {
+                assert_eq!(tag, ""); // fragment
+                assert_eq!(children.len(), 1);
+            }
+            other => panic!("expected JSXElement, got {other:?}"),
         }
     }
 }
