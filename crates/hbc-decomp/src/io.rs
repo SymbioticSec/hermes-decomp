@@ -18,14 +18,14 @@ impl<'a> ByteReader<'a> {
         self.data.len().saturating_sub(self.pos)
     }
 
-    /// A safe pre-allocation hint for `count` upcoming entries.
-    ///
-    /// A corrupt or mis-read header can carry an absurd count (up to
-    /// `u32::MAX`, or a negative SLEB128 cast to `usize`). Feeding that
-    /// straight to `Vec::with_capacity` aborts the process with "capacity
-    /// overflow". Since every entry consumes at least one byte, the count can
-    /// never validly exceed the bytes left to read, so we clamp to that. Valid
-    /// files (where `count <= remaining`) keep their exact-size pre-allocation.
+    // A safe pre-allocation hint for `count` upcoming entries.
+    //
+    // A corrupt or mis-read header can carry an absurd count (up to
+    // `u32::MAX`, or a negative SLEB128 cast to `usize`). Feeding that
+    // straight to `Vec::with_capacity` aborts the process with "capacity
+    // overflow". Since every entry consumes at least one byte, the count can
+    // never validly exceed the bytes left to read, so we clamp to that. Valid
+    // files (where `count <= remaining`) keep their exact-size pre-allocation.
     pub fn capacity_hint(&self, count: usize) -> usize {
         count.min(self.remaining())
     }

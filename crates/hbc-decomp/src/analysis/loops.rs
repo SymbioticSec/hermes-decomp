@@ -111,8 +111,19 @@ pub fn compute_dominators(cfg: &CFG) -> BTreeMap<BlockId, HashSet<BlockId>> {
     let all_blocks: HashSet<_> = cfg.block_ids().collect();
     let mut dom: BTreeMap<BlockId, HashSet<BlockId>> = BTreeMap::new();
 
+    // Exception catch blocks are entered from outside normal control flow (the
+    // exception edge is not a CFG successor), so they have no normal predecessors
+    // and are unreachable from `entry`. Treat them as additional roots: without
+    // this they keep the degenerate "all blocks" dominator set, which makes their
+    // own outgoing edge (e.g. `catch -> return`) look like a back edge and
+    // spuriously flags the target as a loop header — that dropped the `return`
+    // out of `catch (e) { return e.message; }`.
+    let roots: HashSet<BlockId> = std::iter::once(cfg.entry)
+        .chain(cfg.exception_handlers.iter().map(|h| h.catch_block))
+        .collect();
+
     for id in cfg.block_ids() {
-        if id == cfg.entry {
+        if roots.contains(&id) {
             let mut s = HashSet::new();
             s.insert(id);
             dom.insert(id, s);
@@ -128,7 +139,7 @@ pub fn compute_dominators(cfg: &CFG) -> BTreeMap<BlockId, HashSet<BlockId>> {
     while changed {
         changed = false;
         for &block_id in &rpo {
-            if block_id == cfg.entry {
+            if roots.contains(&block_id) {
                 continue;
             }
 

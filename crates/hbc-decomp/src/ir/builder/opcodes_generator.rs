@@ -64,8 +64,12 @@ pub fn handle_create_generator(inst: &crate::Instruction) -> Option<FlowResult> 
 
 // Handle CompleteGenerator opcode.
 pub fn handle_complete_generator(_inst: &crate::Instruction) -> Option<FlowResult> {
-    // CompleteGenerator is effectively a return
-    Some(FlowResult::Return(None))
+    // CompleteGenerator only marks the generator as finished; it is always
+    // immediately followed by a `Ret` of the final value (`undefined`). Emitting
+    // a `Return(None)` here ended the block early, so structure recovery fell
+    // through to that trailing `Ret <undef-reg>` in a separate block and rendered
+    // a dangling `return tmp`. Treat it as a no-op and let the real `Ret` return.
+    Some(FlowResult::Noop)
 }
 
 // Handle SaveGenerator opcode.

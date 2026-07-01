@@ -45,14 +45,19 @@ impl<'a> IRBuilder<'a> {
             .get(function_id as usize)
             .map(|h| h.offset().saturating_sub(self.file.instruction_offset))
             .unwrap_or(0);
-        let mut cfg = self.build_from_instructions(&instructions, handlers, func_bytecode_offset)?;
+        // Frame size drives the implicit call/construct argument register layout.
+        let frame_size = self.file.function_headers
+            .get(function_id as usize)
+            .map(|h| h.frame_size())
+            .unwrap_or(0);
+        let mut cfg = self.build_from_instructions(&instructions, handlers, func_bytecode_offset, frame_size)?;
 
         super::generator_cfg::transform_generator_cfg(&mut cfg);
 
         Ok(cfg)
     }
 
-    fn build_from_instructions(&mut self, instructions: &[Instruction], exception_handlers: &[ExceptionHandler], func_bytecode_offset: u32) -> Result<CFG> {
+    fn build_from_instructions(&mut self, instructions: &[Instruction], exception_handlers: &[ExceptionHandler], func_bytecode_offset: u32, frame_size: u32) -> Result<CFG> {
         if instructions.is_empty() {
             let mut cfg = CFG::new();
             cfg.get_mut(cfg.entry)
@@ -77,6 +82,26 @@ impl<'a> IRBuilder<'a> {
         }
 
         for handler in exception_handlers {
+            // Skip synthetic empty-`finally` handlers. The Hermes compiler lowers
+            // `try { ... } finally {}` (and the implicit cleanup edge of a
+            // `try/catch/finally`) to a handler whose target is a pure rethrow
+            // (`Catch rX; Throw rX`). Keeping it both clobbers the real catch
+            // (handlers share a try-start) and wraps the body in a spurious extra
+            // try/catch. An empty finally is a semantic no-op, so drop it.
+            if is_rethrow_only_handler(instructions, self.format, handler.target) {
+                continue;
+            }
+            // Skip the synthetic iterator-cleanup handler. The spec lowers array
+            // destructuring / for-of to a `try { ...iterate... } catch { iter
+            // .return(); throw }` so the iterator is closed on abrupt completion;
+            // its catch block calls IteratorClose. This compiler-generated cleanup
+            // is decompilation noise that fragments the iterator protocol across
+            // try-bodies and defeats for-of / destructuring reconstruction. Drop
+            // it (the close on the normal path remains); the `.return()` on error
+            // is a no-op for non-throwing runs.
+            if is_iterator_cleanup_handler(instructions, self.format, handler.target) {
+                continue;
+            }
             if let (Some(&try_start), Some(&catch_block)) = (
                 offset_to_block.get(&handler.start),
                 offset_to_block.get(&handler.target),
@@ -117,9 +142,15 @@ impl<'a> IRBuilder<'a> {
             }
 
             let result =
-                dispatch_instruction(inst, self.file, self.format, self.options.resolve_strings, func_bytecode_offset);
+                dispatch_instruction(inst, self.file, self.format, self.options.resolve_strings, func_bytecode_offset, frame_size);
 
             match result {
+                // A handler that lowers one opcode to several statements returns
+                // them wrapped in a Block; flatten it into the instruction stream
+                // (basic blocks are still flat at this stage).
+                FlowResult::Statement(Statement::Block(inner)) => {
+                    current_stmts.extend(inner);
+                }
                 FlowResult::Statement(stmt) => {
                     current_stmts.push(stmt);
                 }
@@ -250,4 +281,95 @@ impl<'a> IRBuilder<'a> {
             }
         }
     }
+}
+
+// True if the exception handler whose catch target is `target_offset` is a pure
+// rethrow: the target block consists of exactly `Catch rX` followed by
+// `Throw rX`. The Hermes compiler emits such handlers for an empty `finally`
+// (and for the cleanup edge of a `try/catch/finally`), where they are semantic
+// no-ops that should not surface as their own try/catch in the output.
+fn is_rethrow_only_handler(
+    insts: &[Instruction],
+    format: &BytecodeFormat,
+    target_offset: u32,
+) -> bool {
+    let opcode_name = |inst: &Instruction| -> Option<&str> {
+        format.definitions.get(inst.opcode as usize).map(|d| d.name.as_str())
+    };
+
+    let idx = match insts.iter().position(|i| i.offset == target_offset) {
+        Some(i) => i,
+        None => return false,
+    };
+
+    let catch = &insts[idx];
+    if opcode_name(catch) != Some("Catch") {
+        return false;
+    }
+    let catch_reg = match catch.operands.first().and_then(|o| o.value.as_u32()) {
+        Some(r) => r,
+        None => return false,
+    };
+
+    match insts.get(idx + 1) {
+        Some(next) if opcode_name(next) == Some("Throw") => {
+            next.operands.first().and_then(|o| o.value.as_u32()) == Some(catch_reg)
+        }
+        _ => false,
+    }
+}
+
+// True if the handler whose catch target is `target_offset` is the synthetic
+// iterator-cleanup handler: a `Catch` block that calls `IteratorClose` (closing
+// the iterator on abrupt completion) before the next handler block. Emitted by
+// the compiler for array destructuring and for-of; it is decompilation noise.
+fn is_iterator_cleanup_handler(
+    insts: &[Instruction],
+    format: &BytecodeFormat,
+    target_offset: u32,
+) -> bool {
+    let opcode_name = |inst: &Instruction| -> Option<&str> {
+        format.definitions.get(inst.opcode as usize).map(|d| d.name.as_str())
+    };
+
+    let idx = match insts.iter().position(|i| i.offset == target_offset) {
+        Some(i) => i,
+        None => return false,
+    };
+    if opcode_name(&insts[idx]) != Some("Catch") {
+        return false;
+    }
+    // Scan the catch block for an IteratorClose, following a single unconditional
+    // `Jmp` to the convergent cleanup block (the per-element catches all `Jmp` to
+    // a shared `... IteratorClose; Throw`). Stop at the next handler's `Catch`.
+    let jmp_target = |inst: &Instruction| -> Option<usize> {
+        let rel = inst.operands.iter().find_map(|o| {
+            matches!(o.ty, crate::opcode::OperandType::Addr8 | crate::opcode::OperandType::Addr32)
+                .then(|| o.value.as_i32())
+                .flatten()
+        })?;
+        let tgt = (inst.offset as i64 + rel as i64) as u32;
+        insts.iter().position(|x| x.offset == tgt)
+    };
+    let mut i = idx + 1;
+    let mut followed = false;
+    let mut steps = 0;
+    while i < insts.len() && steps < 64 {
+        steps += 1;
+        match opcode_name(&insts[i]) {
+            Some("IteratorClose") => return true,
+            Some("Catch") => return false,
+            Some("Jmp") | Some("JmpLong") if !followed => {
+                if let Some(p) = jmp_target(&insts[i]) {
+                    followed = true;
+                    i = p;
+                    continue;
+                }
+                return false;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }

@@ -63,6 +63,52 @@ fn main() {
     writeln!(out_file, "        _ => None,").unwrap();
     writeln!(out_file, "    }}").unwrap();
     writeln!(out_file, "}}").unwrap();
+
+    // Per-version CallBuiltin index tables, parsed from each Hermes release's
+    // Builtins.def (the builtin index ordering is version-specific).
+    let builtins_dir = manifest_dir.join("resources").join("builtins");
+    println!("cargo:rerun-if-changed={}", builtins_dir.display());
+    let mut builtin_versions = Vec::new();
+    if let Ok(entries) = fs::read_dir(&builtins_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if let Some(v) = stem.strip_prefix("Builtins").and_then(|s| s.parse::<u32>().ok()) {
+                    builtin_versions.push(v);
+                }
+            }
+        }
+    }
+    builtin_versions.sort_unstable();
+    builtin_versions.dedup();
+
+    writeln!(
+        out_file,
+        "pub fn builtins_json_for_version(version: u32) -> Option<&'static str> {{"
+    )
+    .unwrap();
+    writeln!(out_file, "    match version {{").unwrap();
+    for version in &builtin_versions {
+        let rel_path = format!("resources/builtins/Builtins{version}.json");
+        writeln!(
+            out_file,
+            "        {version} => Some(include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/\", \"{rel_path}\"))),"
+        )
+        .unwrap();
+    }
+    writeln!(out_file, "        _ => None,").unwrap();
+    writeln!(out_file, "    }}").unwrap();
+    writeln!(out_file, "}}").unwrap();
+
+    writeln!(
+        out_file,
+        "pub fn builtin_table_versions() -> &'static [u32] {{ &[{}] }}",
+        builtin_versions.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
+    )
+    .unwrap();
 }
 
 fn parse_version(path: &Path) -> Option<u32> {

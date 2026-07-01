@@ -13,6 +13,7 @@ mod opcodes_prop;
 mod opcodes_switch;
 
 pub use ir_builder::{IRBuilder, IRBuilderOptions};
+pub use opcodes_obj::EXTENDS_MARKER;
 
 use super::{BlockId, Expression, Statement, Terminator, CFG};
 use std::collections::BTreeMap;

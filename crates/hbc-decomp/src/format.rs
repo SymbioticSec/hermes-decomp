@@ -1,3 +1,26 @@
+// Function-header flag bits (the `flags: u8` field of both Legacy and Modern
+// function headers). These mirror the `FunctionHeaderFlag` enum in Hermes'
+// `BytecodeFileFormat.h`.
+//
+// Bit layout (within the flags byte):
+//   bit 0 (0x01): strict mode
+//   bit 3 (0x08): hasExceptionHandler — info section carries an exception table
+//   bit 4 (0x10): prohibitInvoke == ProhibitConstruct (cannot be used with `new`)
+//   bit 5 (0x20): overflowed — the header is a "large"/overflowed header stored
+//                 out-of-line; the inline fields encode the offset to it.
+
+// Strict-mode flag (bit 0).
+pub const FLAG_STRICT: u8 = 0x01;
+// hasExceptionHandler flag (bit 3): the function's info section has an
+// exception handler table.
+pub const FLAG_HAS_EXCEPTION_HANDLER: u8 = 0x08;
+// prohibitConstruct flag (bit 4): function cannot be used as a constructor
+// (strong indicator of an arrow function).
+pub const FLAG_PROHIBIT_CONSTRUCT: u8 = 0x10;
+// Overflowed flag (bit 5): the function header is a large/overflowed header
+// stored out-of-line.
+pub const FLAG_OVERFLOWED: u8 = 0x20;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeaderLayout {
     Legacy,
@@ -74,6 +97,11 @@ pub struct ModernFunctionHeader {
     pub num_cache_new_object: u8,
     pub private_name_cache_size: u8,
     pub flags: u8,
+    // Offset of the function's FunctionInfo (exception handler table + debug
+    // info), which immediately follows the large/overflow header. 0 when the
+    // function is not overflowed (a small 12-byte header carries no info section,
+    // so it can have no exception handlers). See parse_large_header_modern.
+    pub info_offset: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -133,18 +161,18 @@ impl FunctionHeader {
     }
 
     pub fn is_overflowed(&self) -> bool {
-        self.flags() & 0x20 != 0
+        self.flags() & FLAG_OVERFLOWED != 0
     }
 
     // Check if the function prohibits construction (cannot be used with `new`).
     // This is a strong indicator of arrow functions.
     pub fn prohibit_construct(&self) -> bool {
-        self.flags() & 0x10 != 0
+        self.flags() & FLAG_PROHIBIT_CONSTRUCT != 0
     }
 
     // Check if the function is in strict mode.
     pub fn is_strict(&self) -> bool {
-        self.flags() & 0x01 != 0
+        self.flags() & FLAG_STRICT != 0
     }
 
     // Heuristic: a function is likely an arrow function if it prohibits construction.

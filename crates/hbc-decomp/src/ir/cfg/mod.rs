@@ -123,6 +123,14 @@ impl CFG {
         let mut visited = HashSet::new();
         let mut result = Vec::new();
         self.postorder_visit(self.entry, &mut visited, &mut result);
+        // Catch blocks are entered via the exception edge, which is not a normal
+        // successor, so they (and their subgraphs) are unreachable from `entry`.
+        // Seed the traversal from each catch block too, otherwise passes that walk
+        // the reverse-postorder (e.g. SSA live-range splitting) skip catch bodies
+        // entirely — leaving registers reused inside `catch` un-split.
+        for handler in &self.exception_handlers {
+            self.postorder_visit(handler.catch_block, &mut visited, &mut result);
+        }
         result
     }
 

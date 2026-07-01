@@ -1,6 +1,6 @@
-use crate::analysis::liveness::LivenessInfo;
-use crate::ir::{AssignTarget, Expression, MutVisitor, Statement, Value, CFG};
-use std::collections::BTreeMap;
+use crate::analysis::reaching::{DefSite, ReachingDefs};
+use crate::ir::{AssignTarget, Expression, MutVisitor, Statement, Terminator, Value, Visitor, CFG};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 // Transform the function to Static Single Assignment (SSA) form.
 //
@@ -27,111 +27,305 @@ use std::collections::BTreeMap;
 //    - On Use (Read): Replace register with its current "version".
 //    - On Def (Write): Generate a NEW "version" (virtual register).
 pub fn transform_to_ssa(cfg: &mut CFG) {
-    // 1. Analyze liveness on the original CFG
-    // We need to know where variables are live to decide if a new definition
-    // should shadow the old one or if it's a completely new variable.
-    let liveness = LivenessInfo::analyze(cfg);
-
-    // 2. Compute new variable mappings
-    let mut renamer = SSARenamer::new();
-    renamer.run(cfg, &liveness);
+    split_live_ranges(cfg);
 }
 
-struct SSARenamer {
-    // Map (original_reg, version) -> new_virtual_reg_id
-    // We use high numbers for virtual registers to avoid conflict with physical ones (0-255 usually)
-    next_virtual_reg: u32,
+// Live Range Splitting via Reaching Definitions + Union-Find.
+//
+// Each register definition is a node. Two definitions are *unioned* when some
+// use reads both of them — i.e. they reconverge at that use and therefore must
+// share one name (the no-phi equivalent of a φ-node, whether the convergence is
+// an if/else merge or a loop back-edge). Every union-find class then becomes a
+// distinct SSA variable: independent live ranges of a reused register split
+// apart, while merge-/loop-carried ranges stay unified.
+//
+// This replaces the earlier "freeze the whole register" heuristic, which
+// over-froze — collapsing a register's *independent* live ranges (e.g. one that
+// held `globalThis` and was later reused for a string, or an object built via
+// PutOwnBySlotIdx whose register was reused) into a single name. The HBC >=97
+// allocator reuses registers far more aggressively, so precise splitting matters.
+fn split_live_ranges(cfg: &mut CFG) {
+    let rd = ReachingDefs::analyze(cfg);
 
-    // Map physical reg -> current virtual reg
-    current_mapping: BTreeMap<u32, u32>,
-}
+    // Enumerate every register definition site, in CFG order (deterministic).
+    let mut def_list: Vec<DefSite> = Vec::new();
+    let mut def_id: HashMap<DefSite, usize> = HashMap::new();
+    for block in cfg.blocks() {
+        for (i, stmt) in block.statements.iter().enumerate() {
+            if let Statement::Assign {
+                target: AssignTarget::Register(r),
+                ..
+            } = stmt
+            {
+                let site = DefSite {
+                    block: block.id,
+                    stmt_index: i,
+                    register: *r,
+                };
+                def_id.insert(site, def_list.len());
+                def_list.push(site);
+            }
+        }
+    }
+    if def_list.is_empty() {
+        return;
+    }
+    let mut uf = UnionFind::new(def_list.len());
 
-impl SSARenamer {
-    fn new() -> Self {
-        Self {
-            next_virtual_reg: 10000, // Start high to avoid collision
-            current_mapping: BTreeMap::new(),
+    // Pass 1 — union the reaching definitions of every use.
+    for block in cfg.blocks() {
+        let mut cur = block_entry_reaching(&rd, block.id);
+        for (i, stmt) in block.statements.iter().enumerate() {
+            for r in stmt_reads(stmt) {
+                union_reaching(&mut uf, &def_id, cur.get(&r));
+            }
+            if let Statement::Assign {
+                target: AssignTarget::Register(r),
+                ..
+            } = stmt
+            {
+                cur.insert(
+                    *r,
+                    vec![DefSite {
+                        block: block.id,
+                        stmt_index: i,
+                        register: *r,
+                    }],
+                );
+            }
+        }
+        for r in terminator_reads(&block.terminator) {
+            union_reaching(&mut uf, &def_id, cur.get(&r));
         }
     }
 
-    fn run(&mut self, cfg: &mut CFG, _liveness: &LivenessInfo) {
-        // Simple 1-pass approach for straight-line code and basic blocks.
-        // Every time we see an assignment to rX without a preceding use in the same live-range,
-        // we create a new version.
-        
-        // Iterate blocks in roughly topological order (RPO) to propagate definitions
-        let blocks = cfg.reverse_postorder();
+    // Assign a fresh register number per union-find class (deterministic order).
+    // Numbers start high to avoid colliding with physical registers / parameters.
+    let mut class_reg: HashMap<usize, u32> = HashMap::new();
+    let mut next: u32 = 10000;
+    for id in 0..def_list.len() {
+        let root = uf.find(id);
+        class_reg.entry(root).or_insert_with(|| {
+            let v = next;
+            next += 1;
+            v
+        });
+    }
+    let version_of = |uf: &mut UnionFind, site: &DefSite| -> Option<u32> {
+        def_id.get(site).map(|&id| {
+            let root = uf.find(id);
+            class_reg[&root]
+        })
+    };
 
-        for block_id in blocks {
-            if let Some(block) = cfg.get_mut(block_id) {
-                // Use MutVisitor to rename within statements
-                self.visit_statement_list(&mut block.statements);
+    // Pass 2 — rewrite uses and definitions to their class's register number.
+    for block_id in cfg.block_ids().collect::<Vec<_>>() {
+        let mut cur = block_entry_reaching(&rd, block_id);
+        let stmts = match cfg.get_mut(block_id) {
+            Some(b) => std::mem::take(&mut b.statements),
+            None => continue,
+        };
+        let mut new_stmts = Vec::with_capacity(stmts.len());
+        for (i, mut stmt) in stmts.into_iter().enumerate() {
+            // A read of register r resolves to the version of the class its
+            // current reaching defs belong to (they were all unioned in pass 1).
+            let read_map: BTreeMap<u32, u32> = cur
+                .iter()
+                .filter_map(|(r, defs)| {
+                    let first = defs.first()?;
+                    version_of(&mut uf, first).map(|v| (*r, v))
+                })
+                .collect();
 
-                // Rewrite terminator manually since it's not a node in MutVisitor hierarchy yet.
-                match &mut block.terminator {
-                    crate::ir::Terminator::Return(Some(e)) | crate::ir::Terminator::Throw(e) => {
-                        self.visit_expression(e);
+            let def_orig = match &stmt {
+                Statement::Assign {
+                    target: AssignTarget::Register(r),
+                    ..
+                } => Some(*r),
+                _ => None,
+            };
+
+            rewrite_reads_in_stmt(&mut stmt, &read_map);
+
+            if let Some(r) = def_orig {
+                let site = DefSite {
+                    block: block_id,
+                    stmt_index: i,
+                    register: r,
+                };
+                if let Some(v) = version_of(&mut uf, &site) {
+                    if let Statement::Assign {
+                        target: AssignTarget::Register(t),
+                        ..
+                    } = &mut stmt
+                    {
+                        *t = v;
                     }
-                    crate::ir::Terminator::Branch { condition, .. } => self.visit_expression(condition),
-                    crate::ir::Terminator::Switch { value, .. } => self.visit_expression(value),
-                    _ => {}
                 }
+                cur.insert(r, vec![site]);
             }
+            new_stmts.push(stmt);
         }
-    }
 
-    fn new_version(&mut self, reg: u32) -> u32 {
-        let v = self.next_virtual_reg;
-        self.next_virtual_reg += 1;
-        self.current_mapping.insert(reg, v);
-        v
+        let read_map: BTreeMap<u32, u32> = cur
+            .iter()
+            .filter_map(|(r, defs)| {
+                let first = defs.first()?;
+                version_of(&mut uf, first).map(|v| (*r, v))
+            })
+            .collect();
+        if let Some(block) = cfg.get_mut(block_id) {
+            block.statements = new_stmts;
+            rewrite_reads_in_terminator(&mut block.terminator, &read_map);
+        }
     }
 }
 
-impl MutVisitor for SSARenamer {
-    fn visit_statement(&mut self, stmt: &mut Statement) {
-        match stmt {
-            Statement::Assign { target, value } => {
-                // Must visit VALUE (which uses current mapping) BEFORE Target (which defines new mapping)
-                self.visit_expression(value);
-                self.visit_assign_target(target);
-            }
-            _ => self.walk_statement(stmt),
+struct UnionFind {
+    parent: Vec<usize>,
+}
+
+impl UnionFind {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
         }
     }
+    fn find(&mut self, x: usize) -> usize {
+        let mut root = x;
+        while self.parent[root] != root {
+            root = self.parent[root];
+        }
+        let mut cur = x;
+        while self.parent[cur] != root {
+            let next = self.parent[cur];
+            self.parent[cur] = root;
+            cur = next;
+        }
+        root
+    }
+    fn union(&mut self, a: usize, b: usize) {
+        let (ra, rb) = (self.find(a), self.find(b));
+        if ra != rb {
+            self.parent[ra] = rb;
+        }
+    }
+}
 
+// Reaching definitions on entry to a block, grouped by register.
+fn block_entry_reaching(rd: &ReachingDefs, block: crate::ir::BlockId) -> HashMap<u32, Vec<DefSite>> {
+    let mut cur: HashMap<u32, Vec<DefSite>> = HashMap::new();
+    if let Some(in_set) = rd.reaching_in.get(&block) {
+        for d in in_set {
+            cur.entry(d.register).or_default().push(*d);
+        }
+    }
+    cur
+}
+
+// Union together all definitions that reach a single use.
+fn union_reaching(uf: &mut UnionFind, def_id: &HashMap<DefSite, usize>, defs: Option<&Vec<DefSite>>) {
+    if let Some(defs) = defs {
+        let ids: Vec<usize> = defs.iter().filter_map(|d| def_id.get(d).copied()).collect();
+        for w in ids.windows(2) {
+            uf.union(w[0], w[1]);
+        }
+    }
+}
+
+// Registers READ by a statement (value expressions + read sub-expressions of an
+// assignment target — Member object, Index object/key — but NOT the target
+// register itself, which is a definition).
+fn stmt_reads(stmt: &Statement) -> HashSet<u32> {
+    let mut regs = HashSet::new();
+    match stmt {
+        Statement::Assign { target, value } => {
+            collect_reg_reads(value, &mut regs);
+            match target {
+                AssignTarget::Member { object, .. } => collect_reg_reads(object, &mut regs),
+                AssignTarget::Index { object, key } => {
+                    collect_reg_reads(object, &mut regs);
+                    collect_reg_reads(key, &mut regs);
+                }
+                _ => {}
+            }
+        }
+        Statement::Let { value, .. } => collect_reg_reads(value, &mut regs),
+        Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(e) => {
+            collect_reg_reads(e, &mut regs)
+        }
+        _ => {}
+    }
+    regs
+}
+
+fn terminator_reads(term: &Terminator) -> HashSet<u32> {
+    let mut regs = HashSet::new();
+    match term {
+        Terminator::Return(Some(e)) | Terminator::Throw(e) => collect_reg_reads(e, &mut regs),
+        Terminator::Branch { condition, .. } => collect_reg_reads(condition, &mut regs),
+        Terminator::Switch { value, .. } => collect_reg_reads(value, &mut regs),
+        _ => {}
+    }
+    regs
+}
+
+fn collect_reg_reads(expr: &Expression, out: &mut HashSet<u32>) {
+    struct C<'a>(&'a mut HashSet<u32>);
+    impl<'a, 'b> Visitor<'b> for C<'a> {
+        fn visit_expression(&mut self, e: &'b Expression) {
+            if let Expression::Value(Value::Register(r)) = e {
+                self.0.insert(*r);
+            }
+            self.walk_expression(e);
+        }
+    }
+    C(out).visit_expression(expr);
+}
+
+// Rewrite register reads (NOT the assignment-target register) using `map`.
+fn rewrite_reads_in_stmt(stmt: &mut Statement, map: &BTreeMap<u32, u32>) {
+    let mut rw = ReadRewriter(map);
+    match stmt {
+        Statement::Assign { target, value } => {
+            rw.visit_expression(value);
+            match target {
+                AssignTarget::Member { object, .. } => rw.visit_expression(object),
+                AssignTarget::Index { object, key } => {
+                    rw.visit_expression(object);
+                    rw.visit_expression(key);
+                }
+                _ => {}
+            }
+        }
+        Statement::Let { value, .. } => rw.visit_expression(value),
+        Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(e) => {
+            rw.visit_expression(e)
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_reads_in_terminator(term: &mut Terminator, map: &BTreeMap<u32, u32>) {
+    let mut rw = ReadRewriter(map);
+    match term {
+        Terminator::Return(Some(e)) | Terminator::Throw(e) => rw.visit_expression(e),
+        Terminator::Branch { condition, .. } => rw.visit_expression(condition),
+        Terminator::Switch { value, .. } => rw.visit_expression(value),
+        _ => {}
+    }
+}
+
+struct ReadRewriter<'a>(&'a BTreeMap<u32, u32>);
+impl MutVisitor for ReadRewriter<'_> {
     fn visit_expression(&mut self, expr: &mut Expression) {
-        match expr {
-            Expression::Value(Value::Register(r)) => {
-                if let Some(&new_reg) = self.current_mapping.get(r) {
-                    *r = new_reg;
-                }
-                // Leaves don't need walk_expression
+        if let Expression::Value(Value::Register(r)) = expr {
+            if let Some(&v) = self.0.get(r) {
+                *r = v;
             }
-            Expression::Assignment { target, value } => {
-                // Visit value first
-                self.visit_expression(value);
-                
-                // Expr Assignment is tricky, usually target is use-def.
-                if let Expression::Value(Value::Register(r)) = &mut **target {
-                    // Defines a new version
-                    *r = self.new_version(*r);
-                } else {
-                    self.visit_expression(target);
-                }
-            }
-            _ => self.walk_expression(expr),
+            return;
         }
-    }
-
-    fn visit_assign_target(&mut self, target: &mut AssignTarget) {
-        if let AssignTarget::Register(r) = target {
-            // Determine if this is a new definition.
-            // In SSA, every assignment is a new definition.
-            *r = self.new_version(*r);
-        } else {
-            self.walk_assign_target(target);
-        }
+        self.walk_expression(expr);
     }
 }
 

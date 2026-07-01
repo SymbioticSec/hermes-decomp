@@ -8,7 +8,7 @@ const MAX_ASYNC_PROPAGATION_ITERATIONS: usize = 20;
 
 // Global closure context for cross-function resolution.
 // Tracks parent-child relationships and environment slot assignments across all functions.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ClosureContext {
     pub parent_function: BTreeMap<u32, u32>,
     pub function_closures: BTreeMap<u32, ClosureInfo>,
@@ -67,6 +67,14 @@ impl ClosureContext {
     // OR if their parent is already marked as async. This handles the two-level chain:
     //   Metro factory → CreateGeneratorClosure(719) → CreateGenerator(720)
     //   719 gets async (parent is non-generator), then 720 gets async (parent 719 is async).
+    //
+    // Async is detected explicitly elsewhere: modern bytecode marks it via the
+    // `CreateAsyncClosure` opcode, and the legacy Babel `_asyncToGenerator(
+    // function*(){})` pattern is recognised by `detect_async_generator_wrappers`.
+    // Here we only PROPAGATE that flag from an async wrapper to the inner
+    // generator body it drives. We must NOT guess "async" from the parent merely
+    // not being a generator — a real `function*` also has a non-generator parent,
+    // and that guess rendered real generators as `async`/`await`.
     pub fn propagate_async_to_generators(&mut self) {
         // Iterate until no more changes (handles multi-level chains)
         for _ in 0..MAX_ASYNC_PROPAGATION_ITERATIONS {
@@ -77,18 +85,8 @@ impl ClosureContext {
                     if self.async_functions.contains(&func_id) {
                         return false; // already marked
                     }
-                    if let Some(&parent) = self.parent_function.get(&func_id) {
-                        // If parent is already async, this is an async body
-                        if self.async_functions.contains(&parent) {
-                            return true;
-                        }
-                        // If parent is NOT a generator, this generator is likely
-                        // an async function body (Babel async-to-generator pattern)
-                        if !self.generator_functions.contains(&parent) {
-                            return true;
-                        }
-                    }
-                    false
+                    // Inner body of an async wrapper: parent is async.
+                    matches!(self.parent_function.get(&func_id), Some(&parent) if self.async_functions.contains(&parent))
                 })
                 .copied()
                 .collect();
@@ -121,15 +119,9 @@ impl ClosureContext {
             current = parent;
         }
 
-        // 0. Include local slots (level 0)
-        if let Some(local_info) = self.function_closures.get(&function_id) {
-            for (slot, value) in &local_info.slots {
-                combined.slots.insert(*slot, value.clone());
-            }
-        }
-
-        // For each ancestor level, copy their closure slots
-        // Level 0 = direct parent
+        // Ancestor scopes first, so their *definitions* are visible when we decide
+        // whether a local entry is really a mutation of an inherited slot.
+        // Level 0 = direct parent. Closer ancestors win (or_insert).
         for (level, &ancestor) in ancestors.iter().enumerate() {
             if let Some(ancestor_info) = self.function_closures.get(&ancestor) {
                 for (&slot, value) in &ancestor_info.slots {
@@ -138,6 +130,23 @@ impl ClosureContext {
                     let key = encode_level_slot(ir_level, slot);
                     combined.slots.entry(key).or_insert_with(|| value.clone());
                 }
+            }
+        }
+
+        // Local slots (level 0). A function that mutates a *captured* variable
+        // (`closure_0 += 1` in a returned closure) emits a `StoreToEnvironment`
+        // that looks like a local slot whose value is the stored register
+        // (`Variable("sum")`). That is a mutation of the parent's slot, not a new
+        // definition — letting it shadow the ancestor would rename the shared
+        // variable per scope (parent sees `closure_0`, child sees `sum`). So a
+        // local `Variable` entry does not override an inherited slot.
+        if let Some(local_info) = self.function_closures.get(&function_id) {
+            for (slot, value) in &local_info.slots {
+                let is_mutation = matches!(value, ClosureSlotValue::Variable(_));
+                if is_mutation && combined.slots.contains_key(slot) {
+                    continue;
+                }
+                combined.slots.insert(*slot, value.clone());
             }
         }
 

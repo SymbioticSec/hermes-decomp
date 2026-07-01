@@ -127,6 +127,8 @@ pub struct ClassMethod {
     pub body: Option<Vec<Statement>>,
     pub is_static: bool,
     pub kind: MethodKind,
+    // User-facing parameter names (`this` excluded), in order. Empty if unknown.
+    pub params: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-use crate::ir::{Statement, Expression, Value, AssignTarget, PropertyKey, MethodKind};
+use crate::ir::{Statement, Expression, Value, Constant, AssignTarget, PropertyKey, MethodKind};
 use std::collections::{BTreeMap, HashSet};
 use super::builder::ClassBuilder;
 use super::utils::{
@@ -18,6 +18,13 @@ pub struct ClassAnalyzer<'a> {
     pub(super) classes: BTreeMap<String, ClassBuilder>,
     // Track which statements have been consumed into classes
     pub(super) consumed: HashSet<usize>,
+    // Statement indices consumed on behalf of each class (key = class map key).
+    // The class is emitted at its earliest index, so multiple classes in one
+    // function each surface at the right position (and exactly once).
+    pub(super) class_indices: BTreeMap<String, Vec<usize>>,
+    // Variables/registers aliasing `<Class>.prototype` (e.g. HBC >=97 emits
+    // `home = Class.prototype; home["m"] = fn`). Maps alias name → class map key.
+    pub(super) proto_aliases: BTreeMap<String, String>,
 }
 
 impl<'a> ClassAnalyzer<'a> {
@@ -34,26 +41,49 @@ impl<'a> ClassAnalyzer<'a> {
             closure_ctx,
             classes: BTreeMap::new(),
             consumed: HashSet::new(),
+            class_indices: BTreeMap::new(),
+            proto_aliases: BTreeMap::new(),
         }
+    }
+
+    // Mark statement `idx` as consumed on behalf of class `class_key`.
+    pub(super) fn consume(&mut self, class_key: &str, idx: usize) {
+        self.consumed.insert(idx);
+        self.class_indices
+            .entry(class_key.to_string())
+            .or_default()
+            .push(idx);
     }
 
     pub fn analyze(&mut self, stmts: Vec<Statement>) -> Vec<Statement> {
         // Pass 1: Identify class candidates from prototype usage
         let candidates = self.find_candidates(&stmts);
 
+        // Pass 1b: Collect `<Class>.prototype` aliases (HBC >=97 `home = C.prototype`).
+        self.collect_proto_aliases(&stmts);
+
         // Pass 2: Scan for class patterns
         for (idx, stmt) in stmts.iter().enumerate() {
             self.analyze_statement(stmt, idx, &candidates);
         }
 
-        // Pass 3: Generate output, replacing consumed statements with classes
+        // Pass 3: Generate output, replacing consumed statements with classes.
+        // Each class is emitted at its earliest consumed index so that multiple
+        // classes in the same function keep their relative order and surface once.
+        let mut anchor_to_class: BTreeMap<usize, String> = BTreeMap::new();
+        for (class_key, indices) in &self.class_indices {
+            if let Some(&min_idx) = indices.iter().min() {
+                anchor_to_class.insert(min_idx, class_key.clone());
+            }
+        }
+
         let mut result = Vec::new();
         let mut emitted_classes: HashSet<String> = HashSet::new();
 
         for (idx, stmt) in stmts.into_iter().enumerate() {
             if self.consumed.contains(&idx) {
-                // Check if we should emit a class here
-                if let Some(class_name) = self.get_class_for_index(idx) {
+                // Emit the class anchored at this index (if any).
+                if let Some(class_name) = anchor_to_class.get(&idx).cloned() {
                     if !emitted_classes.contains(&class_name) {
                         if let Some(builder) = self.classes.get(&class_name) {
                             result.push(self.build_class(builder));
@@ -66,6 +96,22 @@ impl<'a> ClassAnalyzer<'a> {
 
             // Recursively transform nested statements
             result.push(self.transform_recursive(stmt));
+        }
+
+        // The constructor closure landed in a register (e.g. `r10000 = function
+        // Animal(){}`); that assignment was consumed, but later references to the
+        // class (`new r10000(...)`, `r10000.prototype` reads) still point at the
+        // register. Rename them to the class display name so we emit `new Animal`.
+        let mut reg_to_class: BTreeMap<u32, String> = BTreeMap::new();
+        for (key, builder) in &self.classes {
+            if let Some(reg) = key.strip_prefix('r').and_then(|n| n.parse::<u32>().ok()) {
+                if emit::is_real_class_name(&builder.name) && builder.name != *key {
+                    reg_to_class.insert(reg, builder.name.clone());
+                }
+            }
+        }
+        if !reg_to_class.is_empty() {
+            result = crate::analysis::rename_registers(result, &reg_to_class);
         }
 
         result
@@ -103,12 +149,56 @@ impl<'a> ClassAnalyzer<'a> {
         candidates
     }
 
+    // Record `home = <Class>.prototype` aliases so `home["m"] = fn` can be tied
+    // back to the class (HBC >=97 lowers derived-class method definitions this way).
+    fn collect_proto_aliases(&mut self, stmts: &[Statement]) {
+        for stmt in stmts {
+            let (alias, value) = match stmt {
+                Statement::Assign {
+                    target: target @ (AssignTarget::Register(_) | AssignTarget::Variable(_)),
+                    value,
+                } => (get_target_name(target), value),
+                Statement::Let { name, value, .. } => (Some(name.clone()), value),
+                _ => continue,
+            };
+            if let (Some(alias), Expression::Member { object, property: PropertyKey::Ident(p), .. }) =
+                (alias, value)
+            {
+                if p == "prototype" {
+                    if let Some(class_key) = extract_name(object) {
+                        self.proto_aliases.insert(alias, class_key);
+                    }
+                }
+            }
+        }
+    }
+
+    // Resolve the owning class of a method-assignment object, either a direct
+    // `<Class>.prototype` member or a tracked prototype alias.
+    fn resolve_proto_class(&self, object: &Expression) -> Option<String> {
+        if let Expression::Member { object: inner, property: PropertyKey::Ident(p), .. } = object {
+            if p == "prototype" {
+                return extract_name(inner);
+            }
+        }
+        let name = extract_name(object)?;
+        self.proto_aliases.get(&name).cloned()
+    }
+
     fn analyze_statement(&mut self, stmt: &Statement, idx: usize, candidates: &HashSet<String>) {
         match stmt {
-            // Pattern: Foo = function() { ... } (Constructor)
-            Statement::Assign { target, value } if matches!(value, Expression::Function { .. }) => {
+            // Pattern: Foo = function() { ... } (Constructor). Restrict to a plain
+            // register/variable target so it does not swallow member-target method
+            // assignments like `Foo.prototype.m = function() {}` (handled below).
+            Statement::Assign { target: target @ (AssignTarget::Register(_) | AssignTarget::Variable(_)), value }
+                if matches!(value, Expression::Function { .. }) =>
+            {
                 if let Some(name) = get_target_name(target) {
-                    if candidates.contains(&name) || is_likely_class_name(&name) {
+                    // A register holding a named constructor closure (`r5 = function
+                    // Animal() {}`) is a class even though the register name itself
+                    // isn't class-like; accept it when the closure carries a name.
+                    let named_ctor = matches!(value, Expression::Function { name: Some(n), .. } if super::utils::is_likely_class_name(n));
+                    if candidates.contains(&name) || is_likely_class_name(&name) || named_ctor {
                         self.register_constructor(&name, value.clone(), idx);
                     }
                 }
@@ -128,6 +218,23 @@ impl<'a> ClassAnalyzer<'a> {
                 if proto_prop == "prototype" {
                     if let Some(class_name) = extract_name(proto_obj) {
                         self.add_method(&class_name, property.clone(), value.clone(), false, MethodKind::Method, idx);
+                    }
+                }
+            }
+
+            // Pattern: <Class>.prototype["m"] = function() {...}  OR  alias["m"] = fn
+            // (HBC >=97 DefineOwnByVal). Pulled INTO the class body ONLY when the
+            // method uses `super` — which is a syntax error outside a class method.
+            // Other methods stay as external `prototype["m"] = fn` assignments
+            // (already valid JS) so existing output is not disturbed.
+            Statement::Assign { target: AssignTarget::Index { object, key }, value }
+                if matches!(value, Expression::Function { .. }) =>
+            {
+                if let Expression::Value(Value::Constant(Constant::String(method_name))) = key {
+                    if let Some(class_name) = self.resolve_proto_class(object) {
+                        if self.body_uses_super(value) {
+                            self.add_method(&class_name, method_name.clone(), value.clone(), false, MethodKind::Method, idx);
+                        }
                     }
                 }
             }
@@ -155,7 +262,7 @@ impl<'a> ClassAnalyzer<'a> {
                             }
                         }
                     }
-                    self.consumed.insert(idx);
+                    self.consume(&class_name, idx);
                 }
             }
 
@@ -177,8 +284,31 @@ impl<'a> ClassAnalyzer<'a> {
                                 }
                             }
                         }
+                        self.consume(&class_name, idx);
+                    }
+                }
+            }
+
+            // Pattern: __hermes_class_extends__(Class, Super) — the synthetic marker
+            // emitted by CreateDerivedClass desugaring (HBC >=97 `class B extends A`).
+            Statement::Expr(Expression::Call { callee, arguments })
+                if matches!(callee.as_ref(), Expression::Value(Value::Variable(n)) if n == crate::ir::EXTENDS_MARKER) =>
+            {
+                if let [class_arg, super_arg] = arguments.as_slice() {
+                    if let Some(class_name) = extract_name(class_arg) {
+                        let builder = self.classes.entry(class_name.clone()).or_insert_with(|| {
+                            ClassBuilder { name: class_name.clone(), ..Default::default() }
+                        });
+                        // Stored as-is (often Register(baseClass)); the final
+                        // register→class-name rename turns it into `extends A`.
+                        builder.super_class = Some(super_arg.clone());
+                        self.consume(&class_name, idx);
+                    } else {
+                        // Always drop the marker even if unresolved.
                         self.consumed.insert(idx);
                     }
+                } else {
+                    self.consumed.insert(idx);
                 }
             }
 
@@ -189,7 +319,7 @@ impl<'a> ClassAnalyzer<'a> {
                         if let Some(builder) = self.classes.get_mut(&class_name) {
                             builder.super_class = Some(Expression::Value(Value::Variable(super_name)));
                         }
-                        self.consumed.insert(idx);
+                        self.consume(&class_name, idx);
                     }
                 }
             }
@@ -204,7 +334,7 @@ impl<'a> ClassAnalyzer<'a> {
                         if let Some(setter_fn) = setter {
                             self.add_method(&class_name, prop_name, setter_fn, false, MethodKind::Setter, idx);
                         }
-                        self.consumed.insert(idx);
+                        self.consume(&class_name, idx);
                     }
                 }
             }

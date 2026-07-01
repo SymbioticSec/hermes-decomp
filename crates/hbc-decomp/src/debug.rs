@@ -7,8 +7,8 @@ use crate::error::Result;
 use crate::io::ByteReader;
 use std::collections::BTreeMap;
 
-/// `data[start..start+len]` if fully in bounds, else `None`. Uses u64 so huge
-/// header values can't overflow the index arithmetic.
+// `data[start..start+len]` if fully in bounds, else `None`. Uses u64 so huge
+// header values can't overflow the index arithmetic.
 fn slice_in_bounds(data: &[u8], start: u64, len: u64) -> Option<&[u8]> {
     let start = usize::try_from(start).ok()?;
     let len = usize::try_from(len).ok()?;
@@ -16,7 +16,7 @@ fn slice_in_bounds(data: &[u8], start: u64, len: u64) -> Option<&[u8]> {
     data.get(start..end)
 }
 
-/// `data[start..end]` if `start <= end <= data.len()`, else `None`.
+// `data[start..end]` if `start <= end <= data.len()`, else `None`.
 fn slice_range(data: &[u8], start: u32, end: u32) -> Option<&[u8]> {
     if start > end {
         return None;
@@ -58,21 +58,21 @@ impl ScopeDescriptor {
     }
 }
 
-/// Parsed Hermes `DebugInfoHeader` (7 little-endian u32 fields).
-///
-/// The section layout is:
-///   [DebugInfoHeader (28 bytes)]
-///   [filename table: filename_count * 8 bytes ({offset,length}) + filename_storage_size bytes]
-///   [file regions:   file_region_count * 12 bytes]
-///   [debug data (debug_data_size bytes):
-///       [0 .. scope_desc_offset)             source-location / line data
-///       [scope_desc_offset .. callee_offset) scope descriptors
-///       [callee_offset .. string_offset)     textified callees
-///       [string_offset .. debug_data_size)   debug string table ]
-///
-/// The three offsets are relative to the START OF THE DEBUG DATA, not to the
-/// section start — a distinction the old 3-field reader got wrong, which is the
-/// root cause of issue #4 (it read the filename/region counts as offsets).
+// Parsed Hermes `DebugInfoHeader` (7 little-endian u32 fields).
+//
+// The section layout is:
+//   [DebugInfoHeader (28 bytes)]
+//   [filename table: filename_count * 8 bytes ({offset,length}) + filename_storage_size bytes]
+//   [file regions:   file_region_count * 12 bytes]
+//   [debug data (debug_data_size bytes):
+//       [0 .. scope_desc_offset)             source-location / line data
+//       [scope_desc_offset .. callee_offset) scope descriptors
+//       [callee_offset .. string_offset)     textified callees
+//       [string_offset .. debug_data_size)   debug string table ]
+//
+// The three offsets are relative to the START OF THE DEBUG DATA, not to the
+// section start — a distinction the old 3-field reader got wrong, which is the
+// root cause of issue #4 (it read the filename/region counts as offsets).
 #[derive(Debug, Clone)]
 struct DebugInfoHeader {
     filename_count: u32,
@@ -157,7 +157,7 @@ impl DebugInfo {
         })
     }
 
-    /// Resolve a debug-string-table index to its name, if in range.
+    // Resolve a debug-string-table index to its name, if in range.
     fn name_at(table: &[String], index: i64) -> Option<String> {
         usize::try_from(index)
             .ok()
@@ -240,8 +240,8 @@ impl DebugInfo {
         callees
     }
 
-    /// The debug string table is a run of length-prefixed strings filling the
-    /// region — there is no leading count.
+    // The debug string table is a run of length-prefixed strings filling the
+    // region — there is no leading count.
     fn parse_string_table(data: &[u8]) -> Vec<String> {
         let mut strings = Vec::new();
         let mut reader = ByteReader::new(data);
@@ -304,14 +304,14 @@ mod tests {
         assert!(info.scope_descriptors.is_empty());
     }
 
-    /// Build a complete, well-formed Hermes debug section: the 7-field header, a
-    /// real filename table (`{offset,length}` entries + concatenated storage)
-    /// and a file-region table, then the debug-data blob (scope descriptors,
-    /// textified callees, string table). This lays the section out exactly like
-    /// a real bundle, so it exercises the data-start arithmetic
-    /// (`28 + 8*filenameCount + filenameStorageSize + 12*fileRegionCount`) —
-    /// not a degenerate empty-table shortcut. The section offsets are derived
-    /// from the actual blob sizes. Returns (full buffer, offset for `parse`).
+    // Build a complete, well-formed Hermes debug section: the 7-field header, a
+    // real filename table (`{offset,length}` entries + concatenated storage)
+    // and a file-region table, then the debug-data blob (scope descriptors,
+    // textified callees, string table). This lays the section out exactly like
+    // a real bundle, so it exercises the data-start arithmetic
+    // (`28 + 8*filenameCount + filenameStorageSize + 12*fileRegionCount`) —
+    // not a degenerate empty-table shortcut. The section offsets are derived
+    // from the actual blob sizes. Returns (full buffer, offset for `parse`).
     fn build_debug_section(
         filenames: &[&str],
         file_regions: u32,
