@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "hermes-dec")]
-#[command(about = "Hermes bytecode disassembler/decompiler", long_about = None)]
+#[command(about = "Hermes bytecode disassembler/decompiler (HBC versions 40-99)", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -11,220 +11,335 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Print bytecode header info (version, function/string counts, sections).
     Info {
+        /// Path to the .hbc file or React Native .bundle.
         input: PathBuf,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
     },
+    /// List all supported HBC opcode-table versions (40-99).
     Versions,
+    /// Launch the interactive terminal UI (browse, search, decompile, diff).
     Tui {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
+        /// Second bundle to diff against (enables diff mode).
         #[arg(long)]
         input2: Option<PathBuf>,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
-        // Compare decompiled code for diff (slower)
+        /// In diff mode, compare decompiled code per function (slower).
         #[arg(long)]
         diff_code: bool,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
     },
+    /// Disassemble functions to Hermes assembly.
     Disasm {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
+        /// Restrict to a single function by its numeric ID.
         #[arg(long)]
         function: Option<u32>,
-        #[arg(long)]
+        /// Write output to this file instead of stdout.
+        #[arg(short = 'o', long)]
         output: Option<PathBuf>,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
+        /// Annotate each instruction with its bytecode offset.
         #[arg(long)]
         show_offsets: bool,
+        /// Don't emit jump labels (raw offsets only).
         #[arg(long)]
         no_labels: bool,
+        /// Don't resolve string-table indices to literals.
         #[arg(long)]
         no_strings: bool,
+        /// Print a per-function metadata banner (params, frame, regs, flags, handlers).
+        #[arg(long)]
+        info: bool,
     },
+    /// Decompile bytecode to readable JavaScript (ESM/Metro-aware).
     Decompile {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
+        /// Restrict to a single function by its numeric ID.
         #[arg(long)]
         function: Option<u32>,
-        #[arg(long)]
+        /// Write output to this file instead of stdout.
+        #[arg(short = 'o', long)]
         output: Option<PathBuf>,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        // Include bytecode offsets as comments
+        /// Include bytecode offsets as comments.
         #[arg(long)]
         show_offsets: bool,
-        // Don't resolve string table indices
+        /// Don't resolve string-table indices to literals.
         #[arg(long)]
         no_strings: bool,
-        // Disable constant/copy propagation
+        /// Disable constant/copy propagation.
         #[arg(long)]
         no_propagate: bool,
-        // Disable expression simplification
+        /// Disable expression simplification.
         #[arg(long)]
         no_simplify: bool,
-        // Disable control flow structure recovery
+        /// Disable control-flow structure recovery (emit flat goto form).
         #[arg(long)]
         no_structure: bool,
-        // Expand referenced functions inline (recursively decompile closures)
+        /// Expand referenced functions inline (recursively decompile closures).
         #[arg(long)]
         expand: bool,
-        // Maximum depth for function expansion (default: 2)
+        /// Maximum depth for function expansion.
         #[arg(long, default_value = "2")]
         expand_depth: usize,
-        // Resolve closure variables across functions (slower but more readable)
+        /// Resolve closure variables across functions (slower, more readable).
         #[arg(long)]
         resolve_closures: bool,
-        // Output as JSON (IR)
+        /// Output the IR as JSON instead of JavaScript.
         #[arg(long)]
         json: bool,
-        // Check for unreachable functions (Dead Code)
+        /// Report unreachable (dead-code) functions.
         #[arg(long)]
         check_dead_code: bool,
-        // Assembly mode: show absolute binary offsets on each line (Binary Ninja style)
+        /// Assembly mode: show absolute binary offsets on each line.
         #[arg(long)]
         assembly: bool,
+        /// Emit only these Metro module IDs (ranges/list, e.g. "100-150,200,5").
+        #[arg(long)]
+        modules: Option<String>,
+        /// Emit only modules whose name matches a glob (comma-separated, e.g. "Login*,Auth*").
+        #[arg(long)]
+        module_name: Option<String>,
+        /// Exclude modules whose name matches a glob (comma-separated, e.g. "react*,lodash*").
+        #[arg(long)]
+        exclude_module_name: Option<String>,
+        /// Emit a module and its dependency subtree (use with --module-depth).
+        #[arg(long)]
+        from_module: Option<u32>,
+        /// Max dependency depth for --from-module.
+        #[arg(long, default_value = "3")]
+        module_depth: usize,
+        /// Disable the on-disk analysis cache (`<input>.hdcache`); always re-analyze.
+        #[arg(long)]
+        no_cache: bool,
     },
-    // Show closure mappings for a function (what each closure_X refers to)
+    /// Show closure mappings for a function (what each closure_X refers to).
     Closures {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
+        /// Function ID to inspect.
         #[arg(long)]
         function: u32,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
     },
-    // Show Metro module dependencies
+    /// Show a Metro module's dependency tree.
     Deps {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
-        // Module ID (not function ID)
+        /// Metro module ID (not the function ID).
         #[arg(long)]
         module: u32,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        // Show dependency tree with this depth
+        /// Dependency-tree depth to display.
         #[arg(long, default_value = "2")]
         depth: usize,
     },
-    // List all Metro modules in the bundle
+    /// List all Metro modules in the bundle.
     Modules {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        // Show only first N modules
+        /// Show only the first N modules.
         #[arg(long)]
         limit: Option<usize>,
     },
-    // Show debug info (variable names, scope descriptors, textified callees)
+    /// Show embedded debug info (variable names, scope descriptors, callees).
     Debug {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        // Show only scopes
+        /// Show only scope descriptors.
         #[arg(long)]
         scopes: bool,
-        // Show only callees
+        /// Show only textified callees.
         #[arg(long)]
         callees: bool,
-        // Show only variable names
+        /// Show only variable names.
         #[arg(long)]
         vars: bool,
     },
-    // Extract all Metro modules to separate files
+    /// Extract each Metro module to its own file.
     Extract {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
-        // Output directory
-        #[arg(long)]
+        /// Output directory for the extracted modules.
+        #[arg(short = 'o', long)]
         output: PathBuf,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
+        /// Don't resolve string-table indices to literals.
         #[arg(long)]
         no_strings: bool,
     },
-    // Generate a Graphviz DOT file for the Control Flow Graph
+    /// Emit a Graphviz DOT control-flow graph for a function.
     Graphviz {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
+        /// Function ID to graph.
         #[arg(long)]
         function: u32,
-        #[arg(long)]
+        /// Write the DOT to this file instead of stdout.
+        #[arg(short = 'o', long)]
         output: Option<PathBuf>,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
-        // Open the generated graph immediately (requires xdot or open)
+        /// Open the generated graph immediately (requires xdot or `open`).
         #[arg(long)]
         open: bool,
     },
-    // Find cross-references (xrefs) to a string or function
+    /// Find cross-references (xrefs) to a string or function.
     Xref {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
-        // String or Function ID to search for
+        /// String literal or function ID to search for.
         #[arg(long)]
         query: String,
-        // Type of query: string | function
+        /// What `query` refers to: string | function.
         #[arg(long, value_enum, default_value = "string")]
         kind: XrefKind,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
     },
+    /// Diff two bundles (added/removed/modified functions).
     BinDiff {
+        /// First (base) bundle.
         input1: PathBuf,
+        /// Second (new) bundle.
         input2: PathBuf,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
+        /// Override the detected HBC bytecode version.
         #[arg(long)]
         format_version: Option<u32>,
-        // Compare decompiled code for modified functions
+        /// Compare decompiled code for modified functions (slower).
         #[arg(long)]
         diff_code: bool,
     },
-    // Dump data from the HBC file (strings, etc.)
+    /// Dump raw HBC tables (strings, functions).
     Dump {
+        /// Path to the .hbc file or .bundle.
         input: PathBuf,
-        // What to dump: 'strings', 'functions'
+        /// What to dump: strings | functions | cjs-modules | regexp | obj-shapes | function-sources | string-kinds | sections | big-int | array-buffer.
         #[arg(long, value_enum, default_value = "strings")]
         kind: DumpKind,
+        /// Emit the selected table as JSON.
+        #[arg(long)]
+        json: bool,
+        /// File header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
+        #[arg(long, value_enum, default_value = "auto")]
+        function_layout: FunctionLayoutArg,
+    },
+    /// Print the bundle call graph (caller → callee edges).
+    Callgraph {
+        /// Path to the .hbc file or .bundle.
+        input: PathBuf,
+        /// Restrict to the subgraph reachable from this function ID.
+        #[arg(long)]
+        function: Option<u32>,
+        /// Emit Graphviz DOT instead of a text edge listing.
+        #[arg(long)]
+        dot: bool,
+        /// Max hops from --function.
+        #[arg(long, default_value = "3")]
+        depth: usize,
+        /// Override the detected HBC bytecode version.
+        #[arg(long)]
+        format_version: Option<u32>,
+        /// File header layout (auto-detected by default).
+        #[arg(long, value_enum, default_value = "auto")]
+        layout: LayoutArg,
+        /// Per-function header layout (auto-detected by default).
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
     },
@@ -234,6 +349,14 @@ pub enum Command {
 pub enum DumpKind {
     Strings,
     Functions,
+    CjsModules,
+    Regexp,
+    ObjShapes,
+    FunctionSources,
+    StringKinds,
+    Sections,
+    BigInt,
+    ArrayBuffer,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug)]

@@ -8,7 +8,7 @@ mod helpers;
 mod tui;
 
 use cli_args::{Cli, Command};
-use helpers::{load_file, load_format, write_output};
+use helpers::{load_file, load_format, parse_globs, parse_id_ranges, write_output};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -94,6 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             show_offsets,
             no_labels,
             no_strings,
+            info,
         } => {
             let file = load_file(&input, layout, function_layout)?;
             let format = load_format(&file, format_version)?;
@@ -103,7 +104,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 resolve_strings: !no_strings,
                 enable_color: output.is_none(),
             };
-            let content = if let Some(function_id) = function {
+            let content = if info {
+                // --info: prepend a one-line metadata banner before each function.
+                let ids: Vec<u32> = match function {
+                    Some(id) => vec![id],
+                    None => (0..file.header.function_count).collect(),
+                };
+                let mut out = String::new();
+                for id in ids {
+                    if let Some(banner) = hbc_decomp::function_info_banner(&file, id) {
+                        out.push_str(&format!("; {banner}\n"));
+                    }
+                    out.push_str(&hbc_decomp::disassemble_function(&file, &format, id, &options)?);
+                    out.push('\n');
+                }
+                out
+            } else if let Some(function_id) = function {
                 hbc_decomp::disassemble_function(&file, &format, function_id, &options)?
             } else {
                 hbc_decomp::disassemble_all(&file, &format, &options)?
@@ -128,8 +144,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             json,
             check_dead_code,
             assembly,
+            modules,
+            module_name,
+            exclude_module_name,
+            from_module,
+            module_depth,
+            no_cache,
         } => {
             let (file, file_bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
+            let cache_path = hbc_decomp::default_cache_path(&input);
             let format = load_format(&file, format_version)?;
             let options = DecompileOptionsV2 {
                 resolve_strings: !no_strings,
@@ -178,8 +201,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else if expand {
                 if let Some(function_id) = function {
                     commands::decompile_cmd::decompile_with_expansion(&file, &format, function_id, &options, expand_depth)?
-                } else {
+                } else if no_cache {
                     hbc_decomp::decompile_all_v2_with_closures(&file, &format, &options)?
+                } else {
+                    hbc_decomp::decompile_all_v2_with_closures_cached(&file, &format, &options, &file_bytes, &cache_path)?
                 }
             } else if let Some(function_id) = function {
                 if resolve_closures {
@@ -189,7 +214,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     hbc_decomp::decompile_function_v2(&file, &format, function_id, &options)?
                 }
             } else {
-                hbc_decomp::decompile_all_v2_with_closures(&file, &format, &options)?
+                let filter = hbc_decomp::ModuleFilter {
+                    id_ranges: parse_id_ranges(modules.as_deref()),
+                    name_globs: parse_globs(module_name.as_deref()),
+                    exclude_globs: parse_globs(exclude_module_name.as_deref()),
+                    from: from_module,
+                    depth: module_depth,
+                };
+                match (filter.is_empty(), no_cache) {
+                    (true, true) => hbc_decomp::decompile_all_v2_with_closures(&file, &format, &options)?,
+                    (true, false) => hbc_decomp::decompile_all_v2_with_closures_cached(&file, &format, &options, &file_bytes, &cache_path)?,
+                    (false, true) => hbc_decomp::decompile_filtered_v2(&file, &format, &options, Some(&filter))?,
+                    (false, false) => hbc_decomp::decompile_filtered_v2_cached(&file, &format, &options, Some(&filter), &file_bytes, &cache_path)?,
+                }
             };
 
             let content = if assembly {
@@ -219,9 +256,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             function_layout,
             depth,
         } => {
-            let file = load_file(&input, layout, function_layout)?;
+            let (file, bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
             let format = load_format(&file, format_version)?;
-            commands::extract_cmd::print_module_deps(&file, &format, module, depth)?;
+            let cache_path = hbc_decomp::default_cache_path(&input);
+            commands::extract_cmd::print_module_deps(&file, &format, &bytes, &cache_path, module, depth)?;
         }
         Command::Modules {
             input,
@@ -230,9 +268,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             function_layout,
             limit,
         } => {
-            let file = load_file(&input, layout, function_layout)?;
+            let (file, bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
             let format = load_format(&file, format_version)?;
-            commands::extract_cmd::print_modules(&file, &format, limit)?;
+            let cache_path = hbc_decomp::default_cache_path(&input);
+            commands::extract_cmd::print_modules(&file, &format, &bytes, &cache_path, limit)?;
         }
         Command::Debug {
             input,
@@ -253,9 +292,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             function_layout,
             no_strings,
         } => {
-            let file = load_file(&input, layout, function_layout)?;
+            let (file, bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
             let format = load_format(&file, format_version)?;
-            commands::extract_cmd::run_extract(&file, &format, &output, !no_strings)?;
+            let cache_path = hbc_decomp::default_cache_path(&input);
+            commands::extract_cmd::run_extract(&file, &format, &output, &bytes, &cache_path, !no_strings)?;
         }
         Command::Graphviz {
             input,
@@ -346,11 +386,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Dump {
             input,
             kind,
+            json,
             layout,
             function_layout,
         } => {
             let file = load_file(&input, layout, function_layout)?;
-            commands::dump_cmd::run_dump(&file, kind);
+            commands::dump_cmd::run_dump(&file, kind, json);
+        }
+        Command::Callgraph {
+            input,
+            function,
+            dot,
+            depth,
+            format_version,
+            layout,
+            function_layout,
+        } => {
+            let file = load_file(&input, layout, function_layout)?;
+            let format = load_format(&file, format_version)?;
+            commands::callgraph_cmd::run_callgraph(&file, &format, function, depth, dot)?;
         }
     }
 

@@ -72,3 +72,39 @@ pub fn write_output(
     }
     Ok(())
 }
+
+// Parse a `--modules` spec like "100-150,200,5-9" into inclusive id ranges.
+// A bare id `N` becomes `(N, N)`. Malformed entries are skipped.
+pub fn parse_id_ranges(spec: Option<&str>) -> Vec<(u32, u32)> {
+    let spec = match spec {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let mut ranges = Vec::new();
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((lo, hi)) = part.split_once('-') {
+            if let (Ok(lo), Ok(hi)) = (lo.trim().parse::<u32>(), hi.trim().parse::<u32>()) {
+                ranges.push((lo.min(hi), lo.max(hi)));
+            }
+        } else if let Ok(n) = part.parse::<u32>() {
+            ranges.push((n, n));
+        }
+    }
+    ranges
+}
+
+// Parse a comma-separated glob list (e.g. "react*,lodash*") into trimmed,
+// non-empty patterns.
+pub fn parse_globs(spec: Option<&str>) -> Vec<String> {
+    spec.map(|s| {
+        s.split(',')
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
+}

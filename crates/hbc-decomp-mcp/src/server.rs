@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use hbc_decomp::opcode::BytecodeFormat;
 use hbc_decomp::{
     BytecodeFile, ClosureInfo, DecompileOptionsV2, DebugInfo, IRBuilder, IRBuilderOptions,
-    MetroRegistry, PipelineContext, StructureAnalysis,
+    PipelineContext,
 };
 
 struct LoadedFile {
@@ -18,7 +18,6 @@ struct LoadedFile {
     format: BytecodeFormat,
     path: String,
     bytes: Vec<u8>,
-    registry: Option<MetroRegistry>,
     pipeline_ctx: Option<PipelineContext>,
 }
 
@@ -65,28 +64,19 @@ impl HermesService {
 }
 
 impl LoadedFile {
-    fn ensure_registry(&mut self) -> Result<(), McpError> {
-        if self.registry.is_none() {
-            let options = IRBuilderOptions {
-                resolve_strings: true,
-                include_offsets: false,
-                ..Default::default()
-            };
-            let mut builder = IRBuilder::new(&self.file, &self.format, options);
-            let cfg = builder
-                .build_function(0)
-                .map_err(|e| McpError::internal_error(format!("IR build error: {e}"), None))?;
-            let analysis = StructureAnalysis::analyze(&cfg);
-            let statements = analysis.root.to_statements(&cfg);
-            self.registry = Some(MetroRegistry::analyze(&statements));
-        }
-        Ok(())
-    }
-
     fn ensure_pipeline(&mut self) -> Result<(), McpError> {
         if self.pipeline_ctx.is_none() {
-            let ctx = PipelineContext::build(&self.file, &self.format)
-                .map_err(|e| McpError::internal_error(format!("Pipeline build error: {e}"), None))?;
+            // Reuse an on-disk analysis cache (`<file>.hdcache`) keyed by the
+            // bytecode, so repeated sessions on the same file don't re-analyze.
+            let cache_path = hbc_decomp::default_cache_path(std::path::Path::new(&self.path));
+            let ctx = PipelineContext::build_cached(
+                &self.file,
+                &self.format,
+                &DecompileOptionsV2::optimized(),
+                &self.bytes,
+                &cache_path,
+            )
+            .map_err(|e| McpError::internal_error(format!("Pipeline build error: {e}"), None))?;
             self.pipeline_ctx = Some(ctx);
         }
         Ok(())
@@ -188,6 +178,29 @@ pub struct DisasmParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DumpTableParams {
+    #[schemars(
+        description = "Table to dump: cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer"
+    )]
+    pub kind: String,
+    #[schemars(description = "Return the table as JSON instead of text (default: false)")]
+    #[serde(default)]
+    pub json: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CallgraphParams {
+    #[schemars(description = "Restrict to the subgraph reachable from this function ID")]
+    pub function_id: Option<u32>,
+    #[schemars(description = "Max hops from function_id (default: 3)")]
+    #[serde(default = "default_depth")]
+    pub depth: usize,
+    #[schemars(description = "Emit Graphviz DOT instead of a text edge listing (default: false)")]
+    #[serde(default)]
+    pub dot: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DecompileModuleParams {
     #[schemars(description = "Metro module ID")]
     pub module_id: u32,
@@ -231,7 +244,6 @@ impl HermesService {
             format,
             path: params.path,
             bytes,
-            registry: None,
             pipeline_ctx: None,
         });
         Ok(CallToolResult::success(vec![Content::text(info)]))
@@ -412,8 +424,10 @@ impl HermesService {
         Parameters(params): Parameters<ListModulesParams>,
     ) -> Result<CallToolResult, McpError> {
         self.with_file_mut(|loaded| {
-            loaded.ensure_registry()?;
-            let registry = loaded.registry.as_ref().unwrap();
+            // Use the full pipeline so module names and exports are populated
+            // (the lightweight registry only runs detection, no naming/exports).
+            loaded.ensure_pipeline()?;
+            let registry = &loaded.pipeline_ctx.as_ref().unwrap().registry;
             let mut modules: Vec<_> = registry.modules.values().collect();
             modules.sort_by_key(|m| m.module_id);
             let limit = params.limit.unwrap_or(modules.len()).min(modules.len());
@@ -441,8 +455,9 @@ impl HermesService {
         Parameters(params): Parameters<ModuleDepsParams>,
     ) -> Result<CallToolResult, McpError> {
         self.with_file_mut(|loaded| {
-            loaded.ensure_registry()?;
-            let registry = loaded.registry.as_ref().unwrap();
+            // Full pipeline so the tree carries real module names.
+            loaded.ensure_pipeline()?;
+            let registry = &loaded.pipeline_ctx.as_ref().unwrap().registry;
             let tree = registry.get_dependency_tree(params.module_id, params.depth);
             Ok(CallToolResult::success(vec![Content::text(tree.format(0))]))
         })
@@ -523,7 +538,7 @@ impl HermesService {
         })
     }
 
-    #[tool(description = "List supported Hermes bytecode versions.")]
+    #[tool(description = "List supported Hermes bytecode versions (HBC 40-99).")]
     fn list_versions(&self) -> Result<CallToolResult, McpError> {
         let versions = hbc_decomp::opcode::available_versions();
         let list = versions
@@ -532,7 +547,7 @@ impl HermesService {
             .collect::<Vec<_>>()
             .join(", ");
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Supported versions: {list}"
+            "Supported Hermes bytecode versions: HBC 40-99.\nAvailable opcode tables: {list}"
         ))]))
     }
 
@@ -814,6 +829,73 @@ impl HermesService {
             Ok(CallToolResult::success(vec![Content::text(output)]))
         })
     }
+
+    #[tool(
+        description = "Dump a structural table from the HBC file: cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer. Set json=true for machine-readable output."
+    )]
+    fn dump_table(
+        &self,
+        Parameters(params): Parameters<DumpTableParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let kind = hbc_decomp::TableKind::parse(&params.kind).ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "Unknown table kind '{}'. Valid: cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer",
+                        params.kind
+                    ),
+                    None,
+                )
+            })?;
+            let text = if params.json {
+                let value = hbc_decomp::dump_table_json(&loaded.file, kind);
+                serde_json::to_string_pretty(&value)
+                    .map_err(|e| McpError::internal_error(format!("{e}"), None))?
+            } else {
+                hbc_decomp::dump_table(&loaded.file, kind)
+            };
+            Ok(CallToolResult::success(vec![Content::text(text)]))
+        })
+    }
+
+    #[tool(
+        description = "Build the bundle call graph (caller -> callee edges). Optionally restrict to the subgraph reachable from a function up to a depth, or emit Graphviz DOT."
+    )]
+    fn callgraph(
+        &self,
+        Parameters(params): Parameters<CallgraphParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let output = hbc_decomp::render_call_graph(
+                &loaded.file,
+                &loaded.format,
+                params.function_id,
+                params.depth,
+                params.dot,
+            )
+            .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+            Ok(CallToolResult::success(vec![Content::text(output)]))
+        })
+    }
+
+    #[tool(
+        description = "Get a one-line metadata banner for a function: id, name, param count, frame size, register counts, bytecode size, offset, flags, exception-handler count."
+    )]
+    fn function_info(
+        &self,
+        Parameters(params): Parameters<FunctionIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.with_file(|loaded| {
+            let banner = hbc_decomp::function_info_banner(&loaded.file, params.function_id)
+                .ok_or_else(|| {
+                    McpError::invalid_params(
+                        format!("Function {} not found", params.function_id),
+                        None,
+                    )
+                })?;
+            Ok(CallToolResult::success(vec![Content::text(banner)]))
+        })
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -821,7 +903,7 @@ impl ServerHandler for HermesService {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Hermes bytecode decompiler for React Native apps. Load a .hbc file with load_file, then use decompile/disassemble/xref/module tools to analyze. Use decompile_function for quick single-function output, or decompile_function_full/decompile_module for full-quality analysis with IPA naming and ESM imports/exports.".into()
+                "Hermes bytecode decompiler for React Native apps (HBC 40-99). Load a .hbc file with load_file, then use decompile/disassemble/xref/module tools to analyze. Use decompile_function for quick single-function output, or decompile_function_full/decompile_module for full-quality analysis with IPA naming and ESM imports/exports. Structural inspection: dump_table (cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer), callgraph (caller->callee edges, optional DOT), and function_info (per-function metadata banner).".into()
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()
