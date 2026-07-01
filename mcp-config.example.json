@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "hermes-decompiler": {
+      "command": "/absolute/path/to/hermes-decomp/target/release/hermes-mcp"
+    }
+  }
+}

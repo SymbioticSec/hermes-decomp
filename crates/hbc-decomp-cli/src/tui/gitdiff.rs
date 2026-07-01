@@ -15,10 +15,10 @@ use super::app::ViewMode;
 use super::diff::DiffStatus;
 use super::{decompile_or_log, disasm_or_log};
 
-/// Canonicalize build-volatile identifiers so that lines differing only by a
-/// Metro module id (e.g. `module_955` vs `module_769`) compare equal and don't
-/// show up as real changes. Used only for the *comparison* — the original text
-/// is still displayed.
+// Canonicalize build-volatile identifiers so that lines differing only by a
+// Metro module id (e.g. `module_955` vs `module_769`) compare equal and don't
+// show up as real changes. Used only for the *comparison* — the original text
+// is still displayed.
 fn normalize(line: &str) -> String {
     static MODULE: OnceLock<Regex> = OnceLock::new();
     static REQUIRE: OnceLock<Regex> = OnceLock::new();
@@ -31,42 +31,42 @@ fn normalize(line: &str) -> String {
     depmap.replace_all(&s, "dependencyMap[#]").into_owned()
 }
 
-/// One aligned side-by-side display row.
+// One aligned side-by-side display row.
 #[derive(Clone)]
 pub enum GitRow {
-    /// Function boundary, shown across both columns.
+    // Function boundary, shown across both columns.
     Header(String),
-    /// Unchanged line, present identically on both sides.
+    // Unchanged line, present identically on both sides.
     Same {
         old: usize,
         new: usize,
         text: String,
     },
-    /// Lines that differ only by volatile ids (e.g. Metro `module_955` vs
-    /// `module_769`) — treated as unchanged, shown without highlight.
+    // Lines that differ only by volatile ids (e.g. Metro `module_955` vs
+    // `module_769`) — treated as unchanged, shown without highlight.
     Cosmetic {
         old: usize,
         new: usize,
         left: String,
         right: String,
     },
-    /// Replaced line: different text on each side.
+    // Replaced line: different text on each side.
     Changed {
         old: usize,
         new: usize,
         left: String,
         right: String,
     },
-    /// Line only in file 1 (removed).
+    // Line only in file 1 (removed).
     Removed { old: usize, text: String },
-    /// Line only in file 2 (added).
+    // Line only in file 2 (added).
     Added { new: usize, text: String },
-    /// Blank separator between functions.
+    // Blank separator between functions.
     Blank,
 }
 
-/// Everything the worker needs to render both files. All fields are owned/`Arc`
-/// so the job can move to a background thread.
+// Everything the worker needs to render both files. All fields are owned/`Arc`
+// so the job can move to a background thread.
 pub struct GitDiffJob {
     pub names: Vec<String>,
     pub map1: HashMap<String, u32>,
@@ -77,11 +77,11 @@ pub struct GitDiffJob {
     pub format1: Arc<BytecodeFormat>,
     pub format2: Arc<BytecodeFormat>,
     pub kind: ViewMode,
-    /// Ignore volatile Metro ids when deciding what changed.
+    // Ignore volatile Metro ids when deciding what changed.
     pub normalize: bool,
 }
 
-/// Resolve a function name to its file-2 id, following renames.
+// Resolve a function name to its file-2 id, following renames.
 fn id2_for(name: &str, map2: &HashMap<String, u32>, status: &HashMap<String, DiffStatus>) -> Option<u32> {
     if let Some(id) = map2.get(name) {
         return Some(*id);
@@ -102,9 +102,9 @@ fn render(file: &BytecodeFile, format: &BytecodeFormat, id: u32, kind: ViewMode)
     }
 }
 
-/// Align two function bodies into side-by-side rows. When `normalize_ids` is
-/// set, the comparison ignores volatile Metro ids (lines differing only by an
-/// id become `Cosmetic`, not real changes), but the original text is displayed.
+// Align two function bodies into side-by-side rows. When `normalize_ids` is
+// set, the comparison ignores volatile Metro ids (lines differing only by an
+// id become `Cosmetic`, not real changes), but the original text is displayed.
 pub fn align(left: &str, right: &str, normalize_ids: bool) -> Vec<GitRow> {
     let old_lines: Vec<&str> = left.lines().collect();
     let new_lines: Vec<&str> = right.lines().collect();
@@ -192,7 +192,7 @@ pub fn align(left: &str, right: &str, normalize_ids: bool) -> Vec<GitRow> {
     rows
 }
 
-/// Aligned rows for a single function (header + diff + trailing blank).
+// Aligned rows for a single function (header + diff + trailing blank).
 fn rows_for_function(job: &GitDiffJob, name: &str) -> Vec<GitRow> {
     // An empty side means the function is absent there (added/removed), which is
     // a legitimate diff state — not an error. render() logs real decode errors.
@@ -211,7 +211,7 @@ fn rows_for_function(job: &GitDiffJob, name: &str) -> Vec<GitRow> {
     rows
 }
 
-/// Whether a row's displayed text contains `query` (which must be lowercase).
+// Whether a row's displayed text contains `query` (which must be lowercase).
 pub fn row_contains(row: &GitRow, query: &str) -> bool {
     let has = |s: &str| s.to_lowercase().contains(query);
     match row {
@@ -225,8 +225,8 @@ pub fn row_contains(row: &GitRow, query: &str) -> bool {
     }
 }
 
-/// Streamed messages from the background git-diff builder. Rows arrive in
-/// chunks so the UI can show and scroll partial results while the rest builds.
+// Streamed messages from the background git-diff builder. Rows arrive in
+// chunks so the UI can show and scroll partial results while the rest builds.
 pub enum GitMsg {
     Chunk {
         rows: Vec<GitRow>,
@@ -236,8 +236,8 @@ pub enum GitMsg {
     Done,
 }
 
-/// Build the side-by-side rows on a background thread, streaming them in chunks
-/// (decompiling 32k functions of both files takes time).
+// Build the side-by-side rows on a background thread, streaming them in chunks
+// (decompiling 32k functions of both files takes time).
 pub fn spawn(job: GitDiffJob) -> Receiver<GitMsg> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {

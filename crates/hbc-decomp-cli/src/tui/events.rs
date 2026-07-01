@@ -169,8 +169,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     false
 }
 
-/// Mouse: wheel scrolls the active view, left click selects a function in the
-/// list (normal mode).
+// Mouse: wheel scrolls the active view, left click selects a function in the
+// list (normal mode).
 fn handle_mouse(app: &mut App, me: MouseEvent) {
     match me.kind {
         MouseEventKind::ScrollDown => app.scroll = app.scroll.saturating_add(3),
@@ -186,8 +186,8 @@ fn handle_mouse(app: &mut App, me: MouseEvent) {
     }
 }
 
-/// Keys for the full-program git diff mode (no function list; both columns are
-/// scrolled together).
+// Keys for the full-program git diff mode (no function list; both columns are
+// scrolled together).
 fn handle_git_key(app: &mut App, key: KeyEvent) -> bool {
     // Search input mode.
     if app.git_searching {
