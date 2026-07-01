@@ -10,12 +10,14 @@ categories = ["development-tools", "parser-implementations"]
 build = "build.rs"
 
 [dependencies]
+bincode = "1.3"
 colored = "3.1.1"
 env_logger = "0.11.9"
 log = "0.4.29"
 rayon = "1"
 regex = "1"
 serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
 serde_json = "1.0"
 
 [dev-dependencies]

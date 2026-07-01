@@ -28,6 +28,22 @@ impl PipelineContext {
         self.inline_bodies = current;
     }
 
+    // The recovered worklet source for `func_id`, looked up by the function's
+    // bytecode name (the join key — both the name and the source come from the
+    // binary). Returns the source already shaped as a function expression.
+    pub(super) fn worklet_source_for(&self, file: &BytecodeFile, func_id: u32) -> Option<String> {
+        if self.worklet_sources.is_empty() {
+            return None;
+        }
+        let name = file
+            .function_headers
+            .get(func_id as usize)
+            .and_then(|h| file.string_at(h.function_name()))
+            .map(|e| e.value.clone())?;
+        let src = self.worklet_sources.get(&name)?;
+        Some(format!("/* worklet (recovered source) */ {src}"))
+    }
+
     // Precompute IPA-renamed, cleaned, and declaration-inserted statements for all non-factory functions.
     fn prepare_render_bodies(&self, file: &BytecodeFile) -> BTreeMap<u32, (Vec<String>, Vec<Statement>)> {
         let mut prepared = BTreeMap::new();
@@ -46,8 +62,7 @@ impl PipelineContext {
             let mut body_stmts = stmts.clone();
             if let Some(param_names) = self.global_analysis.param_names.get(&func_id) {
                 transforms::exports::rename_param_registers(&mut body_stmts, param_names);
-            }
-            body_stmts = transforms::cleanup_noise(body_stmts);
+            }            body_stmts = transforms::cleanup_noise(body_stmts);
             transforms::rename_reserved_words(&mut body_stmts);
             transforms::insert_declarations(&mut body_stmts, &params);
 
@@ -66,6 +81,13 @@ impl PipelineContext {
         let mut result = BTreeMap::new();
 
         for (&func_id, (params, body_stmts)) in prepared {
+            // If this is a Reanimated worklet, emit its original source recovered
+            // from the embedded `__initData.code` string instead of decompiling
+            // (the compiled form often mis-renders, e.g. as a `class`).
+            if let Some(src) = self.worklet_source_for(file, func_id) {
+                result.insert(func_id, src);
+                continue;
+            }
             // Render the body with existing inline bodies for nested functions
             let mut inner_codegen = Codegen::new(CodegenOptions::default())
                 .with_inline_bodies(Arc::clone(existing_inline));

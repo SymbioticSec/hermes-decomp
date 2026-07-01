@@ -29,6 +29,9 @@ pub struct PipelineContext {
     // Pre-rendered inline function bodies (function_id → complete function expression string).
     // Built once after all IR is generated, supports multi-level nesting.
     pub(super) inline_bodies: Arc<BTreeMap<u32, String>>,
+    // Recovered Reanimated worklet sources (function name → original source),
+    // extracted from `__initData.code` string constants in the bundle.
+    pub(super) worklet_sources: BTreeMap<String, String>,
 }
 
 impl PipelineContext {
@@ -69,6 +72,10 @@ impl PipelineContext {
             &mut all_ir, &mut closure_ctx, &mut global_analysis, file,
         );
 
+        // Recover original worklet sources from embedded `__initData.code` strings.
+        let worklet_sources = transforms::collect_worklet_sources(&all_ir);
+        log::debug!("[pipeline] recovered {} worklet sources", worklet_sources.len());
+
         // STAGE W17: Inline body rendering
         let mut ctx = PipelineContext {
             all_ir,
@@ -76,6 +83,7 @@ impl PipelineContext {
             closure_ctx,
             global_analysis,
             inline_bodies: Arc::new(BTreeMap::new()),
+            worklet_sources,
         };
 
         let t = std::time::Instant::now();
@@ -99,8 +107,17 @@ impl PipelineContext {
 
         let mut registry = crate::analysis::MetroRegistry::new();
         let global_idx = file.header.global_code_index;
+        // function_id -> declared parameter count (this-excluded), so Metro
+        // factory roles are derived from the real arity (4-param classic vs
+        // 7-param modern with importDefault/importAll).
+        let param_counts: std::collections::HashMap<u32, u32> = file
+            .function_headers
+            .iter()
+            .enumerate()
+            .map(|(id, h)| (id as u32, h.param_count().saturating_sub(1)))
+            .collect();
         if let Ok(stmts) = generate_ir(file, format, global_idx, &raw_options, None, false) {
-            registry.analyze_statements(&stmts);
+            registry.analyze_statements_with_params(&stmts, &param_counts);
         }
         log::debug!("[pipeline] metro detection: {:.2?} ({} modules)", t.elapsed(), registry.modules.len());
         registry
@@ -267,6 +284,84 @@ impl PipelineContext {
 
         // STAGE W16: Post-IPA transforms (reserved words, object/array folding, arguments simplification)
         Self::apply_post_ipa_transforms(all_ir);
+
+        // STAGE W16b: Collapse generator wrappers. A `function* gen()` compiles to
+        // a thin wrapper that does `CreateGenerator(body); return it`, with the
+        // actual state machine (the yields) in a separate inner function. Inline
+        // the inner body into the wrapper so we emit `function* gen() { yield ... }`
+        // instead of `function* gen() { return function*() { yield ... } }`.
+        if let Some(ctx) = closure_ctx.as_mut() {
+            Self::collapse_generator_wrappers(all_ir, ctx);
+        }
+    }
+
+    // See STAGE W16b. Replace each generator wrapper's body with the inner
+    // generator body it merely creates and returns.
+    fn collapse_generator_wrappers(
+        all_ir: &mut BTreeMap<u32, Vec<Statement>>,
+        closure_ctx: &mut ClosureContext,
+    ) {
+        // A wrapper is any function whose body merely returns a generator closure
+        // (`return function*(){...}`, after env-slot init). The wrapper itself is
+        // NOT flagged is_generator (HBC marks the inner driver); detecting it by
+        // shape — not by the flag — is what lets us collapse it.
+        let mut replacements: Vec<(u32, u32)> = Vec::new();
+        for (&fid, body) in all_ir.iter() {
+            if let Some(inner) = generator_wrapper_target(body) {
+                if inner != fid
+                    && all_ir.contains_key(&inner)
+                    && closure_ctx.is_generator(inner)
+                {
+                    replacements.push((fid, inner));
+                }
+            }
+        }
+        for (fid, inner) in replacements {
+            if let Some(inner_body) = all_ir.get(&inner).cloned() {
+                all_ir.insert(fid, inner_body);
+                // The wrapper now IS the generator: flag it so codegen emits
+                // `function*` and the state-machine reconstruction below runs on it.
+                closure_ctx.mark_generator(fid);
+                // The inner body now lives in the wrapper; drop the standalone copy
+                // so it is not also emitted as an orphan function.
+                all_ir.remove(&inner);
+            }
+        }
+        // STAGE W16c: Reconstruct HBC >=97 generator state machines into flat
+        // `yield` bodies. v97 removed the generator opcodes; `function*` is now a
+        // desugared switch over status/label env slots. The recognizer is
+        // conservative — it returns the body unchanged on any shape mismatch.
+        let gen_ids: Vec<u32> = all_ir
+            .keys()
+            .copied()
+            .filter(|fid| closure_ctx.is_generator(*fid))
+            .collect();
+        for fid in gen_ids {
+            if let Some(body) = all_ir.remove(&fid) {
+                all_ir.insert(fid, transforms::reconstruct_generator_v98(body));
+            }
+        }
+
+        // STAGE W16d: Reconstruct HBC >=97 array destructuring from the flat
+        // iterator protocol (after the cleanup-handler skip un-nests it). The
+        // matcher is conservative — it only rewrites a recognized `iter =
+        // src[Symbol.iterator](); ...advances/binds...; iter.return()` block.
+        let fids: Vec<u32> = all_ir.keys().copied().collect();
+        for fid in &fids {
+            if let Some(body) = all_ir.remove(fid) {
+                all_ir.insert(*fid, transforms::reconstruct_v98_array_destructuring(body));
+            }
+        }
+
+        // STAGE W16e: JSX reconstruction on the fully-assembled, named IR. The
+        // in-pipeline pass (F10) runs before object-literal reconstruction, so it
+        // misses calls whose props object is materialized later; rerun here where
+        // `jsx(Tag, {props, children})` is complete.
+        for fid in &fids {
+            if let Some(body) = all_ir.remove(fid) {
+                all_ir.insert(*fid, transforms::reconstruct_jsx(body));
+            }
+        }
     }
 
     // Apply closure resolution to all functions using the given closure context.
@@ -345,6 +440,10 @@ impl PipelineContext {
 
     // Generate decompiled code for a single function using cached analysis.
     pub fn generate_function_code(&self, file: &BytecodeFile, function_id: u32) -> String {
+        // Reanimated worklet: emit its recovered original source.
+        if let Some(src) = self.worklet_source_for(file, function_id) {
+            return format!("{src}\n");
+        }
         let Some(statements) = self.all_ir.get(&function_id) else {
             return format!("// Error: no IR for function {function_id}\n");
         };
@@ -441,5 +540,47 @@ impl PipelineContext {
             output.push_str("}\n");
             output
         }
+    }
+}
+
+// If `body` is a thin generator wrapper that just creates and returns an inner
+// generator closure, return that inner function id. Matches both the inlined
+// form `return function*<X>()` and the two-statement `r = function*<X>(); return r`.
+fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
+    use crate::ir::{AssignTarget, Expression, Value};
+
+    // Skip comments and the generator's env-slot initializers (`let closure_N =
+    // 0;` / `closure_N = 0;`) that a v98 wrapper emits before returning the inner
+    // generator — they are dead once the inner body is inlined.
+    let is_env_init = |s: &Statement| -> bool {
+        match s {
+            Statement::Let { name, .. } => name.starts_with("closure_"),
+            Statement::Assign { target: AssignTarget::ClosureVar { .. }, .. } => true,
+            Statement::Assign { target: AssignTarget::Variable(n), .. } => n.starts_with("closure_"),
+            _ => false,
+        }
+    };
+    let meaningful: Vec<&Statement> = body
+        .iter()
+        .filter(|s| !matches!(s, Statement::Comment(_)) && !is_env_init(s))
+        .collect();
+
+    let inner_gen_id = |e: &Expression| -> Option<u32> {
+        match e {
+            Expression::Function { id, is_generator: true, .. } => Some(id.0),
+            _ => None,
+        }
+    };
+
+    match meaningful.as_slice() {
+        // return function*() { ... }
+        [Statement::Return(Some(e))] => inner_gen_id(e),
+        // r = function*() { ... }; return r
+        [Statement::Assign { target: AssignTarget::Register(r), value }, Statement::Return(Some(Expression::Value(Value::Register(rr))))]
+            if r == rr =>
+        {
+            inner_gen_id(value)
+        }
+        _ => None,
     }
 }
