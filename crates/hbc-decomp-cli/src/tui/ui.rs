@@ -89,6 +89,8 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
             Span::styled(" nav ", Style::default().fg(Color::DarkGray)),
             Span::styled("/", Style::default().fg(Color::White)),
             Span::styled(" search ", Style::default().fg(Color::DarkGray)),
+            Span::styled("s", Style::default().fg(Color::White)),
+            Span::styled(" find ", Style::default().fg(Color::DarkGray)),
             Span::styled("Tab", Style::default().fg(Color::White)),
             Span::styled(" view ", Style::default().fg(Color::DarkGray)),
             Span::styled("PgUp/Dn", Style::default().fg(Color::White)),
@@ -117,6 +119,8 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
             Span::styled(" navigate ", Style::default().fg(Color::DarkGray)),
             Span::styled("/", Style::default().fg(Color::White)),
             Span::styled(" search ", Style::default().fg(Color::DarkGray)),
+            Span::styled("s", Style::default().fg(Color::White)),
+            Span::styled(" find ", Style::default().fg(Color::DarkGray)),
             Span::styled("Tab", Style::default().fg(Color::White)),
             Span::styled(" view ", Style::default().fg(Color::DarkGray)),
             Span::styled("PgUp/Dn", Style::default().fg(Color::White)),
@@ -127,6 +131,37 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
     };
     let footer = Paragraph::new(footer_line);
     frame.render_widget(footer, layout[2]);
+
+    if app.is_content_searching {
+        let popup = centered_rect(54, 3, frame.area());
+        frame.render_widget(Clear, popup);
+        let count = if app.content_search.is_empty() {
+            String::new()
+        } else if app.content_search_matches.is_empty() {
+            "   no match".to_string()
+        } else {
+            format!(
+                "   [{}/{}]",
+                app.content_search_index + 1,
+                app.content_search_matches.len()
+            )
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("s ", Style::default().fg(Color::Cyan)),
+                Span::raw(app.content_search.clone()),
+                Span::styled("_", Style::default().fg(Color::Cyan)),
+                Span::styled(count, Style::default().fg(Color::Yellow)),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Double)
+                    .title(" Search in content — \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
+            ),
+            popup,
+        );
+    }
 }
 
 fn draw_function_list(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -213,7 +248,23 @@ fn draw_content_pane(
         app.scroll = max_scroll;
     }
 
-    let paragraph = Paragraph::new(content)
+    let q = if !app.content_search.is_empty() {
+        Some(app.content_search.to_lowercase())
+    } else {
+        None
+    };
+
+    let highlighted: Vec<Line<'static>> = if q.is_some() {
+        content
+            .lines
+            .into_iter()
+            .map(|line| highlight_line_with_search(line, q.as_deref()))
+            .collect()
+    } else {
+        content.lines
+    };
+
+    let paragraph = Paragraph::new(highlighted)
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -253,6 +304,43 @@ fn highlight_spans(text: &str, base: Style, query: Option<&str>) -> Vec<Span<'st
         }
         _ => vec![Span::styled(text.to_string(), base)],
     }
+}
+
+fn highlight_line_with_search(line: Line<'static>, query: Option<&str>) -> Line<'static> {
+    let q = match query {
+        Some(q) if !q.is_empty() => q,
+        _ => return line,
+    };
+
+    let hl = Style::default().fg(Color::Black).bg(Color::Yellow);
+    let mut result_spans = Vec::new();
+
+    for span in line.spans {
+        let text = &span.content;
+        let base_style = span.style;
+        let lower = text.to_lowercase();
+
+        if !lower.contains(q) {
+            result_spans.push(span);
+            continue;
+        }
+
+        let mut i = 0;
+        while let Some(pos) = lower[i..].find(q) {
+            let s = i + pos;
+            let e = s + q.len();
+            if s > i {
+                result_spans.push(Span::styled(text[i..s].to_string(), base_style));
+            }
+            result_spans.push(Span::styled(text[s..e].to_string(), hl));
+            i = e;
+        }
+        if i < text.len() {
+            result_spans.push(Span::styled(text[i..].to_string(), base_style));
+        }
+    }
+
+    Line::from(result_spans)
 }
 
 /// One side of a diff row: git-style sign (`+`/`-`/space), a line-number

@@ -9,6 +9,7 @@ use hbc_decomp::{BytecodeFile, BytecodeFormat, PipelineContext};
 
 use super::debug_log;
 use super::gitdiff::{self, GitDiffJob, GitMsg, GitRow};
+use super::disasm_or_log;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewMode {
@@ -130,6 +131,12 @@ pub struct App {
     pub list_state: ListState,
     // Inner area of the function list (set during draw), for click-to-select.
     pub list_inner: Rect,
+
+    // Content search state (search within selected function's content)
+    pub content_search: String,
+    pub is_content_searching: bool,
+    pub content_search_matches: Vec<(usize, usize)>, // (line_idx, char_idx) pairs
+    pub content_search_index: usize, // Current match index (0-based)
 
     // Full pipeline context (IPA, Metro, naming) — built in background
     pub pipeline_ctx: Option<Arc<PipelineContext>>,
@@ -260,6 +267,10 @@ impl App {
             tick: 0,
             list_state: ListState::default().with_selected(Some(0)),
             list_inner: Rect::default(),
+            content_search: String::new(),
+            is_content_searching: false,
+            content_search_matches: Vec::new(),
+            content_search_index: 0,
             pipeline_ctx: None,
             pipeline_rx: None,
             pipeline_building: false,
@@ -629,6 +640,86 @@ impl App {
             self.list_state.select(Some(0));
         }
         self.scroll = 0;
+    }
+
+    pub fn update_content_search(&mut self) {
+        self.content_search_matches.clear();
+        self.content_search_index = 0;
+
+        if self.content_search.is_empty() {
+            return;
+        }
+
+        let content_text = self.get_content_text();
+        let query = self.content_search.to_lowercase();
+
+        for (line_idx, line) in content_text.lines().enumerate() {
+            let line_lower = line.to_lowercase();
+            let mut char_idx = 0;
+            while let Some(pos) = line_lower[char_idx..].find(&query) {
+                self.content_search_matches
+                    .push((line_idx, char_idx + pos));
+                char_idx += pos + 1;
+            }
+        }
+
+        if !self.content_search_matches.is_empty() {
+            self.content_search_jump_to(0);
+        }
+    }
+
+    pub fn content_search_next(&mut self) {
+        if self.content_search_matches.is_empty() {
+            return;
+        }
+        let next = (self.content_search_index + 1) % self.content_search_matches.len();
+        self.content_search_jump_to(next);
+    }
+
+    pub fn content_search_prev(&mut self) {
+        if self.content_search_matches.is_empty() {
+            return;
+        }
+        let prev = if self.content_search_index == 0 {
+            self.content_search_matches.len() - 1
+        } else {
+            self.content_search_index - 1
+        };
+        self.content_search_jump_to(prev);
+    }
+
+    fn content_search_jump_to(&mut self, match_idx: usize) {
+        self.content_search_index = match_idx;
+        if let Some(&(line_idx, _)) = self.content_search_matches.get(match_idx) {
+            self.scroll = line_idx as u32;
+        }
+    }
+
+    fn get_content_text(&mut self) -> String {
+        match self.view {
+            ViewMode::Disasm => {
+                if let Some(id) = self.selected_function_id() {
+                    disasm_or_log(&self.file, &self.format, id)
+                } else {
+                    String::new()
+                }
+            }
+            ViewMode::Decompile => self.decompile_content(),
+            ViewMode::Info => self.format_info_wrapper(),
+            ViewMode::Diff => {
+                let (left, _) = self.content();
+                left.lines
+                    .iter()
+                    .map(|line| {
+                        line.spans
+                            .iter()
+                            .map(|span| span.content.as_ref())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
     }
 
     // Deep search: also scans string literals in bytecode (called on Enter).
