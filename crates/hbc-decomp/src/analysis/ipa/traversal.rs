@@ -1,6 +1,6 @@
 use super::graph::CallGraph;
 use super::inference::collect_param_names_from_expr;
-use super::resolution::{extract_name_from_callee, extract_object_name_from_method_call, resolve_callee, get_base_name, FunctionNameIndex};
+use super::resolution::{extract_name_from_callee, extract_method_object_name, extract_object_name_from_method_call, resolve_callee, get_base_name, FunctionNameIndex};
 use crate::analysis::metro::registry::MetroRegistry;
 use crate::ir::{target_to_key, Expression, PropertyKey, Statement, Value};
 use std::collections::HashMap;
@@ -191,8 +191,15 @@ impl<'a> crate::ir::Visitor<'a> for IpaVisitor<'a> {
                 if let Some(id) = callee_id {
                     self.graph.add_call(self.caller_id, id);
 
-                    let is_method_call = matches!(callee.as_ref(), Expression::Member { .. });
-                    let args_to_process: &[Expression] = if is_method_call && !arguments.is_empty() {
+                    // IPA runs before `strip_hermes_this` (stage W12), so every
+                    // Call still carries the Hermes `this` slot at arguments[0]
+                    // (the receiver object for method calls, `undefined` for
+                    // plain calls). Drop it so argument positions are user-0-
+                    // indexed, matching how the callee body names its parameters
+                    // (LoadParam idx -> Parameter(idx-1) -> argN). Without this,
+                    // plain calls were this-indexed while body/self hints were
+                    // user-indexed, producing a spurious trailing param slot.
+                    let args_to_process: &[Expression] = if !arguments.is_empty() {
                         &arguments[1..]
                     } else {
                         arguments
@@ -235,6 +242,9 @@ impl<'a> crate::ir::Visitor<'a> for IpaVisitor<'a> {
                                 if let Some(name) = extract_name_from_callee(inner_callee) {
                                     arg_names.push(Some(name));
                                 } else if let Some(name) = extract_object_name_from_method_call(inner_callee) {
+                                    arg_names.push(Some(name));
+                                } else if let Some(name) = extract_method_object_name(inner_callee) {
+                                    // `foo(tokens.join(""))` → param named after `tokens`
                                     arg_names.push(Some(name));
                                 } else {
                                     arg_names.push(None);
@@ -313,6 +323,9 @@ impl<'a> crate::ir::Visitor<'a> for IpaVisitor<'a> {
                                 if let Some(name) = extract_name_from_callee(inner_callee) {
                                     arg_names.push(Some(name));
                                 } else if let Some(name) = extract_object_name_from_method_call(inner_callee) {
+                                    arg_names.push(Some(name));
+                                } else if let Some(name) = extract_method_object_name(inner_callee) {
+                                    // `foo(tokens.join(""))` → param named after `tokens`
                                     arg_names.push(Some(name));
                                 } else {
                                     arg_names.push(None);

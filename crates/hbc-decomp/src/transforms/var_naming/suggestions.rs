@@ -90,6 +90,12 @@ pub fn name_for_call(func_name: &str) -> String {
         "style" => "style".to_string(),
         "getattribute" | "setattribute" => "attr".to_string(),
         _ => {
+            // A factory/accessor/hook call names its result after what it makes:
+            // `createUpdate()` → "update", `useSharedValue()` → "sharedValue",
+            // `getUser()` → "user". Much more readable than `createUpdateResult`.
+            if let Some(stripped) = strip_factory_prefix(func_name) {
+                return stripped;
+            }
             // Use function name as base if it's reasonable
             if func_name.len() <= 20 && func_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 format!("{func_name}Result")
@@ -98,6 +104,35 @@ pub fn name_for_call(func_name: &str) -> String {
             }
         }
     }
+}
+
+// Strip a leading factory/accessor/hook verb (`create`, `make`, `get`, `use`,
+// ...) and return the remainder with a lowercased first letter, when the result
+// is a clean identifier. `createUpdate` → "update", `useState` → "state".
+fn strip_factory_prefix(func_name: &str) -> Option<String> {
+    const PREFIXES: &[&str] = &[
+        "create", "make", "build", "get", "use", "fetch", "load", "request",
+        "compute", "generate", "init", "resolve", "read", "select",
+    ];
+    for p in PREFIXES {
+        if let Some(rest) = func_name.strip_prefix(p) {
+            // The boundary must be a real word boundary: the remainder starts
+            // uppercase (camelCase) and is a usable name on its own.
+            let mut chars = rest.chars();
+            match chars.next() {
+                Some(first) if first.is_ascii_uppercase() && rest.len() >= 2 => {
+                    if rest.chars().all(|c| c.is_alphanumeric()) {
+                        let name = format!("{}{}", first.to_ascii_lowercase(), chars.as_str());
+                        if !crate::constants::is_reserved_word(&name) {
+                            return Some(name);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 pub fn name_for_property(prop: &str) -> String {
@@ -204,4 +239,31 @@ pub fn sanitize_name(name: &str) -> String {
     }
 
     cleaned
+}
+
+#[cfg(test)]
+mod factory_prefix_tests {
+    use super::*;
+
+    #[test]
+    fn strips_factory_and_hook_prefixes() {
+        assert_eq!(strip_factory_prefix("createUpdate"), Some("update".to_string()));
+        assert_eq!(strip_factory_prefix("useState"), Some("state".to_string()));
+        assert_eq!(strip_factory_prefix("useSharedValue"), Some("sharedValue".to_string()));
+        assert_eq!(strip_factory_prefix("getUserName"), Some("userName".to_string()));
+        // name_for_call wires it in for unknown calls
+        assert_eq!(name_for_call("useRef"), "ref");
+        assert_eq!(name_for_call("makeStore"), "store");
+    }
+
+    #[test]
+    fn leaves_non_prefixed_and_unsafe_alone() {
+        // no camelCase boundary after the prefix → not a real prefix
+        assert_eq!(strip_factory_prefix("getter"), None);
+        assert_eq!(strip_factory_prefix("used"), None);
+        // would strip to a reserved word
+        assert_eq!(strip_factory_prefix("getNew"), None);
+        // not a known prefix → generic *Result fallback
+        assert_eq!(name_for_call("frobnicate"), "frobnicateResult");
+    }
 }

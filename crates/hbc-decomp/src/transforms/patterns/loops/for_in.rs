@@ -1,76 +1,170 @@
-use crate::ir::{Statement, Expression, Value, Constant, BinaryOp, PropertyKey, AssignTarget};
-use crate::transforms::patterns::utils::is_zero;
+use crate::analysis::rename_registers;
+use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, UnaryOp, Value};
+use std::collections::BTreeMap;
 
-// Detect for-in loop patterns.
+// Detect for-in loop patterns and rebuild them as `for (key in object)`.
+//
+// Hermes lowers `for (k in o)` to the property-enumeration opcodes
+// (GetPNameList / GetNextPName). After IR build + structure recovery the shape is:
+//
+//   keys = Object.keys(o)                 // GetPNameList (our lowering)
+//   if (keys === undefined) {             // JmpUndefined: no enumerable props
+//   } else {
+//     cur = keys[idx]                     // first GetNextPName (peeled to header)
+//     while (!(cur === undefined)) {      // JmpUndefined: enumeration exhausted
+//       <body using cur>                  // the back-edge re-runs GetNextPName
+//     }
+//   }
+//
+// The internal index/advance of GetNextPName has no source-level form, so we
+// match this whole shape and emit `for (cur in o) { <body> }`, dropping the
+// enumeration plumbing (the per-iteration fetch is implied by for-in semantics).
 pub fn detect_for_in_loops(stmts: Vec<Statement>) -> Vec<Statement> {
-    let mut result = Vec::new();
-    let mut iter = stmts.into_iter().peekable();
-
-    while let Some(stmt) = iter.next() {
-        // Look for: keys = Object.keys(obj)
-        if let Statement::Assign { target: AssignTarget::Register(keys_reg), value } = &stmt {
-            if let Some(obj_expr) = is_object_keys_call(value) {
-                // Look for i = 0 followed by while loop
-                if let Some(Statement::Assign { target: AssignTarget::Register(idx_reg), value: idx_value }) = iter.peek() {
-                    if is_zero(idx_value) {
-                        let idx_reg = *idx_reg;
-                        iter.next(); // consume i = 0
-
-                        if let Some(Statement::While { condition, body }) = iter.peek() {
-                            if is_length_check(condition, idx_reg, *keys_reg) {
-                                if let Some((var_name, loop_body)) = extract_for_in_body(body, *keys_reg, idx_reg) {
-                                    iter.next(); // consume while
-                                    result.push(Statement::ForIn {
-                                        variable: var_name,
-                                        object: obj_expr.clone(),
-                                        body: detect_for_in_loops(loop_body),
-                                    });
-                                    continue;
-                                }
-                            }
-                        }
-
-                        // Didn't match for-in, push the i = 0 we consumed
-                        result.push(stmt);
-                        // Note: We already consumed iter.next() for i=0, need to handle this
-                        // For simplicity, we'll just fall through and let the while be processed normally
-                        continue;
-                    }
-                }
+    let stmts = recurse(stmts);
+    let mut result: Vec<Statement> = Vec::new();
+    let mut i = 0;
+    while i < stmts.len() {
+        if i + 1 < stmts.len() {
+            if let Some(for_in) = try_match_for_in(&stmts[i], &stmts[i + 1]) {
+                result.push(for_in);
+                i += 2;
+                continue;
             }
         }
+        result.push(stmts[i].clone());
+        i += 1;
+    }
+    result
+}
 
-        // Recursively transform nested statements
-        let transformed = match stmt {
+// Recurse into nested blocks first so inner for-in loops are rebuilt too.
+fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
+    stmts
+        .into_iter()
+        .map(|stmt| match stmt {
             Statement::While { condition, body } => Statement::While {
                 condition,
                 body: detect_for_in_loops(body),
+            },
+            Statement::DoWhile { body, condition } => Statement::DoWhile {
+                body: detect_for_in_loops(body),
+                condition,
             },
             Statement::If { condition, then_body, else_body } => Statement::If {
                 condition,
                 then_body: detect_for_in_loops(then_body),
                 else_body: detect_for_in_loops(else_body),
             },
-            Statement::Block(inner) => Statement::Block(detect_for_in_loops(inner)),
             Statement::For { init, condition, update, body } => Statement::For {
                 init,
                 condition,
                 update,
                 body: detect_for_in_loops(body),
             },
+            Statement::ForIn { variable, object, body } => Statement::ForIn {
+                variable,
+                object,
+                body: detect_for_in_loops(body),
+            },
+            Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+                variable,
+                iterable,
+                body: detect_for_in_loops(body),
+            },
+            Statement::Block(inner) => Statement::Block(detect_for_in_loops(inner)),
+            Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => {
+                Statement::TryCatch {
+                    try_body: detect_for_in_loops(try_body),
+                    catch_param,
+                    catch_body: detect_for_in_loops(catch_body),
+                    finally_body: detect_for_in_loops(finally_body),
+                }
+            }
             other => other,
-        };
-        result.push(transformed);
-    }
-
-    result
+        })
+        .collect()
 }
 
-// Check if expression is Object.keys(obj)
+// Match `keys = Object.keys(obj)` followed by the enumeration `if`.
+fn try_match_for_in(keys_stmt: &Statement, if_stmt: &Statement) -> Option<Statement> {
+    // [0] keys_reg = Object.keys(obj)
+    let (keys_reg, obj_expr) = match keys_stmt {
+        Statement::Assign { target: AssignTarget::Register(r), value } => {
+            (*r, is_object_keys_call(value)?)
+        }
+        _ => return None,
+    };
+
+    // [1] if (keys_reg === undefined) {} else { <loop> }
+    let else_body = match if_stmt {
+        Statement::If { condition, then_body, else_body }
+            if then_body.is_empty() && is_undefined_check_eq(condition, keys_reg) =>
+        {
+            else_body
+        }
+        _ => return None,
+    };
+
+    // else_body: cur_reg = keys_reg[idx]; [label]; while (!(cur_reg === undefined)) { body }
+    let mut idx = 0;
+    let cur_reg = loop {
+        match else_body.get(idx)? {
+            Statement::Assign { target: AssignTarget::Register(r), value }
+                if is_index_into(value, keys_reg) =>
+            {
+                let r = *r;
+                idx += 1;
+                break r;
+            }
+            Statement::Comment(_) => idx += 1,
+            _ => return None,
+        }
+    };
+
+    // Skip a label comment between the peeled fetch and the while.
+    while matches!(else_body.get(idx), Some(Statement::Comment(_))) {
+        idx += 1;
+    }
+
+    let body = match else_body.get(idx)? {
+        Statement::While { condition, body } if is_undefined_check_neq(condition, cur_reg) => body,
+        _ => return None,
+    };
+    // The loop must be the last meaningful statement of the else branch.
+    if else_body[idx + 1..]
+        .iter()
+        .any(|s| !matches!(s, Statement::Comment(_)))
+    {
+        return None;
+    }
+
+    // Strip the enumeration back-edge fetch (`cur = keys[idx]`) and the trailing
+    // `// continue`, then bind the loop variable.
+    let var_name = format!("key{cur_reg}");
+    let cleaned: Vec<Statement> = body
+        .iter()
+        .filter(|s| !matches!(s, Statement::Comment(c) if c == "continue"))
+        .filter(|s| !is_assign_of_index(s, cur_reg, keys_reg))
+        .cloned()
+        .collect();
+    let mut map = BTreeMap::new();
+    map.insert(cur_reg, var_name.clone());
+    let cleaned = rename_registers(cleaned, &map);
+
+    Some(Statement::ForIn {
+        variable: var_name,
+        object: obj_expr,
+        body: detect_for_in_loops(cleaned),
+    })
+}
+
+// `Object.keys(obj)` -> Some(obj)
 fn is_object_keys_call(expr: &Expression) -> Option<Expression> {
     if let Expression::Call { callee, arguments } = expr {
         if arguments.len() == 1 {
-            if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } = callee.as_ref() {
+            if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } =
+                callee.as_ref()
+            {
                 if prop == "keys" {
                     if let Expression::Value(Value::Variable(name)) = object.as_ref() {
                         if name == "Object" {
@@ -84,102 +178,45 @@ fn is_object_keys_call(expr: &Expression) -> Option<Expression> {
     None
 }
 
-// Check if expression is i < keys.length
-fn is_length_check(expr: &Expression, idx_reg: u32, keys_reg: u32) -> bool {
-    if let Expression::Binary { op: BinaryOp::Lt, left, right } = expr {
-        // Check left is idx_reg
-        if let Expression::Value(Value::Register(r)) = left.as_ref() {
-            if *r == idx_reg {
-                // Check right is keys.length
-                if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } = right.as_ref() {
-                    if prop == "length" {
-                        if let Expression::Value(Value::Register(r)) = object.as_ref() {
-                            return *r == keys_reg;
-                        }
-                    }
-                }
-            }
+// `reg[<anything>]` — the GetNextPName lowering (property at the internal index).
+fn is_index_into(expr: &Expression, base_reg: u32) -> bool {
+    if let Expression::Member { object, property: PropertyKey::Computed(_), .. } = expr {
+        if let Expression::Value(Value::Register(r)) = object.as_ref() {
+            return *r == base_reg;
         }
     }
     false
 }
 
-// Extract for-in body from while body
-fn extract_for_in_body(body: &[Statement], keys_reg: u32, idx_reg: u32) -> Option<(String, Vec<Statement>)> {
-    if body.is_empty() {
-        return None;
-    }
-
-    // First statement: key = keys[i]
-    let (var_name, body_start) = if let Statement::Assign { target, value } = &body[0] {
-        if let Expression::Member { object, property: PropertyKey::Computed(idx_expr), .. } = value {
-            if let Expression::Value(Value::Register(keys_r)) = object.as_ref() {
-                if *keys_r == keys_reg {
-                    if let Expression::Value(Value::Register(idx_r)) = idx_expr.as_ref() {
-                        if *idx_r == idx_reg {
-                            let name = match target {
-                                AssignTarget::Register(r) => format!("key{r}"),
-                                AssignTarget::Variable(v) => v.clone(),
-                                _ => return None,
-                            };
-                            Some((name, 1))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    }?;
-
-    // Remove the increment statement (i++) from the end
-    let loop_body = if body.len() > body_start {
-        let last_idx = body.len() - 1;
-        if is_increment(&body[last_idx], idx_reg) {
-            body[body_start..last_idx].to_vec()
-        } else {
-            body[body_start..].to_vec()
-        }
-    } else {
-        vec![]
-    };
-
-    Some((var_name, loop_body))
-}
-
-// Check if statement is i++ or i = i + 1
-fn is_increment(stmt: &Statement, reg: u32) -> bool {
+fn is_assign_of_index(stmt: &Statement, dst_reg: u32, base_reg: u32) -> bool {
     if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
-        if *r == reg {
-            if let Expression::Binary { op: BinaryOp::Add, left, right } = value {
-                // i = i + 1
-                if let Expression::Value(Value::Register(lr)) = left.as_ref() {
-                    if *lr == reg {
-                        if let Expression::Value(Value::Constant(Constant::Integer(1))) = right.as_ref() {
-                            return true;
-                        }
-                    }
-                }
-                // i = 1 + i
-                if let Expression::Value(Value::Register(rr)) = right.as_ref() {
-                    if *rr == reg {
-                        if let Expression::Value(Value::Constant(Constant::Integer(1))) = left.as_ref() {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
+        return *r == dst_reg && is_index_into(value, base_reg);
     }
     false
+}
+
+// `reg === undefined`
+fn is_undefined_check_eq(expr: &Expression, reg: u32) -> bool {
+    if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = expr {
+        return touches_undefined(left, right, reg);
+    }
+    false
+}
+
+// `reg !== undefined` or `!(reg === undefined)`
+fn is_undefined_check_neq(expr: &Expression, reg: u32) -> bool {
+    match expr {
+        Expression::Binary { op: BinaryOp::StrictNeq, left, right } => {
+            touches_undefined(left, right, reg)
+        }
+        Expression::Unary { op: UnaryOp::Not, operand } => is_undefined_check_eq(operand, reg),
+        _ => false,
+    }
+}
+
+fn touches_undefined(left: &Expression, right: &Expression, reg: u32) -> bool {
+    let is_reg = |e: &Expression| matches!(e, Expression::Value(Value::Register(r)) if *r == reg);
+    let is_undef =
+        |e: &Expression| matches!(e, Expression::Value(Value::Constant(Constant::Undefined)));
+    (is_reg(left) && is_undef(right)) || (is_reg(right) && is_undef(left))
 }

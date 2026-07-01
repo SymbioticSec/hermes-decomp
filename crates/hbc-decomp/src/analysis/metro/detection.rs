@@ -7,7 +7,11 @@ pub struct MetroDetector;
 impl MetroDetector {
     // Metro uses `__d(undefined, factory, moduleId, dependencyMap)` to register modules.
     // The __d function is typically stored in a variable like `r0 = __r.__d`.
-    pub fn analyze_statements(statements: &[Statement], registry: &mut MetroRegistry) {
+    pub fn analyze_statements(
+        statements: &[Statement],
+        registry: &mut MetroRegistry,
+        param_counts: &HashMap<u32, u32>,
+    ) {
         let mut reg_functions: HashMap<String, u32> = HashMap::new();
         let mut reg_arrays: HashMap<String, Vec<u32>> = HashMap::new();
         let mut reg_integers: HashMap<String, u32> = HashMap::new();
@@ -19,6 +23,7 @@ impl MetroDetector {
                 &mut reg_arrays,
                 &mut reg_integers,
                 registry,
+                param_counts,
             );
         }
     }
@@ -29,6 +34,7 @@ impl MetroDetector {
         reg_arrays: &mut HashMap<String, Vec<u32>>,
         reg_integers: &mut HashMap<String, u32>,
         registry: &mut MetroRegistry,
+        param_counts: &HashMap<u32, u32>,
     ) {
         match stmt {
             Statement::Assign { target, value } => {
@@ -50,10 +56,10 @@ impl MetroDetector {
                     }
                 }
 
-                Self::check_for_d_call(value, reg_functions, reg_arrays, reg_integers, registry);
+                Self::check_for_d_call(value, reg_functions, reg_arrays, reg_integers, registry, param_counts);
             }
             Statement::Expr(expr) => {
-                Self::check_for_d_call(expr, reg_functions, reg_arrays, reg_integers, registry);
+                Self::check_for_d_call(expr, reg_functions, reg_arrays, reg_integers, registry, param_counts);
             }
             Statement::If {
                 then_body,
@@ -61,25 +67,25 @@ impl MetroDetector {
                 ..
             } => {
                 for s in then_body {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry);
+                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
                 }
                 for s in else_body {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry);
+                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
                 }
             }
             Statement::While { body, .. } => {
                 for s in body {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry);
+                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
                 }
             }
             Statement::For { body, .. } => {
                 for s in body {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry);
+                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
                 }
             }
             Statement::Block(inner) => {
                 for s in inner {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry);
+                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
                 }
             }
             _ => {}
@@ -92,6 +98,7 @@ impl MetroDetector {
         reg_arrays: &HashMap<String, Vec<u32>>,
         reg_integers: &HashMap<String, u32>,
         registry: &mut MetroRegistry,
+        param_counts: &HashMap<u32, u32>,
     ) {
         if let Expression::Call {
             callee: _,
@@ -162,7 +169,13 @@ impl MetroDetector {
                         name: inferred_name,
                         dependencies,
                         exports: HashMap::new(),
-                        roles: crate::analysis::metro::registry::FactoryRoles::standard(),
+                        // The factory's declared parameter count (this-excluded)
+                        // determines the Metro convention (classic 4-param vs
+                        // modern 7-param with importDefault/importAll).
+                        roles: param_counts
+                            .get(&func_id)
+                            .map(|&n| crate::analysis::metro::registry::FactoryRoles::from_param_count(n))
+                            .unwrap_or_else(crate::analysis::metro::registry::FactoryRoles::standard),
                     };
                     registry.function_to_module.insert(func_id, mod_id);
                     registry.factories.insert(func_id, module.clone());

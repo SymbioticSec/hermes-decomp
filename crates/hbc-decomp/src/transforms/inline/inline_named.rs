@@ -15,27 +15,27 @@ use super::counting::{
 // AND eliminate dead assignments (assigned but never read).
 // Applied late in the pipeline after all naming passes.
 pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
-    // Phase 1: Count definitions and uses of all variables
+    // Phase 1: Count definitions and uses of all variables over the WHOLE
+    // function (count_var_defs_uses recurses into nested blocks). The candidate
+    // sets are derived once here and reused for nested blocks — recomputing them
+    // per-block is unsound: a variable assigned inside an `if` branch but read
+    // *after* the `if` has a block-local use count of 0, so it would be wrongly
+    // treated as dead and its branch (then the whole `if`) eliminated.
     let mut def_count: BTreeMap<String, usize> = BTreeMap::new();
     let mut use_count: BTreeMap<String, usize> = BTreeMap::new();
     count_var_defs_uses(&stmts, &mut def_count, &mut use_count);
 
-    // Inline candidates: defined once, used once, generic name
-    // OR: defined once, used multiple times, but the value is a simple expression (no side effects)
     let inline_candidates: std::collections::HashSet<String> = def_count
         .iter()
         .filter(|(name, &defs)| {
             if defs != 1 || !is_inlinable_name(name) {
                 return false;
             }
-            let uses = use_count.get(*name).copied().unwrap_or(0);
-            uses == 1 // single use: always inline
+            use_count.get(*name).copied().unwrap_or(0) == 1
         })
         .map(|(name, _)| name.clone())
         .collect();
 
-    // Multi-use inline candidates: defined once, used multiple times, but value is simple/pure
-    // These get resolved later after we know their value
     let multi_use_candidates: std::collections::HashSet<String> = def_count
         .iter()
         .filter(|(name, &defs)| {
@@ -43,13 +43,11 @@ pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
                 return false;
             }
             let uses = use_count.get(*name).copied().unwrap_or(0);
-            uses > 1 && uses <= 32 // multi-use: only if value is simple (checked later)
+            uses > 1 && uses <= 32
         })
         .map(|(name, _)| name.clone())
         .collect();
 
-    // Dead assignment candidates: defined but never used, generic name.
-    // EXCLUDE closure_* -- they are accessed from other scopes via the closure environment.
     let dead_candidates: std::collections::HashSet<String> = def_count
         .iter()
         .filter(|(name, &defs)| {
@@ -60,6 +58,17 @@ pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
         .map(|(name, _)| name.clone())
         .collect();
 
+    inline_named_with_candidates(stmts, &inline_candidates, &multi_use_candidates, &dead_candidates)
+}
+
+// Process statements using PRE-COMPUTED (whole-function) candidate sets, and
+// recurse into nested blocks with the SAME sets — see `inline_named_variables`.
+fn inline_named_with_candidates(
+    stmts: Vec<Statement>,
+    inline_candidates: &std::collections::HashSet<String>,
+    multi_use_candidates: &std::collections::HashSet<String>,
+    dead_candidates: &std::collections::HashSet<String>,
+) -> Vec<Statement> {
     if inline_candidates.is_empty() && dead_candidates.is_empty() && multi_use_candidates.is_empty() {
         return stmts;
     }
@@ -155,9 +164,10 @@ pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
 
     flush_pending(&mut pending, &mut result);
 
-    // Phase 3: Recurse into sub-blocks to apply inlining there too
+    // Phase 3: Recurse into sub-blocks to apply inlining there too, reusing the
+    // whole-function candidate sets.
     for stmt in &mut result {
-        recurse_inline_blocks(stmt);
+        recurse_inline_blocks(stmt, inline_candidates, multi_use_candidates, dead_candidates);
     }
 
     // Phase 4: Clean up noise
@@ -166,9 +176,30 @@ pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
     result
 }
 
-// Recursively apply inline_named_variables to inner blocks of structured statements.
-fn recurse_inline_blocks(stmt: &mut Statement) {
-    map_nested_bodies_mut(stmt, inline_named_variables);
+// Recursively apply inlining to inner blocks of structured statements, EXCEPT
+// loop bodies. Inlining inside a loop from isolated def/use counts is unsound: a
+// loop-carried variable defined in the body but read in the condition or after
+// the loop (via the back-edge) looks dead/single-use locally and would be wrongly
+// eliminated (e.g. `sum = sum + i` dropped). Non-loop blocks (if/try/switch/block)
+// are recursed with the SHARED whole-function candidate sets (passed in) so a
+// variable used after the block is not treated as dead inside it.
+fn recurse_inline_blocks(
+    stmt: &mut Statement,
+    inline_candidates: &std::collections::HashSet<String>,
+    multi_use_candidates: &std::collections::HashSet<String>,
+    dead_candidates: &std::collections::HashSet<String>,
+) {
+    match stmt {
+        // Loop bodies: leave untouched (correctness over extra inlining).
+        Statement::While { .. }
+        | Statement::DoWhile { .. }
+        | Statement::For { .. }
+        | Statement::ForIn { .. }
+        | Statement::ForOf { .. } => {}
+        _ => map_nested_bodies_mut(stmt, |s| {
+            inline_named_with_candidates(s, inline_candidates, multi_use_candidates, dead_candidates)
+        }),
+    }
 }
 
 // Check if an expression is a simple constant (integer, string, bool, null, undefined).
@@ -206,6 +237,15 @@ fn apply_multi_use_to_stmt(stmt: &mut Statement, defs: &BTreeMap<String, Express
         }
         Statement::Expr(e) => substitute_vars_in_expr(e, defs),
         Statement::Return(Some(e)) | Statement::Throw(e) => substitute_vars_in_expr(e, defs),
+        // Loop/branch conditions: substitute (safe — these defs are constants /
+        // simple pure values). Bodies are handled by the recursion, but loop
+        // bodies are intentionally skipped, so doing the condition here ensures a
+        // hoisted constant (e.g. a loop bound) still reaches `while (i < 5)`.
+        Statement::While { condition, .. } | Statement::DoWhile { condition, .. } => {
+            substitute_vars_in_expr(condition, defs);
+        }
+        Statement::If { condition, .. } => substitute_vars_in_expr(condition, defs),
+        Statement::Switch { discriminant, .. } => substitute_vars_in_expr(discriminant, defs),
         _ => {}
     }
 }
@@ -276,12 +316,9 @@ pub fn is_dead_inlinable_name(name: &str) -> bool {
 
 // Check if a variable name is a candidate for inlining (temporary/generic names only).
 pub(super) fn is_inlinable_name(name: &str) -> bool {
-    if is_tmp_or_register(name) || is_generic_role_name(name) || is_wrapper_or_intermediate(name) {
-        return true;
-    }
-    // closure_0, closure_1, ...
-    if name.strip_prefix("closure_").is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())) {
-        return true;
-    }
-    false
+    // NOTE: `closure_N` is deliberately excluded (as in `is_dead_inlinable_name`).
+    // A resolved closure variable is shared with other function scopes; inlining
+    // its value within one scope drops the binding the other scope still reads
+    // (e.g. a captured counter `closure_0 += 1` mutated inside a returned closure).
+    is_tmp_or_register(name) || is_generic_role_name(name) || is_wrapper_or_intermediate(name)
 }

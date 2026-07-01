@@ -10,8 +10,9 @@ pub use expressions::{
     detect_logical_patterns, detect_nullish_coalescing, detect_optional_chaining,
     detect_string_concat,
 };
-pub use loops::{detect_for_in_loops, detect_for_loops, detect_for_of_loops};
+pub use loops::{detect_for_in_loops, detect_for_loops, detect_for_of_loops, detect_legacy_for_of};
 pub use logic_short_circuit::detect_short_circuit_logic;
+pub use jsx::reconstruct_jsx;
 
 pub fn detect_patterns(stmts: Vec<Statement>) -> Vec<Statement> {
     let stmts = detect_short_circuit_logic(stmts);

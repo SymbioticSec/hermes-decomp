@@ -37,14 +37,22 @@ impl Codegen {
                 format!("{indent}{kind} {name} = {};\n", self.generate_expr(value))
             }
             Statement::Assign { target, value } => {
-                // Destructuring targets → emit as const declaration (bare `{ x } = e` is invalid JS)
+                // Destructuring targets. The bound names are declared once at the
+                // function top (hoisted by insert_declarations) so two patterns
+                // that share a register-derived name don't each emit a clashing
+                // `let`. Emit the pattern as a bare assignment; object patterns
+                // are parenthesized so `{` is not parsed as a block.
                 if matches!(target,
                     crate::ir::AssignTarget::DestructuringObject(_)
                     | crate::ir::AssignTarget::DestructuringObjectRest { .. }
-                    | crate::ir::AssignTarget::DestructuringArray(_)
+                ) {
+                    return format!("{indent}({} = {});\n", self.generate_assign_target(target), self.generate_expr(value));
+                }
+                if matches!(target,
+                    crate::ir::AssignTarget::DestructuringArray(_)
                     | crate::ir::AssignTarget::DestructuringArrayRest { .. }
                 ) {
-                    return format!("{indent}const {} = {};\n", self.generate_assign_target(target), self.generate_expr(value));
+                    return format!("{indent}{} = {};\n", self.generate_assign_target(target), self.generate_expr(value));
                 }
                 // Skip assigns to invalid variable names (numeric constants like `0 = 0;`)
                 if let crate::ir::AssignTarget::Variable(name) = target {
@@ -273,10 +281,11 @@ impl Codegen {
                         let async_prefix = if *is_async { "async " } else { "" };
                         // Async generators (Babel pattern) render as async, not function*
                         let gen = if *is_generator && !*is_async { "*" } else { "" };
+                        let params = method.params.join(", ");
 
                         if let Some(body) = &method.body {
                             out.push_str(&format!(
-                                "{kind_prefix}{async_prefix}{gen}{}() {{\n",
+                                "{kind_prefix}{async_prefix}{gen}{}({params}) {{\n",
                                 method.key
                             ));
                             self.indent_level += 1;
@@ -285,7 +294,7 @@ impl Codegen {
                             out.push_str(&format!("{method_indent}}}\n"));
                         } else {
                             out.push_str(&format!(
-                                "{kind_prefix}{async_prefix}{gen}{}() {{ /* compiled code */ }}\n",
+                                "{kind_prefix}{async_prefix}{gen}{}({params}) {{ /* compiled code */ }}\n",
                                 method.key
                             ));
                         }

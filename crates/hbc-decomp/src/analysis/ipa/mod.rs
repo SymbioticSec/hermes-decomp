@@ -13,10 +13,10 @@ use graph::CallGraph;
 use inference::{is_generic_name, vote_on_names};
 use std::collections::BTreeMap;
 
-/// Upper bound on parameter-slot vectors. Parameter indices come from parsed
-/// IR; a corrupt index could otherwise drive `vec![None; idx + 1]` / `resize`
-/// to allocate gigabytes and abort the process. No real function approaches
-/// this many parameters.
+// Upper bound on parameter-slot vectors. Parameter indices come from parsed
+// IR; a corrupt index could otherwise drive `vec![None; idx + 1]` / `resize`
+// to allocate gigabytes and abort the process. No real function approaches
+// this many parameters.
 pub(crate) const MAX_PARAM_SLOTS: usize = 1 << 16;
 pub use structs::GlobalAnalysis;
 pub use resolution::FunctionNameIndex;
@@ -26,6 +26,16 @@ use super::metro::registry::MetroRegistry;
 // Maximum iterations for fixed-point propagation via param_links.
 // Convergence typically occurs in 2-5 iterations; 20 guarantees termination.
 const MAX_PARAM_LINK_ITERATIONS: usize = 20;
+
+// Generic type names derived from a parameter's body usage (string/array/etc.
+// methods). `vote_on_names` rejects these as "generic", so they're only used as
+// a last-resort fallback — a typed name (`str`, `obj`) reads better than `argN`.
+fn is_type_fallback_name(name: &str) -> bool {
+    matches!(
+        name,
+        "str" | "num" | "obj" | "arr" | "fn" | "flag" | "promise" | "items"
+    )
+}
 
 pub fn run_ipa(
     functions: &BTreeMap<u32, Vec<Statement>>,
@@ -56,6 +66,11 @@ pub fn run_ipa(
     // Explicitly end borrow of `analysis` fields through `collect_ctx`
     let _ = collect_ctx;
 
+    // Type-only fallbacks (str/num/obj/...): voting rejects these as generic, but
+    // a typed name still reads better than `argN`, so apply them last for params
+    // that no semantic or propagated name ever filled. idx -> type name, first wins.
+    let mut type_fallback: BTreeMap<u32, BTreeMap<usize, String>> = BTreeMap::new();
+
     // Pass 1b: Infer parameter names from body usage patterns
     for (&func_id, stmts) in functions {
         let body_hints = body_hints::infer_param_names_from_body(stmts);
@@ -65,6 +80,13 @@ pub fn run_ipa(
                     .min(MAX_PARAM_SLOTS);
             let mut site = vec![None; max_idx + 1];
             for (idx, name) in body_hints {
+                if (idx as usize) <= MAX_PARAM_SLOTS && is_type_fallback_name(&name) {
+                    type_fallback
+                        .entry(func_id)
+                        .or_default()
+                        .entry(idx as usize)
+                        .or_insert_with(|| name.clone());
+                }
                 if site.get(idx as usize).is_none_or(|s| s.is_none())
                     && idx < site.len() as u32 {
                         site[idx as usize] = Some(name);
@@ -200,6 +222,32 @@ pub fn run_ipa(
 
         if !changes {
             break;
+        }
+    }
+
+    // Pass 4: type-name fallback for params no name ever reached. Dedupe within
+    // each function (two `str` params would be `function(str, str)` — a syntax
+    // error), and never collide with a name already chosen for another param.
+    for (func_id, idx_names) in type_fallback {
+        let entry = analysis.param_names.entry(func_id).or_default();
+        let mut used: HashSet<String> = entry.iter().flatten().cloned().collect();
+        let mut sorted: Vec<(usize, String)> = idx_names.into_iter().collect();
+        sorted.sort_by_key(|(idx, _)| *idx);
+        for (idx, base) in sorted {
+            if entry.len() <= idx {
+                entry.resize(idx + 1, None);
+            }
+            if entry[idx].is_some() {
+                continue;
+            }
+            let mut name = base.clone();
+            let mut n = 2;
+            while used.contains(&name) {
+                name = format!("{base}{n}");
+                n += 1;
+            }
+            used.insert(name.clone());
+            entry[idx] = Some(name);
         }
     }
 

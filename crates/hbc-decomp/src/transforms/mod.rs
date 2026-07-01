@@ -21,6 +21,7 @@ pub mod spread_rest;
 pub mod ssa;
 pub mod ternary_returns;
 pub mod var_naming;
+pub mod worklet_source;
 
 pub use chain_access::optimize_chain_access;
 pub use class_patterns::detect_class_patterns;
@@ -28,21 +29,22 @@ pub use cleanup::cleanup_statements;
 pub use cleanup::advanced::cleanup_advanced;
 pub use codegen::{Codegen, CodegenOptions};
 pub use default_params::transform_default_params;
-pub use destructuring::detect_destructuring;
+pub use destructuring::{detect_destructuring, detect_iterator_destructuring, reconstruct_v98_array_destructuring};
 pub use generator::{
     cleanup_generator_comments, detect_generator_patterns, has_generator_patterns,
-    simplify_state_machine,
+    reconstruct_generator_v98, simplify_state_machine,
 };
 pub use inline::{cleanup_noise, fold_array_literals, fold_object_literals, inline_expressions, inline_named_variables, insert_declarations, rename_reserved_words, simplify_arguments_copy, strip_hermes_this};
 pub use logic_simplify::simplify_logic_advanced;
 pub use name_inference::infer_names;
 pub use objects::transform_object_literals;
 pub use optimize::optimize_statements;
-pub use patterns::detect_patterns;
-pub use propagate::{propagate, PropagationConfig};
+pub use patterns::{detect_for_in_loops, detect_for_of_loops, detect_legacy_for_of, detect_patterns, reconstruct_jsx};
+pub use propagate::{propagate, resolve_global_reads, PropagationConfig};
 pub use simplify::{simplify_expr, simplify_statements, simplify_stmt};
 pub use logic_patterns::transform_logic;
 pub use spread_rest::transform_spread_rest;
 pub use ssa::transform_to_ssa;
 pub use ternary_returns::optimize_ternary_returns;
 pub use var_naming::{infer_variable_names, rename_closure_variables, rename_closure_variables_cross_function, rename_closures_from_definitions};
+pub use worklet_source::collect_worklet_sources;
