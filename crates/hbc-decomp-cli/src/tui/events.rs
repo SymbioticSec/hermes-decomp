@@ -83,6 +83,37 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         return false;
     }
 
+    // Content search mode: search within the selected function's content
+    if app.is_content_searching {
+        match key.code {
+            KeyCode::Esc => {
+                app.is_content_searching = false;
+                app.content_search.clear();
+                app.content_search_matches.clear();
+                app.content_search_index = 0;
+            }
+            KeyCode::Enter => {
+                app.content_search_next();
+            }
+            KeyCode::Down => {
+                app.content_search_next();
+            }
+            KeyCode::Up => {
+                app.content_search_prev();
+            }
+            KeyCode::Backspace => {
+                app.content_search.pop();
+                app.update_content_search();
+            }
+            KeyCode::Char(c) => {
+                app.content_search.push(c);
+                app.update_content_search();
+            }
+            _ => {}
+        }
+        return false;
+    }
+
     // Full-program git diff is a separate full-screen mode with its own keys.
     if app.git_diff {
         return handle_git_key(app, key);
@@ -92,6 +123,9 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('/') => {
             app.is_searching = true;
+        }
+        KeyCode::Char('s') => {
+            app.is_content_searching = true;
         }
         KeyCode::Char('d') => {
             app.show_diff_colors = !app.show_diff_colors;
