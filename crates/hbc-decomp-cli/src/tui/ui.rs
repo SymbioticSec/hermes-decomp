@@ -254,7 +254,7 @@ fn draw_content_pane(
         None
     };
 
-    let highlighted: Vec<Line<'static>> = if q.is_some() {
+    let mut highlighted: Vec<Line<'static>> = if q.is_some() {
         content
             .lines
             .into_iter()
@@ -263,6 +263,42 @@ fn draw_content_pane(
     } else {
         content.lines
     };
+
+    // Record inner area for coordinate mapping.
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    app.content_inner = inner;
+
+    // Overlay text selection highlight (reverse video).
+    if let Some((sel_sc, sel_sr, sel_ec, sel_er)) = app.normalized_selection() {
+        let scroll = app.scroll as u16;
+        for vi in 0..inner.height {
+            let term_row = inner.y + vi;
+            let line_idx = vi + scroll;
+            if line_idx as usize >= highlighted.len() {
+                break;
+            }
+            if term_row < sel_sr || term_row > sel_er {
+                continue;
+            }
+            let col_start = if term_row == sel_sr {
+                sel_sc
+            } else {
+                inner.x
+            };
+            let col_end = if term_row == sel_er {
+                (sel_ec + 1).min(inner.x + inner.width)
+            } else {
+                inner.x + inner.width
+            };
+            if col_start >= col_end {
+                continue;
+            }
+            let off = col_start.saturating_sub(inner.x) as usize;
+            let end = (col_end - inner.x) as usize;
+            highlighted[line_idx as usize] =
+                apply_selection_styling(&highlighted[line_idx as usize], off, end);
+        }
+    }
 
     let paragraph = Paragraph::new(highlighted)
         .block(
@@ -341,6 +377,47 @@ fn highlight_line_with_search(line: Line<'static>, query: Option<&str>) -> Line<
     }
 
     Line::from(result_spans)
+}
+
+// Apply reverse-video highlight to character range [start, end) on a line.
+// Splits spans at boundaries so only the selected portion is highlighted.
+fn apply_selection_styling(
+    line: &Line<'static>,
+    start: usize,
+    end: usize,
+) -> Line<'static> {
+    let sel = Style::default().add_modifier(Modifier::REVERSED);
+    let mut out = Vec::new();
+    let mut col = 0usize;
+
+    for span in &line.spans {
+        let len: usize = span
+            .content
+            .chars()
+            .map(|c| if c == '\t' { 4 } else { 1 })
+            .sum();
+        let span_end = col + len;
+
+        if span_end <= start || col >= end {
+            out.push(span.clone());
+        } else if col >= start && span_end <= end {
+            out.push(Span::styled(span.content.clone(), sel.patch(span.style)));
+        } else {
+            let mut cc = col;
+            for ch in span.content.chars() {
+                let w = if ch == '\t' { 4 } else { 1 };
+                let s = if cc >= start && cc < end {
+                    sel.patch(span.style)
+                } else {
+                    span.style
+                };
+                out.push(Span::styled(ch.to_string(), s));
+                cc += w;
+            }
+        }
+        col = span_end;
+    }
+    Line::from(out)
 }
 
 // One side of a diff row: git-style sign (`+`/`-`/space), a line-number
