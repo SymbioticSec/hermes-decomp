@@ -203,17 +203,37 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     false
 }
 
-// Mouse: wheel scrolls the active view, left click selects a function in the
-// list (normal mode).
+// Mouse: wheel scrolls, left click selects functions or starts text selection
+// in the content pane.  On release the selected text is pushed to the terminal
+// clipboard via OSC 52 so Cmd+C / Ctrl+Shift+C works.
 fn handle_mouse(app: &mut App, me: MouseEvent) {
     match me.kind {
         MouseEventKind::ScrollDown => app.scroll = app.scroll.saturating_add(3),
         MouseEventKind::ScrollUp => app.scroll = app.scroll.saturating_sub(3),
         MouseEventKind::Down(MouseButton::Left) => {
             if app.git_diff {
-                app.git_toggle_fold_at(me.row); // click a ▼/▶ header to fold
+                app.git_toggle_fold_at(me.row);
+            } else if app.is_inside_content(me.column, me.row) {
+                app.selection_anchor = Some((me.column, me.row));
+                app.selection_target = Some((me.column, me.row));
+                app.selecting = true;
             } else {
                 app.select_at_row(me.column, me.row);
+                app.clear_selection();
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if app.selecting {
+                app.selection_target = Some((me.column, me.row));
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            if app.selecting {
+                app.selecting = false;
+                // Only copy when the user actually dragged (anchor != target).
+                if app.selection_anchor != app.selection_target {
+                    app.copy_selection_to_clipboard();
+                }
             }
         }
         _ => {}

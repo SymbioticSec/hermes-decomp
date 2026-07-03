@@ -171,6 +171,12 @@ pub struct App {
     pub pipeline_ctx2: Option<Arc<PipelineContext>>,
     pub pipeline_rx2: Option<Receiver<PipelineContext>>,
     pub pipeline_building2: bool,
+
+    // Text selection (terminal cell coordinates, content pane only)
+    pub selection_anchor: Option<(u16, u16)>,
+    pub selection_target: Option<(u16, u16)>,
+    pub selecting: bool,
+    pub content_inner: Rect,
 }
 
 impl App {
@@ -301,6 +307,10 @@ impl App {
             pipeline_ctx2: None,
             pipeline_rx2: None,
             pipeline_building2: false,
+            selection_anchor: None,
+            selection_target: None,
+            selecting: false,
+            content_inner: Rect::default(),
         };
 
         let map1_start = Instant::now();
@@ -463,11 +473,93 @@ impl App {
         }
     }
 
+    pub fn is_inside_content(&self, col: u16, row: u16) -> bool {
+        let r = self.content_inner;
+        col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+    }
+
+    pub fn normalized_selection(&self) -> Option<(u16, u16, u16, u16)> {
+        let (ac, ar) = self.selection_anchor?;
+        let (tc, tr) = self.selection_target?;
+        let (sc, sr, ec, er) = if (ar, ac) <= (tr, tc) {
+            (ac, ar, tc, tr)
+        } else {
+            (tc, tr, ac, ar)
+        };
+        Some((sc, sr, ec, er))
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+        self.selection_target = None;
+        self.selecting = false;
+    }
+
+    /// Push the current selection to the terminal clipboard via OSC 52 so
+    /// that Cmd+C / Ctrl+Shift+C copies it.  No-op when there is no
+    /// selection or the extracted text is empty.
+    pub fn copy_selection_to_clipboard(&mut self) {
+        use crossterm::clipboard::CopyToClipboard;
+        use crossterm::execute;
+
+        let Some((sel_sc, sel_sr, sel_ec, sel_er)) = self.normalized_selection() else {
+            return;
+        };
+
+        let (content, _) = self.content();
+        let inner = self.content_inner;
+        let scroll = self.scroll as u16;
+
+        let mut result = String::new();
+        for vi in 0..inner.height {
+            let term_row = inner.y + vi;
+            let line_idx = vi + scroll;
+            if term_row < sel_sr || term_row > sel_er || line_idx as usize >= content.lines.len() {
+                if term_row > sel_er {
+                    break;
+                }
+                continue;
+            }
+
+            let line = &content.lines[line_idx as usize];
+            let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+
+            let col_start = if term_row == sel_sr {
+                sel_sc.saturating_sub(inner.x) as usize
+            } else {
+                0
+            };
+            let col_end = if term_row == sel_er {
+                ((sel_ec + 1).min(inner.x + inner.width) - inner.x) as usize
+            } else {
+                line_text.len()
+            };
+            let col_start = col_start.min(line_text.len());
+            let col_end = col_end.min(line_text.len());
+            if col_start < col_end {
+                result.push_str(&line_text[col_start..col_end]);
+            }
+            if term_row < sel_er {
+                result.push('\n');
+            }
+        }
+
+        if result.is_empty() {
+            return;
+        }
+
+        let _ = execute!(
+            std::io::stdout(),
+            CopyToClipboard::to_clipboard_from(result)
+        );
+    }
+
     pub fn set_selected(&mut self, index: usize) {
         if self.selected != index {
             self.selected = index;
             self.list_state.select(Some(index));
             self.scroll = 0;
+            self.clear_selection();
         }
     }
 
@@ -483,6 +575,7 @@ impl App {
             }
             self.view = view;
             self.scroll = 0;
+            self.clear_selection();
         }
     }
 
