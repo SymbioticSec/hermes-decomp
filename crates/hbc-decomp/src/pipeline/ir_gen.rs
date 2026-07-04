@@ -221,7 +221,11 @@ pub fn generate_ir(
 
         // STAGE F25: Final Simplification
         crate::transforms::simplify_statements(&mut statements);
-        statements
+
+        // STAGE F26: Bottom-tested `while (true) { …; if (EXIT) break; }` -> `do…while`.
+        // Runs last, on fully-named statements, once cleanup has produced the clean
+        // trailing `if (EXIT) break;` shape.
+        transforms::convert_while_true_loops(statements)
     } else {
         statements
     };
