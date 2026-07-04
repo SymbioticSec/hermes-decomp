@@ -222,10 +222,12 @@ pub fn generate_ir(
         // STAGE F25: Final Simplification
         crate::transforms::simplify_statements(&mut statements);
 
-        // STAGE F26: Bottom-tested `while (true) { …; if (EXIT) break; }` -> `do…while`.
+        // STAGE F26: Bottom-tested `while (true) { …; if (EXIT) break; }` -> `do…while`,
+        // then fold Hermes' guarded do-while shape back into a natural `for`/`while`.
         // Runs last, on fully-named statements, once cleanup has produced the clean
         // trailing `if (EXIT) break;` shape.
-        transforms::convert_while_true_loops(statements)
+        let statements = transforms::convert_while_true_loops(statements);
+        transforms::fold_guarded_loops(statements)
     } else {
         statements
     };

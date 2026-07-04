@@ -39,7 +39,7 @@ pub use logic_simplify::simplify_logic_advanced;
 pub use name_inference::infer_names;
 pub use objects::transform_object_literals;
 pub use optimize::optimize_statements;
-pub use patterns::{convert_while_true_loops, detect_for_in_loops, detect_for_of_loops, detect_legacy_for_of, detect_patterns, reconstruct_jsx};
+pub use patterns::{convert_while_true_loops, detect_for_in_loops, detect_for_of_loops, detect_legacy_for_of, detect_patterns, fold_guarded_loops, reconstruct_jsx};
 pub use propagate::{propagate, propagate_copies, resolve_global_reads, PropagationConfig};
 pub use simplify::{simplify_expr, simplify_statements, simplify_stmt};
 pub use logic_patterns::transform_logic;
