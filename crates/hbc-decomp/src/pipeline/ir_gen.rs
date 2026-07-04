@@ -46,6 +46,11 @@ pub fn generate_ir(
 
     // STAGE F3: Copy/Constant Propagation
     if options.propagate {
+        // Cross-block copy propagation first: resolves register-to-register
+        // copies whose source and use straddle a basic-block boundary (e.g. a
+        // loop latch `Mov r0, i; ...; Inc i, r0`), which the intra-block pass
+        // below cannot reach.
+        transforms::propagate_copies(&mut cfg);
         propagate(&mut cfg, &PropagationConfig::default());
     }
 

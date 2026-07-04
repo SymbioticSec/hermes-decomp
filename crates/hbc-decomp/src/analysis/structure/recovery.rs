@@ -254,7 +254,7 @@ pub(super) fn recover_structure_inner(
             // if. Otherwise the merge (the common tail, e.g. a shared `return`)
             // is wrongly absorbed into the `then` branch and the `else` becomes
             // empty.
-            if let Some(merge) = find_merge_point(ctx.cfg, true_target, false_target) {
+            if let Some(merge) = find_merge_point(ctx.cfg, block_id, true_target, false_target) {
                 if merge != true_target || merge != false_target {
                     let merge_was_visited = ctx.visited.contains(&merge);
                     ctx.visited.insert(merge);
@@ -337,13 +337,20 @@ pub(super) fn recover_structure_inner(
 // BOTH the true and false targets. This is the block where the two arms of an
 // `if`/`else` diamond reconverge (its immediate post-dominator for simple
 // diamonds). Returns None when the branches never reconverge (e.g. both return).
-fn find_merge_point(cfg: &CFG, a: BlockId, b: BlockId) -> Option<BlockId> {
+//
+// `header` is the branch block itself. Both reachability walks stop *before*
+// re-entering `header`: a genuine forward join is reached without re-executing
+// the branch. Without this guard, a loop back-edge that flows back through the
+// branch would make the branch's own arms mutually reachable, and the walk would
+// pick a spurious "merge" one arm earlier than the real post-dominator (which
+// then gets wrongly absorbed into an `if` branch, producing infinite loops).
+pub(super) fn find_merge_point(cfg: &CFG, header: BlockId, a: BlockId, b: BlockId) -> Option<BlockId> {
     use std::collections::VecDeque;
-    // All blocks reachable from `a` (cycle-safe).
+    // All blocks reachable from `a` without passing back through `header`.
     let mut reach_a: HashSet<BlockId> = HashSet::new();
     let mut stack = vec![a];
     while let Some(n) = stack.pop() {
-        if !reach_a.insert(n) {
+        if n == header || !reach_a.insert(n) {
             continue;
         }
         if let Some(blk) = cfg.get(n) {
@@ -352,12 +359,13 @@ fn find_merge_point(cfg: &CFG, a: BlockId, b: BlockId) -> Option<BlockId> {
             }
         }
     }
-    // Breadth-first from `b` for the NEAREST block that is also reachable from a.
+    // Breadth-first from `b` for the NEAREST block also reachable from `a`,
+    // likewise never crossing back through `header`.
     let mut seen: HashSet<BlockId> = HashSet::new();
     let mut queue: VecDeque<BlockId> = VecDeque::new();
     queue.push_back(b);
     while let Some(n) = queue.pop_front() {
-        if !seen.insert(n) {
+        if n == header || !seen.insert(n) {
             continue;
         }
         if reach_a.contains(&n) {
