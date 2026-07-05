@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
-use super::app::{App, ViewMode};
+use super::app::{App, ViewMode, XrefKind};
 use super::diff::DiffStatus;
 use super::formatting::highlight_code;
 
@@ -95,6 +95,8 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
             Span::styled(" view ", Style::default().fg(Color::DarkGray)),
             Span::styled("PgUp/Dn", Style::default().fg(Color::White)),
             Span::styled(" scroll ", Style::default().fg(Color::DarkGray)),
+            Span::styled("g", Style::default().fg(Color::White)),
+            Span::styled(" xref ", Style::default().fg(Color::DarkGray)),
             Span::styled("d", Style::default().fg(Color::White)),
             Span::styled(" diff colors ", Style::default().fg(Color::DarkGray)),
             Span::styled("v", Style::default().fg(Color::White)),
@@ -125,6 +127,8 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
             Span::styled(" view ", Style::default().fg(Color::DarkGray)),
             Span::styled("PgUp/Dn", Style::default().fg(Color::White)),
             Span::styled(" scroll ", Style::default().fg(Color::DarkGray)),
+            Span::styled("g", Style::default().fg(Color::White)),
+            Span::styled(" xref ", Style::default().fg(Color::DarkGray)),
             Span::styled("1-3", Style::default().fg(Color::White)),
             Span::styled(" views", Style::default().fg(Color::DarkGray)),
         ])
@@ -161,6 +165,10 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
             ),
             popup,
         );
+    }
+
+    if app.xref_open {
+        draw_xref_popup(frame, app);
     }
 }
 
@@ -676,6 +684,59 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
             popup,
         );
     }
+}
+
+fn draw_xref_popup(frame: &mut Frame, app: &App) {
+    let popup = centered_rect(56, 20, frame.area());
+    frame.render_widget(Clear, popup);
+
+    let callee_style = Style::default().fg(Color::Cyan);
+    let caller_style = Style::default().fg(Color::Yellow);
+    let sel_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+
+    let max_visible = (popup.height.saturating_sub(2)) as usize;
+    let scroll = if app.xref_selected >= max_visible {
+        app.xref_selected - max_visible + 1
+    } else {
+        0
+    };
+
+    let items: Vec<Line<'static>> = app
+        .xref_list
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(max_visible)
+        .map(|(idx, (name, _, kind))| {
+            let (label, style) = match kind {
+                XrefKind::Callee => ("-> ", callee_style),
+                XrefKind::Caller => ("<- ", caller_style),
+            };
+            let full = format!("{label}{name}");
+            if idx == app.xref_selected {
+                Line::from(Span::styled(full, sel_style))
+            } else {
+                Line::from(Span::styled(full, style))
+            }
+        })
+        .collect();
+
+    let callee_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Callee).count();
+    let caller_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Caller).count();
+    let title = format!(
+        " Xrefs: {} callees, {} callers — Enter: jump  Esc: close ",
+        callee_count, caller_count
+    );
+
+    frame.render_widget(
+        Paragraph::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Double)
+                .title(title),
+        ),
+        popup,
+    );
 }
 
 // A `Rect` of the given size centered within `area`.
