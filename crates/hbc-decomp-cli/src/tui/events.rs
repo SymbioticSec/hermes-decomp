@@ -114,6 +114,11 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         return false;
     }
 
+    // Xref picker mode
+    if app.xref_open {
+        return handle_xref_key(app, key);
+    }
+
     // Full-program git diff is a separate full-screen mode with its own keys.
     if app.git_diff {
         return handle_git_key(app, key);
@@ -129,15 +134,15 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('d') => {
             app.show_diff_colors = !app.show_diff_colors;
-            // Force redraw/recalc if needed?
-            // The content() method checks this flag, so next draw will pick it up.
-            // But we might want to clear cache?
             app.disasm_cache.clear();
             app.decompile_cache.clear();
             app.disasm_cache2.clear();
             app.decompile_cache2.clear();
         }
         KeyCode::Char('q') => return true,
+        KeyCode::Char('g') => {
+            app.open_xref();
+        }
         KeyCode::Up | KeyCode::Char('k') => {
             if app.selected > 0 {
                 app.set_selected(app.selected - 1);
@@ -300,6 +305,35 @@ fn handle_git_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::PageUp => app.scroll = app.scroll.saturating_sub(20),
         KeyCode::Home => app.scroll = 0,
         KeyCode::End => app.scroll = u32::MAX, // clamped during rendering
+        _ => {}
+    }
+    false
+}
+
+fn handle_xref_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.xref_open = false;
+        }
+        KeyCode::Enter => {
+            app.xref_jump();
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.xref_selected + 1 < app.xref_list.len() {
+                app.xref_selected += 1;
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.xref_selected > 0 {
+                app.xref_selected -= 1;
+            }
+        }
+        KeyCode::PageDown => {
+            app.xref_selected = (app.xref_selected + 10).min(app.xref_list.len().saturating_sub(1));
+        }
+        KeyCode::PageUp => {
+            app.xref_selected = app.xref_selected.saturating_sub(10);
+        }
         _ => {}
     }
     false

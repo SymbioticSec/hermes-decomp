@@ -177,6 +177,18 @@ pub struct App {
     pub selection_target: Option<(u16, u16)>,
     pub selecting: bool,
     pub content_inner: Rect,
+
+    // Xref picker (g key)
+    pub xref_open: bool,
+    pub xref_list: Vec<(String, u32, XrefKind)>,
+    pub xref_selected: usize,
+    pub xref_scroll: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum XrefKind {
+    Callee,
+    Caller,
 }
 
 impl App {
@@ -311,6 +323,10 @@ impl App {
             selection_target: None,
             selecting: false,
             content_inner: Rect::default(),
+            xref_open: false,
+            xref_list: Vec::new(),
+            xref_selected: 0,
+            xref_scroll: 0,
         };
 
         let map1_start = Instant::now();
@@ -738,6 +754,96 @@ impl App {
                     .filter(|&&ri| gitdiff::row_contains(&self.git_rows[ri], &query))
                     .count();
                 return;
+            }
+        }
+    }
+
+    pub fn open_xref(&mut self) {
+        let Some(func_id) = self.selected_function_id() else {
+            return;
+        };
+
+        let mut items: Vec<(String, u32, XrefKind)> = Vec::new();
+
+        if let Some(ctx) = &self.pipeline_ctx {
+            let graph = &ctx.global_analysis.graph;
+
+            if let Some(callees) = graph.calls.get(&func_id) {
+                let mut seen = std::collections::BTreeSet::new();
+                for &callee in callees {
+                    if seen.insert(callee) {
+                        let name = self.func_name_by_id(callee);
+                        items.push((name, callee, XrefKind::Callee));
+                    }
+                }
+            }
+
+            if let Some(callers) = graph.callers.get(&func_id) {
+                let mut seen = std::collections::BTreeSet::new();
+                for &caller in callers {
+                    if seen.insert(caller) {
+                        let name = self.func_name_by_id(caller);
+                        items.push((name, caller, XrefKind::Caller));
+                    }
+                }
+            }
+        } else {
+            let refs = hbc_decomp::analysis::find_function_refs(
+                &self.file, &self.format, func_id,
+            );
+            let mut seen = std::collections::BTreeSet::new();
+            for xref in &refs {
+                if seen.insert(xref.function_id) {
+                    let name = self.func_name_by_id(xref.function_id);
+                    items.push((name, xref.function_id, XrefKind::Caller));
+                }
+            }
+
+            self.ensure_pipeline_building();
+        }
+
+        items.sort_by(|a, b| {
+            a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0))
+        });
+
+        self.xref_list = items;
+        self.xref_selected = 0;
+        self.xref_scroll = 0;
+        self.xref_open = !self.xref_list.is_empty();
+    }
+
+    fn func_name_by_id(&self, id: u32) -> String {
+        self.map1
+            .iter()
+            .find(|(_, &fid)| fid == id)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| {
+                self.file
+                    .string_at(
+                        self.file
+                            .function_headers
+                            .get(id as usize)
+                            .map(|h| h.function_name())
+                            .unwrap_or(0),
+                    )
+                    .map(|e| e.value.clone())
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| format!("f{id}"))
+            })
+    }
+
+    pub fn xref_jump(&mut self) {
+        if let Some((name, _, _)) = self.xref_list.get(self.xref_selected).cloned() {
+            self.xref_open = false;
+            let idx = self.function_names.iter().position(|n| n == &name);
+            if let Some(idx) = idx {
+                self.set_selected(idx);
+            } else {
+                self.search_query.clear();
+                self.update_search();
+                if let Some(idx) = self.function_names.iter().position(|n| n == &name) {
+                    self.set_selected(idx);
+                }
             }
         }
     }
