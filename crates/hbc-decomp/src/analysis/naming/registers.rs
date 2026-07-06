@@ -279,12 +279,23 @@ fn analyze_expr(expr: &Expression, info: &mut BTreeMap<u32, RegisterInfo>) {
     }
 }
 
-// A function's own name worth adopting as a variable name: not empty, not a
-// decompiler placeholder (`f1234`), at least two characters.
+// A function's own name worth adopting as a variable name: a valid JS identifier
+// (this rejects Hermes markers like `<anonymous>`), at least two characters, and
+// not a decompiler placeholder (`f1234`).
 fn is_meaningful_fn_name(name: &str) -> bool {
     if name.len() < 2 {
         return false;
     }
+    // Must be a valid identifier: first char a letter/`_`/`$`, rest alphanumerics.
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$' => {}
+        _ => return false,
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {
+        return false;
+    }
+    // `f` followed by only digits is a synthetic placeholder.
     if let Some(rest) = name.strip_prefix('f') {
         if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
             return false;
