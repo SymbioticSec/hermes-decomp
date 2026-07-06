@@ -119,14 +119,58 @@ pub(super) fn recover_loop(
                 }
                 Structure::Sequence(parts)
             } else {
-                let then_ = recover_structure(ctx, true_target, &new_stack);
-                let else_ = recover_structure(ctx, false_target, &new_stack);
-                let mut parts = vec![Structure::Block(loop_info.header, header_stmts)];
-                parts.push(Structure::If {
-                    condition,
-                    then_: Box::new(then_),
-                    else_: Box::new(else_),
-                });
+                // The header's branch stays inside the loop on both sides, so
+                // the header does NOT decide the loop exit: it is a conditional
+                // *within* the loop body (the exit test lives at a back-edge
+                // block). Structure the header's diamond the same way
+                // `recover_structure` does — recover each arm only up to the
+                // merge (post-dominator), emit the merge AFTER the `if`, so it
+                // isn't absorbed into one arm — then wrap the whole body in a
+                // loop so the exit `break` emitted deeper down is valid.
+                let header_block = Structure::Block(loop_info.header, header_stmts);
+                let body = if let Some(merge) = super::recovery::find_merge_point(
+                    ctx.cfg,
+                    loop_info.header,
+                    true_target,
+                    false_target,
+                ) {
+                    let merge_was_visited = ctx.visited.contains(&merge);
+                    ctx.visited.insert(merge);
+                    let then_ = recover_structure(ctx, true_target, &new_stack);
+                    let else_ = recover_structure(ctx, false_target, &new_stack);
+                    if !merge_was_visited {
+                        ctx.visited.remove(&merge);
+                    }
+                    Structure::Sequence(vec![
+                        header_block,
+                        Structure::If {
+                            condition,
+                            then_: Box::new(then_),
+                            else_: Box::new(else_),
+                        },
+                        recover_structure(ctx, merge, &new_stack),
+                    ])
+                } else {
+                    let then_ = recover_structure(ctx, true_target, &new_stack);
+                    let else_ = recover_structure(ctx, false_target, &new_stack);
+                    Structure::Sequence(vec![
+                        header_block,
+                        Structure::If {
+                            condition,
+                            then_: Box::new(then_),
+                            else_: Box::new(else_),
+                        },
+                    ])
+                };
+                let mut parts = vec![make_loop(
+                    body,
+                    Expression::constant(crate::ir::Constant::Bool(true)),
+                )];
+                if let Some(exit) = loop_info.exit {
+                    if !ctx.visited.contains(&exit) {
+                        parts.push(recover_structure(ctx, exit, loop_stack));
+                    }
+                }
                 Structure::Sequence(parts)
             }
         }

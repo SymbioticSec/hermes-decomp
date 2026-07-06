@@ -52,7 +52,14 @@ pub fn generate_name(info: &RegisterInfo, used_names: &mut HashSet<String>) -> S
             }
             "obj"
         }
-        RegisterRole::Function => "fn",
+        RegisterRole::Function => {
+            // A named function value (Babel/Metro helper like `_typeof`) keeps its
+            // own name instead of the generic "fn".
+            if let Some(fname) = &info.function_name {
+                return make_unique(fname.clone(), used_names);
+            }
+            "fn"
+        }
         RegisterRole::String => "str",
         RegisterRole::Number => "num",
         RegisterRole::Boolean => "flag",
@@ -144,6 +151,27 @@ mod tests {
         };
         let name = generate_name(&info, &mut used);
         assert_eq!(name, "obj");
+    }
+
+    #[test]
+    fn test_named_function_keeps_its_name() {
+        let mut used = HashSet::new();
+        let info = RegisterInfo {
+            role: RegisterRole::Function,
+            function_name: Some("_typeof".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(generate_name(&info, &mut used), "_typeof");
+    }
+
+    #[test]
+    fn test_anonymous_function_falls_back_to_fn() {
+        let mut used = HashSet::new();
+        let info = RegisterInfo {
+            role: RegisterRole::Function,
+            ..Default::default()
+        };
+        assert_eq!(generate_name(&info, &mut used), "fn");
     }
 }
 

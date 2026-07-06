@@ -10,6 +10,9 @@ pub struct RegisterInfo {
     pub from_property: Option<String>,
     // If assigned via destructuring: the property key name
     pub destructuring_key: Option<String>,
+    // If assigned a named function value, its own name (e.g. a Babel/Metro helper
+    // `_typeof`, `_interopRequireDefault`, …) — used verbatim instead of "fn".
+    pub function_name: Option<String>,
     pub use_count: usize,
 }
 
@@ -276,11 +279,43 @@ fn analyze_expr(expr: &Expression, info: &mut BTreeMap<u32, RegisterInfo>) {
     }
 }
 
+// A function's own name worth adopting as a variable name: a valid JS identifier
+// (this rejects Hermes markers like `<anonymous>`), at least two characters, and
+// not a decompiler placeholder (`f1234`).
+fn is_meaningful_fn_name(name: &str) -> bool {
+    if name.len() < 2 {
+        return false;
+    }
+    // Must be a valid identifier: first char a letter/`_`/`$`, rest alphanumerics.
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$' => {}
+        _ => return false,
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {
+        return false;
+    }
+    // `f` followed by only digits is a synthetic placeholder.
+    if let Some(rest) = name.strip_prefix('f') {
+        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+    }
+    true
+}
+
 fn infer_role_from_value(value: &Expression, info: &mut RegisterInfo) {
     match value {
         Expression::Array { .. } => info.role = RegisterRole::Array,
         Expression::Object { .. } => info.role = RegisterRole::Object,
-        Expression::Function { .. } => info.role = RegisterRole::Function,
+        Expression::Function { name, .. } => {
+            info.role = RegisterRole::Function;
+            if let Some(fname) = name {
+                if is_meaningful_fn_name(fname) {
+                    info.function_name = Some(fname.clone());
+                }
+            }
+        }
         Expression::Value(Value::Constant(c)) => {
             info.role = match c {
                 Constant::String(_) => RegisterRole::String,

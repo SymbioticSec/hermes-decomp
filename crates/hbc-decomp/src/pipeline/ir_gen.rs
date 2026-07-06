@@ -46,6 +46,11 @@ pub fn generate_ir(
 
     // STAGE F3: Copy/Constant Propagation
     if options.propagate {
+        // Cross-block copy propagation first: resolves register-to-register
+        // copies whose source and use straddle a basic-block boundary (e.g. a
+        // loop latch `Mov r0, i; ...; Inc i, r0`), which the intra-block pass
+        // below cannot reach.
+        transforms::propagate_copies(&mut cfg);
         propagate(&mut cfg, &PropagationConfig::default());
     }
 
@@ -216,7 +221,13 @@ pub fn generate_ir(
 
         // STAGE F25: Final Simplification
         crate::transforms::simplify_statements(&mut statements);
-        statements
+
+        // STAGE F26: Bottom-tested `while (true) { …; if (EXIT) break; }` -> `do…while`,
+        // then fold Hermes' guarded do-while shape back into a natural `for`/`while`.
+        // Runs last, on fully-named statements, once cleanup has produced the clean
+        // trailing `if (EXIT) break;` shape.
+        let statements = transforms::convert_while_true_loops(statements);
+        transforms::fold_guarded_loops(statements)
     } else {
         statements
     };

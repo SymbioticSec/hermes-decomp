@@ -77,6 +77,10 @@ fn rename_stmt(
              rename_expr(condition, reg_map, var_map);
              for s in body { rename_stmt(s, reg_map, var_map); }
         }
+        Statement::DoWhile { body, condition } => {
+             for s in body { rename_stmt(s, reg_map, var_map); }
+             rename_expr(condition, reg_map, var_map);
+        }
         Statement::Block(body) => {
              for s in body { rename_stmt(s, reg_map, var_map); }
         }
