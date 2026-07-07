@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "hbc-decomp"
-version = "0.1.0"
+version = "0.1.6"
 dependencies = [
  "bincode",
  "colored",
@@ -865,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "hbc-decomp-cli"
-version = "0.1.0"
+version = "0.1.6"
 dependencies = [
  "clap",
  "crossterm",
@@ -880,7 +880,7 @@ dependencies = [
 
 [[package]]
 name = "hbc-decomp-mcp"
-version = "0.1.0"
+version = "0.1.6"
 dependencies = [
  "axum",
  "clap",
