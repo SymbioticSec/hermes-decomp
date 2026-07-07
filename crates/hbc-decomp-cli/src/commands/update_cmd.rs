@@ -35,7 +35,7 @@ fn target_triple() -> &'static str {
 }
 
 fn build_updater(target_suffix: &str) -> Result<Box<dyn ReleaseUpdate>, Box<dyn std::error::Error>> {
-    let asset_name = format!("hermes-decomp-{}.{}", target_suffix, archive_ext());
+    let asset_name = format!("{}.{}", target_suffix, archive_ext());
     let updater = Update::configure()
         .repo_owner(REPO_OWNER)
         .repo_name(REPO_NAME)
@@ -79,14 +79,14 @@ pub fn check() -> Result<UpdateInfo, Box<dyn std::error::Error>> {
 pub fn install(version: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let target = target_triple();
     let updater = if let Some(v) = version {
-        let v = v.trim_start_matches('v');
-        let asset_name = format!("hermes-decomp-{}.{}", target, archive_ext());
+        let tag = if v.starts_with('v') { v.to_string() } else { format!("v{}", v) };
+        let asset_name = format!("{}.{}", target, archive_ext());
         Update::configure()
             .repo_owner(REPO_OWNER)
             .repo_name(REPO_NAME)
             .bin_name(BIN_NAME)
             .current_version(PKG_VERSION)
-            .target_version_tag(v)
+            .target_version_tag(&tag)
             .target(&asset_name)
             .show_download_progress(true)
             .show_output(false)
