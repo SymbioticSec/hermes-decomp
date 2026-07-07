@@ -1,6 +1,6 @@
 [package]
 name = "hbc-decomp-mcp"
-version = "0.1.0"
+version = "0.1.6"
 edition = "2021"
 license = "MIT"
 description = "MCP server exposing Hermes bytecode decompiler tools for AI assistants"

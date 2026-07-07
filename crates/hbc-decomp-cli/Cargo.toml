@@ -1,6 +1,6 @@
 [package]
 name = "hbc-decomp-cli"
-version = "0.1.0"
+version = "0.1.6"
 edition = "2021"
 license = "MIT"
 description = "CLI tool to decompile Hermes bytecode (.hbc) from React Native apps"
