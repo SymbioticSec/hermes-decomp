@@ -1,10 +1,10 @@
 [package]
 name = "hbc-decomp-mcp"
-version = "0.1.6"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "MCP server exposing Hermes bytecode decompiler tools for AI assistants"
-repository = "https://github.com/SymbioticSec/hermes-decomp"
+repository.workspace = true
 
 [[bin]]
 name = "hermes-mcp"

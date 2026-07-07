@@ -1,10 +1,10 @@
 [package]
 name = "hbc-decomp"
-version = "0.1.6"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Hermes bytecode (.hbc) decompiler library for React Native apps"
-repository = "https://github.com/SymbioticSec/hermes-decomp"
+repository.workspace = true
 keywords = ["hermes", "bytecode", "decompiler", "react-native", "reverse-engineering"]
 categories = ["development-tools", "parser-implementations"]
 build = "build.rs"
