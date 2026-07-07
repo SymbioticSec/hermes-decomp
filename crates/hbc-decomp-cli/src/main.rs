@@ -18,6 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     hbc_decomp::configure_thread_pool();
     let cli = Cli::parse();
 
+    commands::update_cmd::auto_check_on_startup();
+
     match cli.command {
         Command::Info {
             input,
@@ -405,6 +407,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let file = load_file(&input, layout, function_layout)?;
             let format = load_format(&file, format_version)?;
             commands::callgraph_cmd::run_callgraph(&file, &format, function, depth, dot)?;
+        }
+        Command::Update {
+            check,
+            install,
+            version,
+        } => {
+            commands::update_cmd::run(check, install, version)?;
         }
     }
 
