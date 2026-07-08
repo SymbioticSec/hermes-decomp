@@ -1,57 +1,214 @@
-use self_update::backends::github::Update;
-use self_update::update::ReleaseUpdate;
+//! Self-update via GitHub releases.
+//!
+//! Uses a lightweight synchronous stack (ureq, no tokio/hyper). The downloaded
+//! archive is verified against the release `SHA256SUMS` before the running
+//! binary is replaced, and version comparison uses the `semver` crate.
 
-const REPO_OWNER: &str = "SymbioticSec";
-const REPO_NAME: &str = "hermes-decomp";
+use std::error::Error;
+use std::io::Read;
+
+const REPO: &str = "SymbioticSec/hermes-decomp";
 const BIN_NAME: &str = "hermes-decomp";
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+const USER_AGENT: &str = concat!("hermes-decomp/", env!("CARGO_PKG_VERSION"));
+const MAX_DOWNLOAD: u64 = 256 * 1024 * 1024; // 256 MiB cap on any download
 
-fn target_triple() -> &'static str {
-    if cfg!(target_os = "linux") {
-        if cfg!(target_arch = "x86_64") {
-            "linux-x86_64"
-        } else if cfg!(target_arch = "aarch64") {
-            "linux-arm64"
-        } else {
-            "linux"
-        }
-    } else if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            "macos-arm64"
-        } else if cfg!(target_arch = "x86_64") {
-            "macos-x86_64"
-        } else {
-            "macos"
-        }
-    } else if cfg!(target_os = "windows") {
-        if cfg!(target_arch = "x86_64") {
-            "windows-x86_64"
-        } else {
-            "windows"
-        }
-    } else {
-        "unknown"
-    }
-}
+type Res<T> = Result<T, Box<dyn Error>>;
 
-fn build_updater(target_suffix: &str) -> Result<Box<dyn ReleaseUpdate>, Box<dyn std::error::Error>> {
-    let asset_name = format!("{}.{}", target_suffix, archive_ext());
-    let updater = Update::configure()
-        .repo_owner(REPO_OWNER)
-        .repo_name(REPO_NAME)
-        .bin_name(BIN_NAME)
-        .current_version(PKG_VERSION)
-        .target(&asset_name)
-        .show_download_progress(true)
-        .show_output(false)
-        .no_confirm(true)
-        .build()?;
-    Ok(updater)
+// --- platform / asset naming ---------------------------------------------------
+
+/// The platform suffix used in release asset names, or `None` if unsupported.
+fn platform_suffix() -> Option<&'static str> {
+    Some(match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "linux-x86_64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("macos", "aarch64") => "macos-arm64",
+        ("macos", "x86_64") => "macos-x86_64",
+        ("windows", "x86_64") => "windows-x86_64",
+        _ => return None,
+    })
 }
 
 fn archive_ext() -> &'static str {
-    if cfg!(target_os = "windows") { "zip" } else { "tar.gz" }
+    if cfg!(windows) {
+        "zip"
+    } else {
+        "tar.gz"
+    }
 }
+
+/// Exact release asset name for this platform, e.g.
+/// `hermes-decomp-v0.1.6-macos-arm64.tar.gz`. `tag` is the release tag (`v0.1.6`).
+fn asset_name(tag: &str, suffix: &str) -> String {
+    format!("hermes-decomp-{tag}-{suffix}.{}", archive_ext())
+}
+
+// --- GitHub API ----------------------------------------------------------------
+
+struct Release {
+    tag: String,
+    version: semver::Version,
+    body: Option<String>,
+    assets: Vec<(String, String)>, // (name, download_url)
+}
+
+impl Release {
+    fn asset_url(&self, name: &str) -> Option<&str> {
+        self.assets
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, u)| u.as_str())
+    }
+}
+
+fn parse_version(tag: &str) -> Result<semver::Version, semver::Error> {
+    semver::Version::parse(tag.trim_start_matches('v'))
+}
+
+fn http_get(url: &str) -> Res<ureq::Response> {
+    ureq::get(url)
+        .set("User-Agent", USER_AGENT)
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| e.into())
+}
+
+fn get_release(tag: Option<&str>) -> Res<Release> {
+    let url = match tag {
+        Some(t) => format!("https://api.github.com/repos/{REPO}/releases/tags/{t}"),
+        None => format!("https://api.github.com/repos/{REPO}/releases/latest"),
+    };
+    let text = http_get(&url)?.into_string()?;
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    parse_release(&json)
+}
+
+/// Parse a GitHub release JSON object into a `Release` (pure, unit-testable).
+fn parse_release(json: &serde_json::Value) -> Res<Release> {
+    let tag = json["tag_name"]
+        .as_str()
+        .ok_or("release JSON has no tag_name")?
+        .to_string();
+    let version = parse_version(&tag)?;
+    let body = json["body"].as_str().map(str::to_string);
+    let assets = json["assets"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| {
+                    Some((
+                        a["name"].as_str()?.to_string(),
+                        a["browser_download_url"].as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(Release {
+        tag,
+        version,
+        body,
+        assets,
+    })
+}
+
+// --- download / checksum -------------------------------------------------------
+
+fn download_bytes(url: &str) -> Res<Vec<u8>> {
+    let resp = ureq::get(url).set("User-Agent", USER_AGENT).call()?;
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .take(MAX_DOWNLOAD)
+        .read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Look up the expected SHA-256 for `filename` inside a `SHA256SUMS` body.
+/// Each line is `<hex>  <name>` (a leading `*` on the name, from binary mode, is
+/// tolerated).
+fn expected_sha256(sha256sums: &str, filename: &str) -> Option<String> {
+    for line in sha256sums.lines() {
+        let mut parts = line.split_whitespace();
+        let sum = parts.next()?;
+        let name = parts.next()?;
+        if name.trim_start_matches('*') == filename {
+            return Some(sum.to_lowercase());
+        }
+    }
+    None
+}
+
+// --- archive extraction --------------------------------------------------------
+
+/// Extract the `hermes-decomp` binary bytes from the downloaded archive.
+#[cfg(not(windows))]
+fn extract_binary(archive: &[u8]) -> Res<Vec<u8>> {
+    let decoder = flate2::read::GzDecoder::new(archive);
+    let mut tar = tar::Archive::new(decoder);
+    for entry in tar.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.to_string_lossy().to_string();
+        if path == BIN_NAME || path.ends_with(&format!("/{BIN_NAME}")) {
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data)?;
+            return Ok(data);
+        }
+    }
+    Err(format!("`{BIN_NAME}` not found in the downloaded archive").into())
+}
+
+#[cfg(windows)]
+fn extract_binary(archive: &[u8]) -> Res<Vec<u8>> {
+    let reader = std::io::Cursor::new(archive);
+    let mut zip = zip::ZipArchive::new(reader)?;
+    let want = format!("{BIN_NAME}.exe");
+    for i in 0..zip.len() {
+        let mut file = zip.by_index(i)?;
+        let name = file.name().to_string();
+        if name == want || name.ends_with(&format!("/{want}")) {
+            let mut data = Vec::new();
+            file.read_to_end(&mut data)?;
+            return Ok(data);
+        }
+    }
+    Err(format!("`{BIN_NAME}.exe` not found in the downloaded archive").into())
+}
+
+/// Write the new binary to a sibling temp file, make it executable, then swap it
+/// into place atomically (handles the running-executable case on all platforms).
+fn replace_running_binary(binary: &[u8]) -> Res<()> {
+    let current = std::env::current_exe()?;
+    let dir = current.parent().ok_or("cannot locate install directory")?;
+    let tmp = dir.join(format!(".hermes-decomp-update-{}", std::process::id()));
+    std::fs::write(&tmp, binary)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+    }
+
+    // self-replace swaps the currently running executable for `tmp`.
+    if let Err(e) = self_replace::self_replace(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
+    let _ = std::fs::remove_file(&tmp);
+    Ok(())
+}
+
+// --- public API ----------------------------------------------------------------
 
 pub struct UpdateInfo {
     pub current: String,
@@ -60,91 +217,91 @@ pub struct UpdateInfo {
     pub update_available: bool,
 }
 
-pub fn check() -> Result<UpdateInfo, Box<dyn std::error::Error>> {
-    let target = target_triple();
-    let updater = build_updater(target)?;
-    let latest = updater.get_latest_release()?;
-    let latest_raw = latest.name.trim_start_matches('v').to_string();
-    let latest_tag = normalize_semver(&latest_raw);
-    let current_tag = normalize_semver(PKG_VERSION);
-    let update_available = is_newer(&latest_raw, PKG_VERSION);
+pub fn check() -> Res<UpdateInfo> {
+    let release = get_release(None)?;
+    let current = parse_version(PKG_VERSION)?;
+    let update_available = release.version > current;
     Ok(UpdateInfo {
-        current: current_tag,
-        latest: latest_tag,
-        notes: latest.body,
+        current: current.to_string(),
+        latest: release.version.to_string(),
+        notes: release.body,
         update_available,
     })
 }
 
-pub fn install(version: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let target = target_triple();
-    let updater = if let Some(v) = version {
-        let tag = if v.starts_with('v') { v.to_string() } else { format!("v{}", v) };
-        let asset_name = format!("{}.{}", target, archive_ext());
-        Update::configure()
-            .repo_owner(REPO_OWNER)
-            .repo_name(REPO_NAME)
-            .bin_name(BIN_NAME)
-            .current_version(PKG_VERSION)
-            .target_version_tag(&tag)
-            .target(&asset_name)
-            .show_download_progress(true)
-            .show_output(false)
-            .no_confirm(true)
-            .build()?
-    } else {
-        build_updater(target)?
-    };
-    let status = updater.update()?;
-    log::info!("Update status: `{}`", status);
-    println!("Downloaded and installed. Restart hermes-decomp to use the new version.");
-    println!("(self_update reported: {:?})", status);
+pub fn install(version: Option<&str>) -> Res<()> {
+    let suffix = platform_suffix()
+        .ok_or_else(|| format!("no prebuilt binary for {}-{}", std::env::consts::OS, std::env::consts::ARCH))?;
+
+    let tag = version.map(|v| {
+        if v.starts_with('v') {
+            v.to_string()
+        } else {
+            format!("v{v}")
+        }
+    });
+    let release = get_release(tag.as_deref())?;
+
+    let asset = asset_name(&release.tag, suffix);
+    let asset_url = release
+        .asset_url(&asset)
+        .ok_or_else(|| format!("release {} has no asset `{asset}`", release.tag))?
+        .to_string();
+
+    // 1. Download the archive.
+    println!("Downloading {asset}...");
+    let archive = download_bytes(&asset_url)?;
+
+    // 2. Verify its SHA-256 against the release SHA256SUMS.
+    let sums_url = release
+        .asset_url("SHA256SUMS")
+        .ok_or("release has no SHA256SUMS asset to verify against")?;
+    let sums = String::from_utf8(download_bytes(sums_url)?)?;
+    let expected = expected_sha256(&sums, &asset)
+        .ok_or_else(|| format!("SHA256SUMS has no entry for `{asset}`"))?;
+    let actual = sha256_hex(&archive);
+    if actual != expected {
+        return Err(format!(
+            "checksum mismatch for `{asset}`\n  expected {expected}\n  actual   {actual}"
+        )
+        .into());
+    }
+    println!("Checksum OK ({}).", &actual[..16]);
+
+    // 3. Extract the binary and swap it in.
+    let binary = extract_binary(&archive)?;
+    replace_running_binary(&binary)?;
+
+    println!(
+        "Updated to {}. Restart hermes-decomp to use the new version.",
+        release.tag
+    );
     Ok(())
 }
 
-fn is_newer(latest: &str, current: &str) -> bool {
-    parse_semver(latest) > parse_semver(current)
-}
-
-fn parse_semver(s: &str) -> Vec<u64> {
-    s.trim_start_matches('v')
-        .split(|c: char| c == '.' || c == '-' || c == '+')
-        .filter_map(|p| p.parse::<u64>().ok())
-        .collect()
-}
-
-fn normalize_semver(s: &str) -> String {
-    parse_semver(s)
-        .iter()
-        .map(u64::to_string)
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-pub fn run(check_only: bool, install_now: bool, version: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(check_only: bool, install_now: bool, version: Option<String>) -> Res<()> {
     let do_install = install_now || (!check_only && version.is_some());
 
     if do_install {
         if version.is_none() {
             let info = check()?;
             if !info.update_available {
-                println!("Already on the latest version ({}).", info.current);
+                println!("Already on the latest version (v{}).", info.current);
                 return Ok(());
             }
             println!("Updating from v{} to v{}...", info.current, info.latest);
             if let Some(notes) = info.notes.as_deref() {
-                println!("\nChangelog:\n{}", notes);
+                println!("\nChangelog:\n{notes}");
             }
         }
-        install(version.as_deref())?;
-        return Ok(());
+        return install(version.as_deref());
     }
 
     let info = check()?;
     if info.update_available {
         println!("Update available: v{} -> v{}", info.current, info.latest);
         if let Some(notes) = info.notes.as_deref() {
-            println!("\nChangelog:\n{}", notes);
+            println!("\nChangelog:\n{notes}");
         }
         println!("\nRun `hermes-decomp update --install` to upgrade.");
     } else {
@@ -173,4 +330,82 @@ pub fn auto_check_on_startup() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semver_comparison_is_correct() {
+        // The old hand-rolled Vec<u64> compare got these wrong.
+        assert!(parse_version("v0.1.10").unwrap() > parse_version("v0.1.9").unwrap());
+        assert!(parse_version("0.2.0").unwrap() > parse_version("0.1.99").unwrap());
+        // A pre-release is older than its release.
+        assert!(parse_version("1.0.0-alpha").unwrap() < parse_version("1.0.0").unwrap());
+        assert_eq!(
+            parse_version("v1.2.3").unwrap(),
+            parse_version("1.2.3").unwrap()
+        );
+    }
+
+    #[test]
+    fn asset_name_is_exact() {
+        assert_eq!(
+            asset_name("v0.1.6", "macos-arm64"),
+            if cfg!(windows) {
+                "hermes-decomp-v0.1.6-macos-arm64.zip"
+            } else {
+                "hermes-decomp-v0.1.6-macos-arm64.tar.gz"
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sha256sums_matches_and_tolerates_star() {
+        let sums = "\
+abc123  hermes-decomp-v0.1.6-linux-x86_64.tar.gz
+DEF456  hermes-decomp-v0.1.6-macos-arm64.tar.gz
+789aaa *hermes-decomp-v0.1.6-windows-x86_64.zip
+";
+        assert_eq!(
+            expected_sha256(sums, "hermes-decomp-v0.1.6-macos-arm64.tar.gz").as_deref(),
+            Some("def456")
+        );
+        assert_eq!(
+            expected_sha256(sums, "hermes-decomp-v0.1.6-windows-x86_64.zip").as_deref(),
+            Some("789aaa")
+        );
+        assert_eq!(expected_sha256(sums, "not-there.tar.gz"), None);
+    }
+
+    #[test]
+    fn sha256_hex_is_lowercase_hex_of_known_vector() {
+        // SHA-256 of the empty input.
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn parse_release_extracts_fields() {
+        let json = serde_json::json!({
+            "tag_name": "v0.1.6",
+            "body": "notes",
+            "assets": [
+                {"name": "SHA256SUMS", "browser_download_url": "https://x/SHA256SUMS"},
+                {"name": "hermes-decomp-v0.1.6-macos-arm64.tar.gz", "browser_download_url": "https://x/a"}
+            ]
+        });
+        let rel = parse_release(&json).unwrap();
+        assert_eq!(rel.tag, "v0.1.6");
+        assert_eq!(rel.version, semver::Version::new(0, 1, 6));
+        assert_eq!(rel.asset_url("SHA256SUMS"), Some("https://x/SHA256SUMS"));
+        assert_eq!(
+            rel.asset_url("hermes-decomp-v0.1.6-macos-arm64.tar.gz"),
+            Some("https://x/a")
+        );
+        assert_eq!(rel.asset_url("missing"), None);
+    }
 }
