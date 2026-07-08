@@ -27,7 +27,6 @@ ureq = { version = "2", default-features = false, features = ["tls", "gzip"] }
 semver = "1"
 sha2 = "0.10"
 self-replace = "1"
-tempfile = "3"
 flate2 = "1"
 tar = "0.4"
 

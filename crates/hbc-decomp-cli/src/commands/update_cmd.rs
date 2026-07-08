@@ -177,25 +177,32 @@ fn extract_binary(archive: &[u8]) -> Res<Vec<u8>> {
     Err(format!("`{BIN_NAME}.exe` not found in the downloaded archive").into())
 }
 
-// Stage the verified binary in a fresh temp file, then swap it into place.
+// Stage the verified binary in a fresh file, then swap it into place.
 //
 // This function intentionally does NOT resolve the running executable's own
 // path: that lookup is documented as unsafe to trust for security-sensitive
 // decisions (it can be influenced through hard links, mount namespaces or
 // `/proc` manipulation). Locating and atomically replacing the running
-// executable is delegated entirely to `self_replace`, and the staging file is
-// created with `tempfile` (O_EXCL, unpredictable name), so no
-// attacker-influenced path is used to write or place the new binary.
+// executable is delegated entirely to `self_replace`. The staging file is
+// opened with `create_new` (O_EXCL), which fails rather than following a
+// pre-existing symlink at the path.
 fn replace_running_binary(binary: &[u8]) -> Res<()> {
     use std::io::Write;
 
-    let mut staged = tempfile::Builder::new()
-        .prefix("hermes-decomp-update-")
-        .tempfile()?;
-    staged.write_all(binary)?;
-    staged.flush()?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut staged_path = std::env::temp_dir();
+    staged_path.push(format!("hermes-decomp-update-{}-{nonce}", std::process::id()));
 
-    let staged_path = staged.into_temp_path(); // removed on drop
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged_path)?;
+    file.write_all(binary)?;
+    file.flush()?;
+    drop(file);
 
     #[cfg(unix)]
     {
@@ -203,8 +210,9 @@ fn replace_running_binary(binary: &[u8]) -> Res<()> {
         std::fs::set_permissions(&staged_path, std::fs::Permissions::from_mode(0o755))?;
     }
 
-    self_replace::self_replace(&staged_path)?;
-    Ok(())
+    let result = self_replace::self_replace(&staged_path);
+    let _ = std::fs::remove_file(&staged_path);
+    result.map_err(Into::into)
 }
 
 pub struct UpdateInfo {
