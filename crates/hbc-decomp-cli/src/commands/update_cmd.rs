@@ -303,14 +303,18 @@ pub fn run(check_only: bool, install_now: bool, version: Option<String>) -> Res<
     }
 
     let info = check()?;
-    if info.update_available {
-        println!("Update available: v{} -> v{}", info.current, info.latest);
-        if let Some(notes) = info.notes.as_deref() {
-            println!("\nChangelog:\n{notes}");
+    println!("Current version: v{}", info.current);
+    println!("Latest release:  v{}", info.latest);
+    if let Some(notes) = info.notes.as_deref() {
+        let notes = notes.trim();
+        if !notes.is_empty() {
+            println!("\nChangelog (v{}):\n{notes}", info.latest);
         }
-        println!("\nRun `hermes-decomp update --install` to upgrade.");
+    }
+    if info.update_available {
+        println!("\nUpdate available. Run `hermes-decomp update --install` to upgrade.");
     } else {
-        println!("Up to date (v{}).", info.current);
+        println!("\nYou are up to date.");
     }
     Ok(())
 }
