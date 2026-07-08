@@ -343,6 +343,18 @@ pub enum Command {
         #[arg(long, value_enum, default_value = "auto")]
         function_layout: FunctionLayoutArg,
     },
+    /// Check for and install updates from GitHub releases.
+    Update {
+        /// Just print the latest version + release notes, do not download.
+        #[arg(long)]
+        check: bool,
+        /// Install the update in place (replaces the current binary).
+        #[arg(long)]
+        install: bool,
+        /// Update to a specific version (e.g. "v0.1.7" or "0.1.7").
+        #[arg(long)]
+        version: Option<String>,
+    },
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug)]

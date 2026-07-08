@@ -1,10 +1,10 @@
 [package]
 name = "hbc-decomp-cli"
-version = "0.1.6"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "CLI tool to decompile Hermes bytecode (.hbc) from React Native apps"
-repository = "https://github.com/SymbioticSec/hermes-decomp"
+repository.workspace = true
 
 [[bin]]
 name = "hermes-decomp"
@@ -20,3 +20,18 @@ serde_json = "1.0"
 log = "0.4.29"
 env_logger = "0.11.9"
 similar = "2.7.0"
+
+# Self-update: a lightweight synchronous stack (no tokio/hyper) that verifies the
+# downloaded archive's SHA-256 against the release SHA256SUMS before installing.
+ureq = { version = "2", default-features = false, features = ["tls", "gzip"] }
+semver = "1"
+sha2 = "0.10"
+self-replace = "1"
+flate2 = "1"
+tar = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[package.metadata.binstall]
+bin = "hermes-decomp"
