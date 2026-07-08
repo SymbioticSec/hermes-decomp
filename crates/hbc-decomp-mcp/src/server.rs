@@ -1,7 +1,7 @@
 use rmcp::ErrorData as McpError;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router, ServerHandler,
 };
 use serde::Deserialize;
@@ -246,7 +246,7 @@ impl HermesService {
             bytes,
             pipeline_ctx: None,
         });
-        Ok(CallToolResult::success(vec![Content::text(info)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(info)]))
     }
 
     #[tool(description = "Get file header info: version, function count, string count, file path.")]
@@ -260,7 +260,7 @@ impl HermesService {
                 file.header.function_count,
                 file.header.string_count,
             );
-            Ok(CallToolResult::success(vec![Content::text(info)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(info)]))
         })
     }
 
@@ -301,7 +301,7 @@ impl HermesService {
                 )
                 .map_err(|e| McpError::internal_error(format!("{e}"), None))?
             };
-            Ok(CallToolResult::success(vec![Content::text(code)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(code)]))
         })
     }
 
@@ -316,7 +316,7 @@ impl HermesService {
             loaded.ensure_pipeline()?;
             let pipeline = loaded.pipeline_ctx.as_ref().unwrap();
             let code = pipeline.generate_function_code(&loaded.file, params.function_id);
-            Ok(CallToolResult::success(vec![Content::text(code)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(code)]))
         })
     }
 
@@ -332,7 +332,7 @@ impl HermesService {
                 &opts,
             )
             .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
-            Ok(CallToolResult::success(vec![Content::text(code)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(code)]))
         })
     }
 
@@ -354,7 +354,7 @@ impl HermesService {
             .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
             let json = serde_json::to_string_pretty(&ir)
                 .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
-            Ok(CallToolResult::success(vec![Content::text(json)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
         })
     }
 
@@ -377,7 +377,7 @@ impl HermesService {
                 &options,
             )
             .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
-            Ok(CallToolResult::success(vec![Content::text(asm)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(asm)]))
         })
     }
 
@@ -414,7 +414,7 @@ impl HermesService {
                     xref.function_id, name, xref.offset, xref.opcode
                 ));
             }
-            Ok(CallToolResult::success(vec![Content::text(output)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
         })
     }
 
@@ -445,7 +445,7 @@ impl HermesService {
                     m.module_id, m.function_id, name_str, m.dependencies, export_count
                 ));
             }
-            Ok(CallToolResult::success(vec![Content::text(output)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
         })
     }
 
@@ -459,7 +459,7 @@ impl HermesService {
             loaded.ensure_pipeline()?;
             let registry = &loaded.pipeline_ctx.as_ref().unwrap().registry;
             let tree = registry.get_dependency_tree(params.module_id, params.depth);
-            Ok(CallToolResult::success(vec![Content::text(tree.format(0))]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(tree.format(0))]))
         })
     }
 
@@ -534,7 +534,7 @@ impl HermesService {
                     }
                 }
             }
-            Ok(CallToolResult::success(vec![Content::text(output)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
         })
     }
 
@@ -546,7 +546,7 @@ impl HermesService {
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Supported Hermes bytecode versions: HBC 40-99.\nAvailable opcode tables: {list}"
         ))]))
     }
@@ -574,7 +574,7 @@ impl HermesService {
 
             let info = ClosureInfo::analyze(&stmts);
             if info.slots.is_empty() {
-                return Ok(CallToolResult::success(vec![Content::text(format!(
+                return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                     "Function {} has no closure variable slots.",
                     params.function_id
                 ))]));
@@ -600,7 +600,7 @@ impl HermesService {
                 };
                 output.push_str(&format!("  slot {slot}: {desc}\n"));
             }
-            Ok(CallToolResult::success(vec![Content::text(output)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
         })
     }
 
@@ -641,7 +641,7 @@ impl HermesService {
                     output.push_str(&format!("  ... and {} more\n", dead_count - 200));
                 }
             }
-            Ok(CallToolResult::success(vec![Content::text(output)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
         })
     }
 
@@ -655,7 +655,7 @@ impl HermesService {
         self.with_file(|loaded| {
             let offset = loaded.file.header.debug_info_offset;
             if offset == 0 || offset == u32::MAX {
-                return Ok(CallToolResult::success(vec![Content::text(
+                return Ok(CallToolResult::success(vec![ContentBlock::text(
                     "No debug info available in this bytecode file.",
                 )]));
             }
@@ -711,7 +711,7 @@ impl HermesService {
                 output.push_str("Debug info section exists but contains no data for this function.");
             }
 
-            Ok(CallToolResult::success(vec![Content::text(output)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
         })
     }
 
@@ -742,7 +742,7 @@ impl HermesService {
                 .unwrap_or_else(|| format!("f{}", params.function_id));
 
             let dot = hbc_decomp::ir::generate_dot(&cfg, &function_name);
-            Ok(CallToolResult::success(vec![Content::text(dot)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(dot)]))
         })
     }
 
@@ -768,7 +768,7 @@ impl HermesService {
                 })?;
             let function_id = module.function_id;
             let code = pipeline.generate_function_code(&loaded.file, function_id);
-            Ok(CallToolResult::success(vec![Content::text(code)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(code)]))
         })
     }
 
@@ -800,7 +800,7 @@ impl HermesService {
                 .unwrap_or_default();
 
             if module.exports.is_empty() {
-                return Ok(CallToolResult::success(vec![Content::text(format!(
+                return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                     "Module {}{} has no detected exports.",
                     params.module_id, name_str
                 ))]));
@@ -826,7 +826,7 @@ impl HermesService {
                     "  export \"{name}\" -> function {func_id} ({func_name})\n"
                 ));
             }
-            Ok(CallToolResult::success(vec![Content::text(output)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
         })
     }
 
@@ -854,7 +854,7 @@ impl HermesService {
             } else {
                 hbc_decomp::dump_table(&loaded.file, kind)
             };
-            Ok(CallToolResult::success(vec![Content::text(text)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
         })
     }
 
@@ -874,7 +874,7 @@ impl HermesService {
                 params.dot,
             )
             .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
-            Ok(CallToolResult::success(vec![Content::text(output)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
         })
     }
 
@@ -893,7 +893,7 @@ impl HermesService {
                         None,
                     )
                 })?;
-            Ok(CallToolResult::success(vec![Content::text(banner)]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(banner)]))
         })
     }
 }
@@ -901,12 +901,13 @@ impl HermesService {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for HermesService {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
-                "Hermes bytecode decompiler for React Native apps (HBC 40-99). Load a .hbc file with load_file, then use decompile/disassemble/xref/module tools to analyze. Use decompile_function for quick single-function output, or decompile_function_full/decompile_module for full-quality analysis with IPA naming and ESM imports/exports. Structural inspection: dump_table (cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer), callgraph (caller->callee edges, optional DOT), and function_info (per-function metadata banner).".into()
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
+        // ServerInfo (InitializeResult) is #[non_exhaustive] in rmcp 2, so it
+        // cannot be built with a struct literal; set fields on a default value.
+        let mut info = ServerInfo::default();
+        info.instructions = Some(
+            "Hermes bytecode decompiler for React Native apps (HBC 40-99). Load a .hbc file with load_file, then use decompile/disassemble/xref/module tools to analyze. Use decompile_function for quick single-function output, or decompile_function_full/decompile_module for full-quality analysis with IPA naming and ESM imports/exports. Structural inspection: dump_table (cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer), callgraph (caller->callee edges, optional DOT), and function_info (per-function metadata banner).".into()
+        );
+        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info
     }
 }

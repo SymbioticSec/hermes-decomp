@@ -143,11 +143,11 @@ impl PipelineContext {
 fn try_load(path: &Path, want: &CacheHeader) -> Option<PipelineContext> {
     let f = std::fs::File::open(path).ok()?;
     let mut reader = BufReader::new(f);
-    let got: CacheHeader = bincode::deserialize_from(&mut reader).ok()?;
+    let got: CacheHeader = rmp_serde::decode::from_read(&mut reader).ok()?;
     if !got.matches(want) {
         return None;
     }
-    let snap: PipelineSnapshot = bincode::deserialize_from(&mut reader).ok()?;
+    let snap: PipelineSnapshot = rmp_serde::decode::from_read(&mut reader).ok()?;
     Some(PipelineContext::from_snapshot(snap))
 }
 
@@ -190,8 +190,8 @@ mod tests {
         };
 
         // Serialize the snapshot and read it back.
-        let bytes = bincode::serialize(&ctx.to_snapshot()).expect("serialize");
-        let snap: PipelineSnapshot = bincode::deserialize(&bytes).expect("deserialize");
+        let bytes = rmp_serde::to_vec(&ctx.to_snapshot()).expect("serialize");
+        let snap: PipelineSnapshot = rmp_serde::from_slice(&bytes).expect("deserialize");
         let restored = PipelineContext::from_snapshot(snap);
 
         let m = restored.registry.modules.get(&7).expect("module preserved");
@@ -227,9 +227,9 @@ fn try_save(path: &Path, header: &CacheHeader, ctx: &PipelineContext) -> std::io
     {
         let f = std::fs::File::create(&tmp)?;
         let mut writer = BufWriter::new(f);
-        let map_err = |e: bincode::Error| std::io::Error::other(e.to_string());
-        bincode::serialize_into(&mut writer, header).map_err(map_err)?;
-        bincode::serialize_into(&mut writer, &ctx.to_snapshot()).map_err(map_err)?;
+        let map_err = |e: rmp_serde::encode::Error| std::io::Error::other(e.to_string());
+        rmp_serde::encode::write(&mut writer, header).map_err(map_err)?;
+        rmp_serde::encode::write(&mut writer, &ctx.to_snapshot()).map_err(map_err)?;
         use std::io::Write;
         writer.flush()?;
     }
