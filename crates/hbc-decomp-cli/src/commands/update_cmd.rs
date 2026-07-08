@@ -1,8 +1,8 @@
-//! Self-update via GitHub releases.
-//!
-//! Uses a lightweight synchronous stack (ureq, no tokio/hyper). The downloaded
-//! archive is verified against the release `SHA256SUMS` before the running
-//! binary is replaced, and version comparison uses the `semver` crate.
+// Self-update via GitHub releases.
+//
+// Uses a lightweight synchronous stack (ureq, no tokio/hyper). The downloaded
+// archive is verified against the release `SHA256SUMS` before the running
+// binary is replaced, and version comparison uses the `semver` crate.
 
 use std::error::Error;
 use std::io::Read;
@@ -15,9 +15,7 @@ const MAX_DOWNLOAD: u64 = 256 * 1024 * 1024; // 256 MiB cap on any download
 
 type Res<T> = Result<T, Box<dyn Error>>;
 
-// --- platform / asset naming ---------------------------------------------------
-
-/// The platform suffix used in release asset names, or `None` if unsupported.
+// The platform suffix used in release asset names, or `None` if unsupported.
 fn platform_suffix() -> Option<&'static str> {
     Some(match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => "linux-x86_64",
@@ -37,13 +35,11 @@ fn archive_ext() -> &'static str {
     }
 }
 
-/// Exact release asset name for this platform, e.g.
-/// `hermes-decomp-v0.1.6-macos-arm64.tar.gz`. `tag` is the release tag (`v0.1.6`).
+// Exact release asset name for this platform, e.g.
+// `hermes-decomp-v0.1.6-macos-arm64.tar.gz`. `tag` is the release tag (`v0.1.6`).
 fn asset_name(tag: &str, suffix: &str) -> String {
     format!("hermes-decomp-{tag}-{suffix}.{}", archive_ext())
 }
-
-// --- GitHub API ----------------------------------------------------------------
 
 struct Release {
     tag: String,
@@ -83,7 +79,7 @@ fn get_release(tag: Option<&str>) -> Res<Release> {
     parse_release(&json)
 }
 
-/// Parse a GitHub release JSON object into a `Release` (pure, unit-testable).
+// Parse a GitHub release JSON object into a `Release` (pure, unit-testable).
 fn parse_release(json: &serde_json::Value) -> Res<Release> {
     let tag = json["tag_name"]
         .as_str()
@@ -112,8 +108,6 @@ fn parse_release(json: &serde_json::Value) -> Res<Release> {
     })
 }
 
-// --- download / checksum -------------------------------------------------------
-
 fn download_bytes(url: &str) -> Res<Vec<u8>> {
     let resp = ureq::get(url).set("User-Agent", USER_AGENT).call()?;
     let mut buf = Vec::new();
@@ -134,9 +128,9 @@ fn sha256_hex(data: &[u8]) -> String {
         .collect()
 }
 
-/// Look up the expected SHA-256 for `filename` inside a `SHA256SUMS` body.
-/// Each line is `<hex>  <name>` (a leading `*` on the name, from binary mode, is
-/// tolerated).
+// Look up the expected SHA-256 for `filename` inside a `SHA256SUMS` body.
+// Each line is `<hex>  <name>` (a leading `*` on the name, from binary mode, is
+// tolerated).
 fn expected_sha256(sha256sums: &str, filename: &str) -> Option<String> {
     for line in sha256sums.lines() {
         let mut parts = line.split_whitespace();
@@ -149,9 +143,7 @@ fn expected_sha256(sha256sums: &str, filename: &str) -> Option<String> {
     None
 }
 
-// --- archive extraction --------------------------------------------------------
-
-/// Extract the `hermes-decomp` binary bytes from the downloaded archive.
+// Extract the `hermes-decomp` binary bytes from the downloaded archive.
 #[cfg(not(windows))]
 fn extract_binary(archive: &[u8]) -> Res<Vec<u8>> {
     let decoder = flate2::read::GzDecoder::new(archive);
@@ -185,30 +177,35 @@ fn extract_binary(archive: &[u8]) -> Res<Vec<u8>> {
     Err(format!("`{BIN_NAME}.exe` not found in the downloaded archive").into())
 }
 
-/// Write the new binary to a sibling temp file, make it executable, then swap it
-/// into place atomically (handles the running-executable case on all platforms).
+// Stage the verified binary in a fresh temp file, then swap it into place.
+//
+// This function intentionally does NOT resolve the running executable's own
+// path: that lookup is documented as unsafe to trust for security-sensitive
+// decisions (it can be influenced through hard links, mount namespaces or
+// `/proc` manipulation). Locating and atomically replacing the running
+// executable is delegated entirely to `self_replace`, and the staging file is
+// created with `tempfile` (O_EXCL, unpredictable name), so no
+// attacker-influenced path is used to write or place the new binary.
 fn replace_running_binary(binary: &[u8]) -> Res<()> {
-    let current = std::env::current_exe()?;
-    let dir = current.parent().ok_or("cannot locate install directory")?;
-    let tmp = dir.join(format!(".hermes-decomp-update-{}", std::process::id()));
-    std::fs::write(&tmp, binary)?;
+    use std::io::Write;
+
+    let mut staged = tempfile::Builder::new()
+        .prefix("hermes-decomp-update-")
+        .tempfile()?;
+    staged.write_all(binary)?;
+    staged.flush()?;
+
+    let staged_path = staged.into_temp_path(); // removed on drop
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::set_permissions(&staged_path, std::fs::Permissions::from_mode(0o755))?;
     }
 
-    // self-replace swaps the currently running executable for `tmp`.
-    if let Err(e) = self_replace::self_replace(&tmp) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
-    let _ = std::fs::remove_file(&tmp);
+    self_replace::self_replace(&staged_path)?;
     Ok(())
 }
-
-// --- public API ----------------------------------------------------------------
 
 pub struct UpdateInfo {
     pub current: String,
