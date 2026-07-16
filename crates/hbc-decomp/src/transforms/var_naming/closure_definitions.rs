@@ -75,6 +75,10 @@ pub fn rename_closure_variables_cross_function(
                     if info.called_as_function {
                         agg.called_as_function = true;
                     }
+                    agg.indexed_accesses += info.indexed_accesses;
+                    if info.spread {
+                        agg.spread = true;
+                    }
                 }
             }
         }

@@ -49,13 +49,14 @@ impl ClosureInfo {
         match stmt {
             Statement::Assign { target, value } => {
                 if let AssignTarget::Register(r) = target {
-                    if let Some(val) = value_from_expr(value, None, false) {
+                    // Use reg_values so copies like `r5 = require` still track.
+                    if let Some(val) = value_from_expr(value, Some(reg_values), true) {
                         reg_values.insert(*r, val);
                     }
                 }
 
                 if let AssignTarget::ClosureVar { slot, .. } = target {
-                    if let Some(val) = value_from_expr(value, Some(reg_values), false) {
+                    if let Some(val) = value_from_expr(value, Some(reg_values), true) {
                         self.slots.insert(*slot, val);
                     }
                 }
@@ -72,14 +73,42 @@ impl ClosureInfo {
                     self.analyze_stmt(s, reg_values);
                 }
             }
-            Statement::While { body, .. } => {
+            Statement::While { body, .. }
+            | Statement::DoWhile { body, .. }
+            | Statement::For { body, .. }
+            | Statement::ForIn { body, .. }
+            | Statement::ForOf { body, .. }
+            | Statement::Block(body) => {
                 for s in body {
                     self.analyze_stmt(s, reg_values);
                 }
             }
-            Statement::Block(inner) => {
-                for s in inner {
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
+                for s in try_body {
                     self.analyze_stmt(s, reg_values);
+                }
+                for s in catch_body {
+                    self.analyze_stmt(s, reg_values);
+                }
+                for s in finally_body {
+                    self.analyze_stmt(s, reg_values);
+                }
+            }
+            Statement::Switch { cases, default, .. } => {
+                for (_, body) in cases {
+                    for s in body {
+                        self.analyze_stmt(s, reg_values);
+                    }
+                }
+                if let Some(d) = default {
+                    for s in d {
+                        self.analyze_stmt(s, reg_values);
+                    }
                 }
             }
             _ => {}
@@ -116,18 +145,26 @@ impl ClosureInfo {
             // alias for the constant. Prefer a short descriptive name derived
             // from the constant when it's a non-empty string (so
             // `env[0] = "ADMINISTRATOR"` → `ADMINISTRATOR` instead of
-            // `closure_0`); fall back to `c{slot}` / `closure_{slot}`.
+            // `closure_0`); regex → `re{slot}`; else `c{slot}`.
             Some(ClosureSlotValue::Constant(c)) => {
-                if let Some(name) = name_from_constant_text(c) {
+                if c.starts_with('/') {
+                    // Hermes RegExp display starts with `/`
+                    format!("re{raw_slot}")
+                } else if let Some(name) = name_from_constant_text(c) {
                     name
                 } else {
                     format!("c{raw_slot}")
                 }
             }
             Some(ClosureSlotValue::Variable(v)) => {
-                // Prefer the variable name when it's meaningful; keep generic
-                // rN / argN / tmp forms as stable closure_N so they stay unique.
-                if is_meaningful_closure_name(v) {
+                // Prefer semantic names. Map Metro factory params (argN/pN) to
+                // their role names so children see `require`/`dependencyMap`
+                // instead of `closure_N` (Discord: ~8.5k `let closure_N = argN`).
+                if v == "arguments" {
+                    "args".to_string()
+                } else if let Some(role) = metro_param_role_name(v) {
+                    role.to_string()
+                } else if is_meaningful_closure_name(v) {
                     v.clone()
                 } else {
                     format!("closure_{raw_slot}")
@@ -136,6 +173,26 @@ impl ClosureInfo {
             Some(ClosureSlotValue::Unknown) | None => format!("closure_{raw_slot}"),
         }
     }
+}
+
+// Map generic factory parameter names to Metro roles.
+// Classic: (global, require, module, exports, dependencyMap) → arg0..arg4
+// Modern:  + importDefault/importAll → arg0..arg6
+fn metro_param_role_name(name: &str) -> Option<&'static str> {
+    let idx = FactoryRoles::extract_param_index(name)?;
+    Some(match idx {
+        0 => "global",
+        1 => "require",
+        2 => "module", // classic; modern with helpers: importDefault, still better than closure_N
+        3 => "exports", // classic; modern: importAll
+        4 => "dependencyMap", // classic deps / modern module, see below
+        5 => "exports", // modern 7-param: exports
+        6 => "dependencyMap", // modern deps
+        _ => return None,
+    })
+    // Note: for modern 7-param factories arg2/arg3 are importDefault/importAll
+    // and arg4 is module. Mislabeling those as module/exports is still far
+    // more readable than closure_N, and depmap rewrite accepts idx>=4.
 }
 
 // Derive a JS identifier from a constant's display text (e.g. `"foo"` → `foo`).
@@ -223,6 +280,10 @@ pub fn value_from_expr(
             id: id.0,
             name: name.clone(),
         }),
+        Expression::RegExp { pattern, flags } => {
+            // Keep a compact tag so get_slot_name can emit re{N}.
+            Some(ClosureSlotValue::Constant(format!("/{pattern}/{flags}")))
+        }
         Expression::Value(Value::Register(r)) => {
             reg_values.and_then(|rv| rv.get(r).cloned())
         }

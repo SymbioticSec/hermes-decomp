@@ -87,10 +87,13 @@ pub fn rewrite_dependency_map_indices(
 // Names known to refer to the factory dependency array.
 fn collect_depmap_aliases(stmts: &[Statement]) -> HashSet<String> {
     let mut aliases: HashSet<String> = HashSet::new();
-    // Always recognize the canonical names.
+    // Always recognize the canonical names (including names we rewrite
+    // factory-captured slots to via get_slot_name).
     aliases.insert("dependencyMap".into());
     aliases.insert("deps".into());
     aliases.insert("_dependencyMap".into());
+    // After closure naming, heavily-indexed captures may still be called
+    // `dependencyMap` or a unique `dependencyMap2`, handled below by prefix.
 
     fn walk(stmts: &[Statement], aliases: &mut HashSet<String>) {
         for stmt in stmts {
@@ -400,7 +403,11 @@ fn try_resolve_depmap_index(
 
     let base_is_dep = match object.as_ref() {
         Expression::Value(Value::Variable(name)) => {
-            aliases.contains(name) || is_dep_array_name(name, &default_roles())
+            aliases.contains(name)
+                || is_dep_array_name(name, &default_roles())
+                // Unique-ified names: dependencyMap2, deps3, …
+                || name.starts_with("dependencyMap")
+                || (name.starts_with("deps") && name[4..].chars().all(|c| c.is_ascii_digit()))
         }
         Expression::Value(Value::Parameter(idx)) => {
             let roles = default_roles();

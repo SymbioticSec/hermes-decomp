@@ -7,6 +7,43 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
         .map(|s| s.as_str())
         .collect();
 
+    // Prefer a meaningful slot hint from the parent StoreToEnvironment
+    // (e.g. factory roles rewritten to require/dependencyMap, or a named var).
+    if let Some(hint) = slot_name_hint {
+        if is_strong_slot_hint(hint) {
+            return Some(hint.to_string());
+        }
+    }
+
+    // Heavily indexed capture → dependency map / native module table.
+    // Even a single index is a strong signal when there are no other accesses.
+    if info.indexed_accesses >= 1 && all_accessed.is_empty() {
+        if let Some(hint) = slot_name_hint {
+            if hint.contains("dep") || hint == "dependencyMap" || hint == "require" {
+                return Some(hint.to_string());
+            }
+        }
+        // Called after index: `table[i](…)` is the classic TurboModule / BatchedBridge shape.
+        if info.called_as_function || info.indexed_accesses >= 2 {
+            return Some("dependencyMap".to_string());
+        }
+        return Some("table".to_string());
+    }
+
+    // Spread of a capture with no other usage → arguments.
+    if info.spread && all_accessed.is_empty() && info.indexed_accesses == 0 {
+        return Some("args".to_string());
+    }
+
+    // Logger: only .log / .warn / .error / .info / .debug
+    if !info.methods.is_empty()
+        && info.methods.iter().all(|m| {
+            matches!(m.as_str(), "log" | "warn" | "error" | "info" | "debug" | "trace")
+        })
+    {
+        return Some("logger".to_string());
+    }
+
     // Heuristic 0: React/JSX patterns, very common in React Native bundles
     let react_hooks = ["useState", "useRef", "useEffect", "useCallback", "useMemo",
                        "useContext", "useReducer", "useLayoutEffect", "useImperativeHandle"];
@@ -218,14 +255,49 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
 
     // Heuristic 5: Slot name hint as last resort (for closures with no usage patterns)
     if let Some(hint) = slot_name_hint {
-        if !hint.starts_with("closure_") && !hint.starts_with("f")
-            && !hint.starts_with("arg") && !hint.starts_with("r")
-            && hint.len() > 1 {
+        if is_usable_slot_hint(hint) {
             return Some(hint.to_string());
         }
     }
 
     None
+}
+
+// Strong hints from the parent env store, always prefer these.
+fn is_strong_slot_hint(hint: &str) -> bool {
+    matches!(
+        hint,
+        "require"
+            | "dependencyMap"
+            | "exports"
+            | "module"
+            | "global"
+            | "importDefault"
+            | "importAll"
+            | "args"
+            | "logger"
+            | "React"
+            | "StyleSheet"
+            | "Platform"
+    ) || (hint.len() > 2
+        && !hint.starts_with("closure_")
+        && !hint.starts_with('c')
+        && !hint.starts_with("arg")
+        && !hint.starts_with('r')
+        && !hint.starts_with('f')
+        && hint.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && hint
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+}
+
+fn is_usable_slot_hint(hint: &str) -> bool {
+    hint.len() > 1
+        && !hint.starts_with("closure_")
+        && !hint.starts_with('f')
+        && !hint.starts_with("arg")
+        && !hint.starts_with('r')
+        && !(hint.starts_with('c') && hint[1..].chars().all(|c| c.is_ascii_digit()))
 }
 
 // Extract a common domain name from setter/getter methods.

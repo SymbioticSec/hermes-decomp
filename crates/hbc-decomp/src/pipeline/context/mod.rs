@@ -211,13 +211,6 @@ impl PipelineContext {
         }
         log::debug!("[pipeline] IPA closure re-resolve: {:.2?}", t.elapsed());
 
-        // STAGE W9b: dependencyMap[N] → absolute module IDs.
-        // MUST run after resolve_closures: nested factories capture the map as a
-        // ClosureVar, which only becomes Variable("dependencyMap") after resolve.
-        let t = std::time::Instant::now();
-        crate::analysis::metro::rewrite_dependency_maps_late(all_ir, registry, closure_ctx);
-        log::debug!("[pipeline] dependencyMap rewrite (late): {:.2?}", t.elapsed());
-
         // STAGE W10: Closure Property Naming (cross-function)
         let t = std::time::Instant::now();
         let closure_renames = if let Some(ctx) = closure_ctx.as_ref() {
@@ -240,6 +233,14 @@ impl PipelineContext {
         if def_renames > 0 {
             log::debug!("[pipeline] closure definition naming: {def_renames} variables renamed");
         }
+
+        // STAGE W12: dependencyMap[N] → absolute module IDs.
+        // After resolve_closures AND closure naming: heavily-indexed captures are
+        // renamed to `dependencyMap` / `dependencyMap2` only in W10, so this must
+        // run last among the naming stages.
+        let t = std::time::Instant::now();
+        crate::analysis::metro::rewrite_dependency_maps_late(all_ir, registry, closure_ctx);
+        log::debug!("[pipeline] dependencyMap rewrite (post-naming): {:.2?}", t.elapsed());
 
         global_analysis
     }
