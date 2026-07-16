@@ -43,7 +43,8 @@ pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
                 return false;
             }
             let uses = use_count.get(*name).copied().unwrap_or(0);
-            uses > 1 && uses <= 32
+            // Allow more multi-use pure inlines (cheap member chains / consts).
+            uses > 1 && uses <= 48
         })
         .map(|(name, _)| name.clone())
         .collect();
@@ -209,19 +210,35 @@ fn is_constant_expr(expr: &Expression) -> bool {
 
 // Check if an expression is simple and pure (safe to duplicate for multi-use inlining).
 fn is_simple_pure_expr(expr: &Expression) -> bool {
+    is_simple_pure_expr_depth(expr, 0)
+}
+
+fn is_simple_pure_expr_depth(expr: &Expression, depth: u8) -> bool {
+    if depth > 4 {
+        return false;
+    }
     match expr {
-        // Simple values: variables, constants, parameters, globals
         Expression::Value(Value::Variable(_))
         | Expression::Value(Value::Parameter(_))
         | Expression::Value(Value::Constant(_))
         | Expression::Value(Value::Global)
-        | Expression::Value(Value::NewTarget) => true,
-        // Member access on a simple value: x.foo, x[0]
-        Expression::Member { object, .. } => is_simple_pure_expr(object),
-        // Unary on simple value: !x, typeof x, -x
-        Expression::Unary { operand, .. } => is_simple_pure_expr(operand),
-        // Short binary on simple values: a + b, a === b (but not calls within)
-        Expression::Binary { left, right, .. } => is_simple_pure_expr(left) && is_simple_pure_expr(right),
+        | Expression::Value(Value::This)
+        | Expression::Value(Value::NewTarget)
+        | Expression::Value(Value::Super) => true,
+        // Member / index chains: a.b.c, a[0]
+        Expression::Member { object, property, .. } => {
+            is_simple_pure_expr_depth(object, depth + 1)
+                && match property {
+                    crate::ir::PropertyKey::Computed(k) => {
+                        is_simple_pure_expr_depth(k, depth + 1)
+                    }
+                    _ => true,
+                }
+        }
+        Expression::Unary { operand, .. } => is_simple_pure_expr_depth(operand, depth + 1),
+        Expression::Binary { left, right, .. } => {
+            is_simple_pure_expr_depth(left, depth + 1) && is_simple_pure_expr_depth(right, depth + 1)
+        }
         _ => false,
     }
 }

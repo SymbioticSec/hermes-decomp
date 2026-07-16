@@ -109,9 +109,17 @@ impl Codegen {
             return None;
         }
 
-        // Name arg is the property name
+        // Name arg is the property name (string literal, or a simple variable
+        // already holding a string, rare but seen after const folding gaps).
         let prop_name = match &args[name_idx] {
             Expression::Value(Value::Constant(Constant::String(s))) => s.clone(),
+            Expression::Value(Value::Variable(n))
+                if crate::util::is_valid_identifier(n) && !n.starts_with("arg") =>
+            {
+                // Variable used as export name, only accept if it looks like a
+                // real export identifier (not a generic register).
+                n.clone()
+            }
             _ => return None,
         };
 

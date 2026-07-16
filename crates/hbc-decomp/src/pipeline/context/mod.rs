@@ -315,6 +315,42 @@ impl PipelineContext {
             transforms::promote_const_bindings(stmts);
         }
 
+        // STAGE W16a2: while(true)+trailing break → do/while (after inlining cleans latch)
+        {
+            use rayon::prelude::*;
+            let keys: Vec<u32> = all_ir.keys().copied().collect();
+            let mut entries: Vec<(u32, Vec<Statement>)> = keys
+                .into_iter()
+                .filter_map(|id| all_ir.remove(&id).map(|s| (id, s)))
+                .collect();
+            entries.par_iter_mut().for_each(|(_, stmts)| {
+                let old = std::mem::take(stmts);
+                *stmts = transforms::convert_while_true_loops(old);
+                let old = std::mem::take(stmts);
+                *stmts = transforms::fold_guarded_loops(old);
+            });
+            for (id, stmts) in entries {
+                all_ir.insert(id, stmts);
+            }
+        }
+
+        // STAGE W16a3: second JSX pass after inlining (props often still variables before)
+        {
+            use rayon::prelude::*;
+            let keys: Vec<u32> = all_ir.keys().copied().collect();
+            let mut entries: Vec<(u32, Vec<Statement>)> = keys
+                .into_iter()
+                .filter_map(|id| all_ir.remove(&id).map(|s| (id, s)))
+                .collect();
+            entries.par_iter_mut().for_each(|(_, stmts)| {
+                let old = std::mem::take(stmts);
+                *stmts = transforms::reconstruct_jsx(old);
+            });
+            for (id, stmts) in entries {
+                all_ir.insert(id, stmts);
+            }
+        }
+
         // STAGE W16b: Collapse generator wrappers. A `function* gen()` compiles to
         // a thin wrapper that does `CreateGenerator(body); return it`, with the
         // actual state machine (the yields) in a separate inner function. Inline

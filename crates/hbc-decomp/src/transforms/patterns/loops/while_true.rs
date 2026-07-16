@@ -81,18 +81,47 @@ fn is_true(e: &Expression) -> bool {
 
 // If the body's last statement is `if (EXIT) { break; }` (empty else) and the
 // rest of the body has no loop-level break/continue, return (body-minus-last, EXIT).
+//
+// Also accepts a trailing Block whose last stmt is that if-break shape
+// (Hermes sometimes wraps the latch in an extra Block).
 fn split_trailing_exit(body: &[Statement]) -> Option<(Vec<Statement>, Expression)> {
+    if let Some(r) = split_trailing_exit_at(body) {
+        return Some(r);
+    }
+    // Trailing Block wrapper: `while (true) { ...; { if (e) break; } }`
     let last = body.last()?;
-    let Statement::If { condition, then_body, else_body } = last else {
+    if let Statement::Block(inner) = last {
+        if let Some((inner_body, exit)) = split_trailing_exit_at(inner) {
+            let mut prefix = body[..body.len() - 1].to_vec();
+            prefix.extend(inner_body);
+            if prefix.iter().any(|s| escapes_loop(s, false)) {
+                return None;
+            }
+            return Some((prefix, exit));
+        }
+    }
+    None
+}
+
+fn split_trailing_exit_at(body: &[Statement]) -> Option<(Vec<Statement>, Expression)> {
+    let last = body.last()?;
+    let Statement::If {
+        condition,
+        then_body,
+        else_body,
+    } = last
+    else {
         return None;
     };
-    // then must be exactly `break;` (unlabeled → this loop).
-    if !matches!(then_body.as_slice(), [Statement::Break(None)]) {
+    // then must be exactly `break;` (unlabeled → this loop), optionally after
+    // pure comments.
+    if !is_break_only(then_body) {
         return None;
     }
-    // else must be absent or a redundant `continue;` (the implicit loop-back that
-    // later cleanup would drop). Anything else means it is not a plain exit test.
-    let else_ok = else_body.is_empty() || matches!(else_body.as_slice(), [Statement::Continue(None)]);
+    // else must be absent, empty, or a redundant `continue;`.
+    let else_ok = else_body.is_empty()
+        || matches!(else_body.as_slice(), [Statement::Continue(None)])
+        || is_continue_only(else_body);
     if !else_ok {
         return None;
     }
@@ -101,6 +130,22 @@ fn split_trailing_exit(body: &[Statement]) -> Option<(Vec<Statement>, Expression
         return None;
     }
     Some((inner.to_vec(), condition.clone()))
+}
+
+fn is_break_only(stmts: &[Statement]) -> bool {
+    let meaningful: Vec<_> = stmts
+        .iter()
+        .filter(|s| !matches!(s, Statement::Comment(_)))
+        .collect();
+    matches!(meaningful.as_slice(), [Statement::Break(None)])
+}
+
+fn is_continue_only(stmts: &[Statement]) -> bool {
+    let meaningful: Vec<_> = stmts
+        .iter()
+        .filter(|s| !matches!(s, Statement::Comment(_)))
+        .collect();
+    matches!(meaningful.as_slice(), [Statement::Continue(None)])
 }
 
 // Does `stmt` contain a `break`/`continue` that targets the CURRENT loop
@@ -176,6 +221,20 @@ mod tests {
     }
     fn while_true(body: Vec<Statement>) -> Statement {
         Statement::While { condition: Expression::constant(Constant::Bool(true)), body }
+    }
+
+    #[test]
+    fn converts_trailing_break_inside_block_wrapper() {
+        let body = vec![
+            Statement::Expr(var("step")),
+            Statement::Block(vec![if_break(cmp(BinaryOp::Ge, "i", "n"), vec![])]),
+        ];
+        let out = convert_while_true_loops(vec![while_true(body)]);
+        assert!(
+            matches!(out[0], Statement::DoWhile { .. }),
+            "expected do/while from block-wrapped latch, got {:?}",
+            out[0]
+        );
     }
 
     #[test]
