@@ -2,15 +2,20 @@
 //
 // `PipelineContext::build_with_options` takes several seconds on a large bundle
 // because it runs the full analysis pipeline over every function. That work only
-// depends on the bytecode itself, so we serialize the resulting context to disk
-// keyed by a hash of the `.hbc` bytes. A later invocation on the same, unchanged
-// file deserializes the context (sub-second) instead of recomputing it; if the
-// file changes, the hash changes and the cache is transparently rebuilt.
+// depends on the bytecode itself *and the decompiler binary*, so we serialize
+// the resulting context to disk keyed by:
+//   - SHA-256 of the `.hbc` bytes
+//   - SHA-256 of the running `hermes-decomp` executable (auto-invalidates on
+//     any rebuild, no manual CACHE_VERSION bump required for output changes)
+//   - a manual CACHE_VERSION (schema / wire-format safety net)
+//   - output-affecting options
+// A later invocation on the same file with the same binary deserializes the
+// context (sub-second); any mismatch rebuilds transparently.
 
 use std::collections::BTreeMap;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::analysis::{ClosureContext, GlobalAnalysis, MetroRegistry};
 use crate::error::Result;
@@ -21,10 +26,10 @@ use crate::opcode::BytecodeFormat;
 use super::context::PipelineContext;
 use super::DecompileOptionsV2;
 
-// Bump whenever the pipeline output or any serialized type changes in a way that
-// would make an older cache produce wrong results. Stale caches (older version)
-// are ignored and rebuilt.
-pub const CACHE_VERSION: u32 = 2;
+// Bump when the *on-disk schema* changes (header fields, snapshot layout) in a
+// way that old entries must not be read. Pipeline *output* changes are covered
+// by `binary_fingerprint()`, no need to bump for every decompiler fix.
+pub const CACHE_VERSION: u32 = 3;
 const MAGIC: [u8; 4] = *b"HDC1";
 
 // Standard cache path for an input file: `<input>.hdcache` next to it.
@@ -44,6 +49,26 @@ fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// Identity of the running decompiler binary (SHA-256 of `current_exe()`).
+///
+/// Computed once per process. Any recompilation produces a different binary
+/// image → different fingerprint → automatic cache miss. A wrong key is only a
+/// miss (rebuild), never a wrong result.
+///
+/// If the executable cannot be read, returns a sentinel that will not match a
+/// real digest, so we never reuse a foreign cache entry.
+pub fn binary_fingerprint() -> [u8; 32] {
+    static FP: OnceLock<[u8; 32]> = OnceLock::new();
+    *FP.get_or_init(|| match std::env::current_exe().and_then(std::fs::read) {
+        Ok(bytes) => hash_bytes(&bytes),
+        Err(_) => {
+            // 0xFF… is not a SHA-256 of any real file (SHA-256 is uniform; we
+            // only need "won't collide with a previous real fingerprint").
+            [0xFF; 32]
+        }
+    })
+}
+
 // Only these options actually change the built context (see build_with_options).
 fn options_key(options: &DecompileOptionsV2) -> u32 {
     (options.assembly_mode as u32) | ((options.include_offsets as u32) << 1)
@@ -54,16 +79,20 @@ struct CacheHeader {
     magic: [u8; 4],
     cache_version: u32,
     file_hash: [u8; 32],
+    /// SHA-256 of the decompiler binary that produced this entry.
+    binary_hash: [u8; 32],
     options_key: u32,
 }
 
 impl CacheHeader {
     // A cached entry is usable only if every field matches: same magic, same
-    // cache format version, same bytecode (hash) and same output-affecting options.
+    // cache format version, same bytecode, same decompiler binary, and same
+    // output-affecting options.
     fn matches(&self, want: &CacheHeader) -> bool {
         self.magic == want.magic
             && self.cache_version == want.cache_version
             && self.file_hash == want.file_hash
+            && self.binary_hash == want.binary_hash
             && self.options_key == want.options_key
     }
 }
@@ -96,6 +125,7 @@ impl PipelineContext {
             magic: MAGIC,
             cache_version: CACHE_VERSION,
             file_hash: hash_bytes(bytes),
+            binary_hash: binary_fingerprint(),
             options_key: options_key(options),
         };
 
@@ -205,18 +235,49 @@ mod tests {
 
     #[test]
     fn stale_header_is_rejected() {
-        let want = CacheHeader { magic: MAGIC, cache_version: CACHE_VERSION, file_hash: [1u8; 32], options_key: 0 };
+        let want = CacheHeader {
+            magic: MAGIC,
+            cache_version: CACHE_VERSION,
+            file_hash: [1u8; 32],
+            binary_hash: [2u8; 32],
+            options_key: 0,
+        };
         // Same file must match itself.
         assert!(want.matches(&want));
         // A different bytecode hash must be rejected (stale, not a cache hit).
-        let other_file = CacheHeader { file_hash: [9u8; 32], ..want };
+        let other_file = CacheHeader {
+            file_hash: [9u8; 32],
+            ..want
+        };
         assert!(!want.matches(&other_file));
+        // A different decompiler binary must be rejected (pipeline output change).
+        let other_binary = CacheHeader {
+            binary_hash: [3u8; 32],
+            ..want
+        };
+        assert!(!want.matches(&other_binary));
         // A different cache-format version must be rejected.
-        let other_version = CacheHeader { cache_version: CACHE_VERSION + 1, ..want };
+        let other_version = CacheHeader {
+            cache_version: CACHE_VERSION + 1,
+            ..want
+        };
         assert!(!want.matches(&other_version));
         // Different output-affecting options must be rejected.
-        let other_opts = CacheHeader { options_key: 1, ..want };
+        let other_opts = CacheHeader {
+            options_key: 1,
+            ..want
+        };
         assert!(!want.matches(&other_opts));
+    }
+
+    #[test]
+    fn binary_fingerprint_is_stable_within_process() {
+        let a = binary_fingerprint();
+        let b = binary_fingerprint();
+        assert_eq!(a, b);
+        // Real exe hash is almost certainly not the all-0xFF sentinel.
+        // (In exotic environments where current_exe fails, both are the sentinel.)
+        assert_eq!(a.len(), 32);
     }
 }
 

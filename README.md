@@ -122,8 +122,9 @@ hermes-decomp decompile app.hbc --from-module 42 --module-depth 3
 > **Analysis cache:** the first `decompile` / `modules` / `deps` / `extract` run on a file
 > writes a `<input>.hdcache` next to it holding the full analysis. Subsequent
 > runs (any of those commands, the TUI, and the MCP server) load it in ~0.2s
-> instead of re-running the multi-second pipeline. The cache is keyed by a
-> SHA-256 of the bytecode, so it rebuilds automatically when the file changes.
+> instead of re-running the multi-second pipeline. The cache is keyed by
+> SHA-256(bytecode) **and** SHA-256(decompiler binary), so it rebuilds when the
+> input *or* the tool changes (no manual version bump needed for output fixes).
 > Delete the `.hdcache` file or pass `--no-cache` to force a fresh analysis.
 
 ![Decompilation Example](decompile.png)
