@@ -179,7 +179,7 @@ impl Codegen {
                         if first == "\"\"" || first == "''" || first == "``" || first == "`\\``" {
                             1 // skip empty separator
                         } else {
-                            0 // non-empty prefix — include it
+                            0 // non-empty prefix, include it
                         }
                     } else {
                         0

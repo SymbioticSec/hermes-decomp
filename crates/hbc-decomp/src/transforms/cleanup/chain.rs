@@ -4,7 +4,7 @@ use crate::ir::{AssignTarget, Expression, Statement, Value, Visitor};
 use std::collections::BTreeMap;
 
 // Fold chain assignments. Only when r0 is used exactly once in the whole
-// function — folding `r = expr; cv = r` into `cv = expr` removes r's definition,
+// function, folding `r = expr; cv = r` into `cv = expr` removes r's definition,
 // so any *other* use (e.g. a later `return r`) would otherwise be left dangling.
 pub(super) fn fold_chain_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut use_counts = BTreeMap::new();

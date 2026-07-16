@@ -161,7 +161,7 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Double)
-                    .title(" Search in content — \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
+                    .title(" Search in content, \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
             ),
             popup,
         );
@@ -429,7 +429,7 @@ fn apply_selection_styling(
 }
 
 // One side of a diff row: git-style sign (`+`/`-`/space), a line-number
-// gutter, then the text — either syntax-highlighted or diff-tinted, with the
+// gutter, then the text, either syntax-highlighted or diff-tinted, with the
 // active search term highlighted on top.
 #[allow(clippy::too_many_arguments)]
 fn git_side_line(
@@ -507,7 +507,7 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
     };
     let title = Paragraph::new(Line::from(vec![
         Span::styled(" Git Diff ", Style::default().fg(Color::Black).bg(Color::Cyan)),
-        Span::raw(format!("  base (file 1) vs modified (file 2) — {kind}")),
+        Span::raw(format!("  base (file 1) vs modified (file 2), {kind}")),
         Span::styled(progress, Style::default().fg(Color::Yellow)),
         Span::styled(search, Style::default().fg(Color::Cyan)),
     ]));
@@ -548,7 +548,7 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
     if app.git_rows.is_empty() {
         let msg = if app.git_computing {
             let (done, total) = app.git_progress;
-            format!("\n   {spin}  {} bundle… {done}/{total} functions\n\n        Streaming per function — results appear as they finish. Press 'v' to switch asm/code.", if app.git_kind == ViewMode::Disasm { "Disassembling" } else { "Decompiling" })
+            format!("\n   {spin}  {} bundle… {done}/{total} functions\n\n        Streaming per function, results appear as they finish. Press 'v' to switch asm/code.", if app.git_kind == ViewMode::Disasm { "Disassembling" } else { "Decompiling" })
         } else {
             "\n   No diff available yet…".to_string()
         };
@@ -679,7 +679,7 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Double)
-                    .title(" Search — \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
+                    .title(" Search, \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
             ),
             popup,
         );
@@ -724,7 +724,7 @@ fn draw_xref_popup(frame: &mut Frame, app: &App) {
     let callee_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Callee).count();
     let caller_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Caller).count();
     let title = format!(
-        " Xrefs: {} callees, {} callers — Enter: jump  Esc: close ",
+        " Xrefs: {} callees, {} callers, Enter: jump  Esc: close ",
         callee_count, caller_count
     );
 

@@ -1,7 +1,7 @@
 // Pipeline Stage Documentation
 //
 // This module documents the ordering and dependencies of all pipeline stages.
-// It is not executable code — only documentation to prevent silent reordering bugs.
+// It is not executable code, only documentation to prevent silent reordering bugs.
 //
 // ============================================================================
 // WHOLE-PROGRAM STAGES (PipelineContext::build_with_options)

@@ -145,7 +145,7 @@ pub fn decompile_all_v2_with_closures_cached(
 
 // Like `decompile_all_v2_with_closures`, but emits only the modules selected by
 // `filter` (when `Some`). With a filter active, orphan (non-module) functions
-// are omitted — the caller asked for specific modules.
+// are omitted, the caller asked for specific modules.
 pub fn decompile_filtered_v2(
     file: &BytecodeFile,
     format: &BytecodeFormat,

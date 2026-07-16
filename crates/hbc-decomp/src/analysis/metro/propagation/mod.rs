@@ -1,9 +1,15 @@
-// Module name propagation — traces require() calls to name Metro modules and variables.
+// Module name propagation, traces require() calls to name Metro modules and variables.
 
 mod define_property;
+mod depmap_rewrite;
 mod inference;
 mod phases;
 mod require_resolution;
+
+// Late rewrite (after resolve_closures) so ClosureVar→Variable("dependencyMap")
+// is visible. Public entry for the pipeline.
+pub use depmap_rewrite::rewrite_dependency_map_indices as rewrite_dependency_maps_late;
+// Ensure the alias is crate-public for `analysis::metro` re-export.
 
 use super::detection::is_meaningful_name;
 use super::registry::{FactoryRoles, MetroRegistry};
@@ -63,7 +69,7 @@ pub fn propagate_module_names(
     registry: &mut MetroRegistry,
     closure_ctx: &mut Option<ClosureContext>,
 ) {
-    // PHASE 0: Reverse require naming — scan all factories for `varName = require(depId)`
+    // PHASE 0: Reverse require naming, scan all factories for `varName = require(depId)`
     // where varName is meaningful, and use it to name the referenced module.
     reverse_require_naming(functions, registry);
 
@@ -93,11 +99,11 @@ pub fn propagate_module_names(
         }
     }
 
-    // PHASE 0c: Re-export propagation — modules that simply re-export a dependency
+    // PHASE 0c: Re-export propagation, modules that simply re-export a dependency
     // inherit the name from their dependency (e.g., module 66 re-exports module 67 → named "getIteratorFn")
     let reexport_count = propagate_reexport_names(functions, registry);
 
-    // PHASE 0d: Dependency-chain naming — thin unnamed wrappers inherit their sole dependency's name
+    // PHASE 0d: Dependency-chain naming, thin unnamed wrappers inherit their sole dependency's name
     // This handles CJS interop wrappers and single-dep re-export modules
     let mut _dep_named = 0;
     for _ in 0..MAX_MODULE_NAME_ITERATIONS {
@@ -153,6 +159,10 @@ pub fn propagate_module_names(
 
     // PHASE 1: Detect closure_N = require(id) and propagate module names to closure slots
     propagate_module_names_to_closures(functions, registry, closure_ctx);
+
+    // NOTE: dependencyMap[N] → absolute module ID rewrite is intentionally NOT
+    // here. Nested factories capture `dependencyMap` as a ClosureVar; rewriting
+    // before resolve_closures misses those. See `rewrite_dependency_maps_late`.
 
     // Capture effective names for lookup
     let effective_names: BTreeMap<u32, String> = registry

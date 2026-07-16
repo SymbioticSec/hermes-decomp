@@ -10,7 +10,7 @@ mod server;
 
 use server::HermesService;
 
-/// Hermes bytecode decompiler — MCP server.
+/// Hermes bytecode decompiler, MCP server.
 ///
 /// By default it speaks the MCP protocol over stdio (for Claude Desktop/Code,
 /// Cursor, …). Pass `--transport http` to instead serve over Streamable HTTP,

@@ -29,7 +29,7 @@ const MAX_PARAM_LINK_ITERATIONS: usize = 20;
 
 // Generic type names derived from a parameter's body usage (string/array/etc.
 // methods). `vote_on_names` rejects these as "generic", so they're only used as
-// a last-resort fallback — a typed name (`str`, `obj`) reads better than `argN`.
+// a last-resort fallback, a typed name (`str`, `obj`) reads better than `argN`.
 fn is_type_fallback_name(name: &str) -> bool {
     matches!(
         name,
@@ -226,7 +226,7 @@ pub fn run_ipa(
     }
 
     // Pass 4: type-name fallback for params no name ever reached. Dedupe within
-    // each function (two `str` params would be `function(str, str)` — a syntax
+    // each function (two `str` params would be `function(str, str)`, a syntax
     // error), and never collide with a name already chosen for another param.
     for (func_id, idx_names) in type_fallback {
         let entry = analysis.param_names.entry(func_id).or_default();

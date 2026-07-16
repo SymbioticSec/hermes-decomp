@@ -33,14 +33,14 @@ pub fn transform_to_ssa(cfg: &mut CFG) {
 // Live Range Splitting via Reaching Definitions + Union-Find.
 //
 // Each register definition is a node. Two definitions are *unioned* when some
-// use reads both of them — i.e. they reconverge at that use and therefore must
+// use reads both of them, i.e. they reconverge at that use and therefore must
 // share one name (the no-phi equivalent of a φ-node, whether the convergence is
 // an if/else merge or a loop back-edge). Every union-find class then becomes a
 // distinct SSA variable: independent live ranges of a reused register split
 // apart, while merge-/loop-carried ranges stay unified.
 //
 // This replaces the earlier "freeze the whole register" heuristic, which
-// over-froze — collapsing a register's *independent* live ranges (e.g. one that
+// over-froze, collapsing a register's *independent* live ranges (e.g. one that
 // held `globalThis` and was later reused for a string, or an object built via
 // PutOwnBySlotIdx whose register was reused) into a single name. The HBC >=97
 // allocator reuses registers far more aggressively, so precise splitting matters.
@@ -72,7 +72,7 @@ fn split_live_ranges(cfg: &mut CFG) {
     }
     let mut uf = UnionFind::new(def_list.len());
 
-    // Pass 1 — union the reaching definitions of every use.
+    // Pass 1, union the reaching definitions of every use.
     for block in cfg.blocks() {
         let mut cur = block_entry_reaching(&rd, block.id);
         for (i, stmt) in block.statements.iter().enumerate() {
@@ -118,7 +118,7 @@ fn split_live_ranges(cfg: &mut CFG) {
         })
     };
 
-    // Pass 2 — rewrite uses and definitions to their class's register number.
+    // Pass 2, rewrite uses and definitions to their class's register number.
     for block_id in cfg.block_ids().collect::<Vec<_>>() {
         let mut cur = block_entry_reaching(&rd, block_id);
         let stmts = match cfg.get_mut(block_id) {
@@ -234,7 +234,7 @@ fn union_reaching(uf: &mut UnionFind, def_id: &HashMap<DefSite, usize>, defs: Op
 }
 
 // Registers READ by a statement (value expressions + read sub-expressions of an
-// assignment target — Member object, Index object/key — but NOT the target
+// assignment target, Member object, Index object/key, but NOT the target
 // register itself, which is a definition).
 fn stmt_reads(stmt: &Statement) -> HashSet<u32> {
     let mut regs = HashSet::new();

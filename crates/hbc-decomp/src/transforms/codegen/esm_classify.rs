@@ -55,7 +55,7 @@ impl Codegen {
                 if let AssignTarget::Member { object, property } = target {
                     let obj_str = self.generate_expr(object);
                     if is_exports_like(&obj_str) {
-                        // Skip `exports.X = undefined` — Babel initialization noise
+                        // Skip `exports.X = undefined`, Babel initialization noise
                         // The real export value is assigned later or via defineProperty
                         if matches!(value, Expression::Value(Value::Constant(Constant::Undefined))) {
                             return EsmClassification::Skip;
@@ -94,7 +94,7 @@ impl Codegen {
                             );
                         } else if property == "exports" {
                             // exports.exports = X is the CJS module.exports = X pattern
-                            // via the exports parameter alias — treat as default export
+                            // via the exports parameter alias, treat as default export
                             return EsmClassification::Export(
                                 format!("export default {};", self.generate_expr(value))
                             );
@@ -102,14 +102,14 @@ impl Codegen {
                             return EsmClassification::Skip;
                         } else {
                             let val_str = self.generate_expr(value);
-                            // Avoid `export const X = X;` — use `export { X }` instead
+                            // Avoid `export const X = X;`, use `export { X }` instead
                             if val_str == *property {
                                 return EsmClassification::Export(
                                     format!("export {{ {property} }};")
                                 );
                             }
                             // `export const name = function name()` → `export function name()`
-                            // Only for non-arrow functions — arrow functions don't use `function` keyword
+                            // Only for non-arrow functions, arrow functions don't use `function` keyword
                             if let crate::ir::Expression::Function { name: Some(fn_name), is_arrow: false, .. } = value {
                                 if fn_name == property {
                                     return EsmClassification::Export(

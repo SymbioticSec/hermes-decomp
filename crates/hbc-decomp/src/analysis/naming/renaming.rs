@@ -11,9 +11,24 @@ fn rename_stmt(stmt: Statement, names: &BTreeMap<u32, String>) -> Statement {
             target: rename_target(target, names),
             value: rename_expr(value, names),
         },
+        // Without this, `delete r5[r4]` leaked Hermes register names into
+        // the final JS (Discord HBC96: 666+ register-name-leak hits).
+        Statement::Delete { target, result } => Statement::Delete {
+            target: rename_expr(target, names),
+            result,
+        },
         Statement::Expr(e) => Statement::Expr(rename_expr(e, names)),
         Statement::Return(Some(e)) => Statement::Return(Some(rename_expr(e, names))),
         Statement::Throw(e) => Statement::Throw(rename_expr(e, names)),
+        Statement::CondGoto {
+            condition,
+            target,
+            fallthrough,
+        } => Statement::CondGoto {
+            condition: rename_expr(condition, names),
+            target,
+            fallthrough,
+        },
         Statement::If {
             condition,
             then_body,
@@ -249,6 +264,15 @@ fn rename_variables_in_stmt(stmt: &mut Statement, renames: &BTreeMap<String, Str
             rename_variables_in_target(target, renames);
             rename_variables_in_expr(value, renames);
         }
+        Statement::Delete { target, .. } => {
+            rename_variables_in_expr(target, renames);
+        }
+        Statement::Let { name, value, .. } => {
+            if let Some(new) = renames.get(name) {
+                *name = new.clone();
+            }
+            rename_variables_in_expr(value, renames);
+        }
         Statement::Expr(e) => rename_variables_in_expr(e, renames),
         Statement::Return(Some(e)) => rename_variables_in_expr(e, renames),
         Statement::Throw(e) => rename_variables_in_expr(e, renames),
@@ -303,6 +327,37 @@ fn rename_variables_in_stmt(stmt: &mut Statement, renames: &BTreeMap<String, Str
             }
             if let Some(d) = default {
                 rename_variables_in_stmts(d, renames);
+            }
+        }
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => {
+            rename_variables_in_stmts(try_body, renames);
+            if let Some(p) = catch_param {
+                if let Some(new) = renames.get(p) {
+                    *p = new.clone();
+                }
+            }
+            rename_variables_in_stmts(catch_body, renames);
+            rename_variables_in_stmts(finally_body, renames);
+        }
+        Statement::Class {
+            super_class,
+            constructor,
+            methods,
+            ..
+        } => {
+            if let Some(s) = super_class {
+                rename_variables_in_expr(s, renames);
+            }
+            if let Some(c) = constructor {
+                rename_variables_in_stmt(c, renames);
+            }
+            for m in methods {
+                rename_variables_in_expr(&mut m.value, renames);
             }
         }
         _ => {}

@@ -211,6 +211,13 @@ impl PipelineContext {
         }
         log::debug!("[pipeline] IPA closure re-resolve: {:.2?}", t.elapsed());
 
+        // STAGE W9b: dependencyMap[N] → absolute module IDs.
+        // MUST run after resolve_closures: nested factories capture the map as a
+        // ClosureVar, which only becomes Variable("dependencyMap") after resolve.
+        let t = std::time::Instant::now();
+        crate::analysis::metro::rewrite_dependency_maps_late(all_ir, registry, closure_ctx);
+        log::debug!("[pipeline] dependencyMap rewrite (late): {:.2?}", t.elapsed());
+
         // STAGE W10: Closure Property Naming (cross-function)
         let t = std::time::Instant::now();
         let closure_renames = if let Some(ctx) = closure_ctx.as_ref() {
@@ -304,7 +311,7 @@ impl PipelineContext {
         // A wrapper is any function whose body merely returns a generator closure
         // (`return function*(){...}`, after env-slot init). The wrapper itself is
         // NOT flagged is_generator (HBC marks the inner driver); detecting it by
-        // shape — not by the flag — is what lets us collapse it.
+        // shape, not by the flag, is what lets us collapse it.
         let mut replacements: Vec<(u32, u32)> = Vec::new();
         for (&fid, body) in all_ir.iter() {
             if let Some(inner) = generator_wrapper_target(body) {
@@ -330,7 +337,7 @@ impl PipelineContext {
         // STAGE W16c: Reconstruct HBC >=97 generator state machines into flat
         // `yield` bodies. v97 removed the generator opcodes; `function*` is now a
         // desugared switch over status/label env slots. The recognizer is
-        // conservative — it returns the body unchanged on any shape mismatch.
+        // conservative, it returns the body unchanged on any shape mismatch.
         let gen_ids: Vec<u32> = all_ir
             .keys()
             .copied()
@@ -344,7 +351,7 @@ impl PipelineContext {
 
         // STAGE W16d: Reconstruct HBC >=97 array destructuring from the flat
         // iterator protocol (after the cleanup-handler skip un-nests it). The
-        // matcher is conservative — it only rewrites a recognized `iter =
+        // matcher is conservative, it only rewrites a recognized `iter =
         // src[Symbol.iterator](); ...advances/binds...; iter.return()` block.
         let fids: Vec<u32> = all_ir.keys().copied().collect();
         for fid in &fids {
@@ -551,7 +558,7 @@ fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
 
     // Skip comments and the generator's env-slot initializers (`let closure_N =
     // 0;` / `closure_N = 0;`) that a v98 wrapper emits before returning the inner
-    // generator — they are dead once the inner body is inlined.
+    // generator, they are dead once the inner body is inlined.
     let is_env_init = |s: &Statement| -> bool {
         match s {
             Statement::Let { name, .. } => name.starts_with("closure_"),

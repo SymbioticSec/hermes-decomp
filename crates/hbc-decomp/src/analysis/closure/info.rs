@@ -113,24 +113,105 @@ impl ClosureInfo {
             }
             // A slot initialised with a constant is a *mutable captured variable*
             // (e.g. a counter `var c = 0` shared with an inner closure), not an
-            // alias for the constant. Its name must be a stable identifier — using
-            // the constant text would emit `0 = 0` in the parent and inline `0`
-            // for every read in the child. The init is rendered from the parent's
-            // own `closure_N = <const>` assignment.
-            Some(ClosureSlotValue::Constant(_)) => format!("closure_{raw_slot}"),
-            Some(ClosureSlotValue::Variable(v)) => v.clone(),
+            // alias for the constant. Prefer a short descriptive name derived
+            // from the constant when it's a non-empty string (so
+            // `env[0] = "ADMINISTRATOR"` → `ADMINISTRATOR` instead of
+            // `closure_0`); fall back to `c{slot}` / `closure_{slot}`.
+            Some(ClosureSlotValue::Constant(c)) => {
+                if let Some(name) = name_from_constant_text(c) {
+                    name
+                } else {
+                    format!("c{raw_slot}")
+                }
+            }
+            Some(ClosureSlotValue::Variable(v)) => {
+                // Prefer the variable name when it's meaningful; keep generic
+                // rN / argN / tmp forms as stable closure_N so they stay unique.
+                if is_meaningful_closure_name(v) {
+                    v.clone()
+                } else {
+                    format!("closure_{raw_slot}")
+                }
+            }
             Some(ClosureSlotValue::Unknown) | None => format!("closure_{raw_slot}"),
         }
     }
 }
 
+// Derive a JS identifier from a constant's display text (e.g. `"foo"` → `foo`).
+fn name_from_constant_text(c: &str) -> Option<String> {
+    let s = c.trim().trim_matches('"').trim_matches('\'');
+    if s.is_empty() || s.len() > 40 {
+        return None;
+    }
+    // Must be a valid-ish identifier start.
+    let mut chars = s.chars();
+    let first = chars.next()?;
+    if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+        return None;
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') {
+        return None;
+    }
+    // Avoid reserved / generic noise.
+    if matches!(
+        s,
+        "undefined"
+            | "null"
+            | "true"
+            | "false"
+            | "default"
+            | "exports"
+            | "module"
+            | "require"
+            | "global"
+            | "Object"
+            | "Array"
+            | "Function"
+            | "String"
+            | "Number"
+            | "Boolean"
+            | "Symbol"
+            | "Error"
+            | "Math"
+            | "JSON"
+            | "console"
+            | "window"
+            | "document"
+            | "this"
+    ) {
+        return None;
+    }
+    Some(s.to_string())
+}
+
+fn is_meaningful_closure_name(name: &str) -> bool {
+    if name.len() < 2 {
+        return false;
+    }
+    // Reject register / param / tmp forms.
+    if name.starts_with('r') && name[1..].chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    if name.starts_with("arg") && name[3..].chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    if name.starts_with("tmp") {
+        return false;
+    }
+    if name.starts_with("closure_") {
+        return false;
+    }
+    true
+}
+
 // This is the canonical implementation used by both `ClosureInfo::analyze` and
 // `ClosureContext::analyze_stmt_context`.
 //
-// - `reg_values: Some(map)` — resolve registers via the map, return `Unknown` for unresolvable.
-// - `reg_values: None` — don't resolve registers, return `None` for unresolvable.
-// - `resolve_members: false` — basic extraction (Function, Register, Constant, Variable, Parameter).
-// - `resolve_members: true` — extended: also handles `This → "self"`, `.default` member access,
+// - `reg_values: Some(map)`, resolve registers via the map, return `Unknown` for unresolvable.
+// - `reg_values: None`, don't resolve registers, return `None` for unresolvable.
+// - `resolve_members: false`, basic extraction (Function, Register, Constant, Variable, Parameter).
+// - `resolve_members: true`, extended: also handles `This → "self"`, `.default` member access,
 //   and generic property access (property name ≤ 25 chars, excluding "prototype"/"exports"/"__esModule").
 pub fn value_from_expr(
     expr: &Expression,

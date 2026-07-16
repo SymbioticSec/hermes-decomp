@@ -11,8 +11,7 @@ impl JSXReconstructor {
 
 // Run JSX reconstruction over a statement list. Idempotent (already-built
 // JSXElements are left alone). Intended to run on the fully-assembled,
-// whole-program IR, where props objects and children arrays are materialized —
-// the in-pipeline F10 pass runs too early (before object-literal reconstruction)
+// whole-program IR, where props objects and children arrays are materialized, // the in-pipeline F10 pass runs too early (before object-literal reconstruction)
 // to catch most calls.
 pub fn reconstruct_jsx(mut stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::Statement> {
     use crate::ir::MutVisitor;
@@ -36,7 +35,7 @@ impl MutVisitor for JSXReconstructor {
     }
 }
 
-// The JSX factory name behind a call, if any — the property of a member callee
+// The JSX factory name behind a call, if any, the property of a member callee
 // (`React.createElement`, `jsxProd.jsx`) or a bare/imported function
 // (`_jsx`, `jsx`, `createElement`). The leading `_` of minified runtime imports
 // is stripped so `_jsxs` and `jsxs` are treated alike.
@@ -97,7 +96,7 @@ fn build_jsx_element(callee: &Expression, arguments: &[Expression]) -> Option<Ex
     let mut jsx_attributes = Vec::new();
     let mut jsx_children = Vec::new();
 
-    // Automatic runtime: `jsx(type, config, key)` — the key is the separate 3rd
+    // Automatic runtime: `jsx(type, config, key)`, the key is the separate 3rd
     // argument, hoisted out of config into a `key` attribute.
     if is_modern && arguments.len() >= 3 {
         if !matches!(
@@ -110,7 +109,7 @@ fn build_jsx_element(callee: &Expression, arguments: &[Expression]) -> Option<Ex
 
     // 2. Parse Attributes and Children
     if is_modern {
-        // Modern JSX: jsx("div", { className: "foo", children: "bar" })  — children
+        // Modern JSX: jsx("div", { className: "foo", children: "bar" }), children
         // live inside the props object under the `children` key.
         if arguments.len() >= 2 {
             match &arguments[1] {

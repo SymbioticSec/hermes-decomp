@@ -280,7 +280,7 @@ impl App {
         }
 
         // Use full pipeline context if available (IPA, Metro, naming). Otherwise
-        // fall back to a fast single-function decompile — NEVER build a
+        // fall back to a fast single-function decompile, NEVER build a
         // whole-file closure context here: that ran on the UI thread inside
         // terminal.draw() and froze the TUI for seconds on large bundles. The
         // background pipeline upgrades quality once it's ready.
@@ -336,7 +336,7 @@ impl App {
                 .unwrap()
                 .generate_function_code(file2, function_id)
         } else {
-            // Fast fallback while the pipeline builds — no whole-file work on
+            // Fast fallback while the pipeline builds, no whole-file work on
             // the UI thread (see decompile_content for why).
             let file2 = self.file2.as_ref().unwrap();
             let format2 = self.format2.as_ref().unwrap();

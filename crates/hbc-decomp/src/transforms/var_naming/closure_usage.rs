@@ -110,13 +110,18 @@ pub(super) struct ClosureUsageInfo {
     pub called_as_function: bool,
 }
 
-// Check if a variable name is a generic closure name (closure_N pattern).
+// Check if a variable name is a generic closure name (`closure_N` or short `cN`
+// from constant-initialised env slots).
 pub(super) fn is_closure_name(name: &str) -> bool {
     if let Some(suffix) = name.strip_prefix("closure_") {
-        suffix.chars().all(|c| c.is_ascii_digit()) && !suffix.is_empty()
-    } else {
-        false
+        return !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit());
     }
+    if let Some(suffix) = name.strip_prefix('c') {
+        return !suffix.is_empty()
+            && suffix.len() <= 6
+            && suffix.chars().all(|c| c.is_ascii_digit());
+    }
+    false
 }
 
 // Collect usage information for all closure_N variables in a statement tree.
@@ -190,7 +195,7 @@ fn collect_closure_usage_in_target(target: &AssignTarget, usage: &mut BTreeMap<S
     }
 }
 
-// Function invocation methods (not domain-specific — exclude from method analysis).
+// Function invocation methods (not domain-specific, exclude from method analysis).
 fn is_invocation_method(name: &str) -> bool {
     matches!(name, "call" | "apply" | "bind")
 }
@@ -212,9 +217,9 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
             // Recurse
             collect_closure_usage_in_expr(object, usage);
         }
-        // closure_N(args) — direct function call
+        // closure_N(args), direct function call
         Expression::Call { callee, arguments } => {
-            // Check for closure_N.method(args) — method call
+            // Check for closure_N.method(args), method call
             if let Expression::Member { object, property, .. } = &**callee {
                 if let Expression::Value(Value::Variable(name)) = &**object {
                     if is_closure_name(name) {
@@ -230,7 +235,7 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
                     }
                 }
             }
-            // Check for closure_N(args) — bare call
+            // Check for closure_N(args), bare call
             if let Expression::Value(Value::Variable(name)) = &**callee {
                 if is_closure_name(name) {
                     usage.entry(name.clone()).or_default().called_as_function = true;

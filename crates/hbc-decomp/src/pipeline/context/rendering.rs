@@ -29,7 +29,7 @@ impl PipelineContext {
     }
 
     // The recovered worklet source for `func_id`, looked up by the function's
-    // bytecode name (the join key — both the name and the source come from the
+    // bytecode name (the join key, both the name and the source come from the
     // binary). Returns the source already shaped as a function expression.
     pub(super) fn worklet_source_for(&self, file: &BytecodeFile, func_id: u32) -> Option<String> {
         if self.worklet_sources.is_empty() {

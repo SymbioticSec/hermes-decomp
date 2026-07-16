@@ -218,7 +218,7 @@ pub fn format_assembly_output(
 
     for line in raw_output.lines() {
         if let Some(caps) = offset_re.captures(line) {
-            // This is an offset marker line — store the offset and skip the line
+            // This is an offset marker line, store the offset and skip the line
             current_offset = Some(caps[1].to_string());
             continue;
         }

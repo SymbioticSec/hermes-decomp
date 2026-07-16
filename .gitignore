@@ -52,3 +52,4 @@ test_defaults.hbc
 # On-disk analysis cache (produced next to .hbc/.bundle inputs)
 *.hdcache
 *.hdcache.tmp
+paper/

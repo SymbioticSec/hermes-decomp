@@ -71,7 +71,7 @@ impl ScopeDescriptor {
 //       [string_offset .. debug_data_size)   debug string table ]
 //
 // The three offsets are relative to the START OF THE DEBUG DATA, not to the
-// section start — a distinction the old 3-field reader got wrong, which is the
+// section start, a distinction the old 3-field reader got wrong, which is the
 // root cause of issue #4 (it read the filename/region counts as offsets).
 #[derive(Debug, Clone)]
 struct DebugInfoHeader {
@@ -241,7 +241,7 @@ impl DebugInfo {
     }
 
     // The debug string table is a run of length-prefixed strings filling the
-    // region — there is no leading count.
+    // region, there is no leading count.
     fn parse_string_table(data: &[u8]) -> Vec<String> {
         let mut strings = Vec::new();
         let mut reader = ByteReader::new(data);
@@ -309,8 +309,7 @@ mod tests {
     // and a file-region table, then the debug-data blob (scope descriptors,
     // textified callees, string table). This lays the section out exactly like
     // a real bundle, so it exercises the data-start arithmetic
-    // (`28 + 8*filenameCount + filenameStorageSize + 12*fileRegionCount`) —
-    // not a degenerate empty-table shortcut. The section offsets are derived
+    // (`28 + 8*filenameCount + filenameStorageSize + 12*fileRegionCount`),     // not a degenerate empty-table shortcut. The section offsets are derived
     // from the actual blob sizes. Returns (full buffer, offset for `parse`).
     fn build_debug_section(
         filenames: &[&str],

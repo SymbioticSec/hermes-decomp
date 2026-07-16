@@ -31,7 +31,7 @@ pub fn cleanup_advanced(stmts: Vec<Statement>) -> Vec<Statement> {
 
 // Remove `r = undefined` clears that Hermes emits to release a register once it
 // is dead. These are safe to drop when `r` is not read in the statements that
-// follow — and leaving them in is actively harmful: when register naming later
+// follow, and leaving them in is actively harmful: when register naming later
 // collapses `r` and a saved copy of its value onto the same name, the clear
 // shadows the live value (e.g. `tmp = sum; sum = undefined; print(tmp)` renders
 // as `sum = undefined; print(sum)` → prints `undefined`). Only register targets
@@ -125,7 +125,7 @@ fn remove_redundant_assignments(stmts: &mut Vec<Statement>) {
                 },
             ) = (&stmts[i], &stmts[i + 1])
             {
-                // The first assignment is dead only if its value is pure — a
+                // The first assignment is dead only if its value is pure, a
                 // call/await must still run even when its result is immediately
                 // overwritten (otherwise `r = print(x); r = 0` drops the call).
                 if t1 == t2 && !expr_uses_target(v2, t1) && !v1.has_side_effects() {

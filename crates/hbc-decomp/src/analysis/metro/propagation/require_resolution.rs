@@ -1,4 +1,4 @@
-// Require call resolution — resolves require() calls to module IDs.
+// Require call resolution, resolves require() calls to module IDs.
 
 use super::{default_roles, is_dep_array_name, is_dep_array_param_idx};
 use crate::analysis::metro::registry::{FactoryRoles, MetroRegistry};

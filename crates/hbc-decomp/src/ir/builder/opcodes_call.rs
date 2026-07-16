@@ -14,7 +14,7 @@ const MAX_CALL_ARGS: usize = 1 << 16;
 // arg0 at -8, arg1 at -9, ...). In the caller's register file these outgoing
 // slots sit at the very top of the frame, so register `frame_size - 7` holds
 // `this`, `frame_size - 8` holds arg0, and so on. The instruction only encodes
-// (dst, callee, argCount) — the argument *registers* are implied by this layout,
+// (dst, callee, argCount), the argument *registers* are implied by this layout,
 // not by `dst`.
 const THIS_ARG_FROM_TOP: u32 = 7;
 
@@ -102,7 +102,7 @@ pub fn handle_construct(inst: &Instruction, frame_size: u32, version: u32) -> Op
 
     // Argument registers are implied by the Hermes frame layout. arg[0] is the
     // construct's `this` (the freshly-created object), which is not a source-level
-    // argument — drop it so `new Ctor(a, b)` keeps only the explicit args.
+    // argument, drop it so `new Ctor(a, b)` keeps only the explicit args.
     // HBC ≥97 reserves an extra `new.target` outgoing slot, shifting args down.
     let this_from_top = if version >= NEW_TARGET_FRAME_SLOT_MIN_VERSION {
         THIS_ARG_FROM_TOP + 1

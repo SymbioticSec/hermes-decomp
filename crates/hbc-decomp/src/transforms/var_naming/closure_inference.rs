@@ -7,7 +7,7 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
         .map(|s| s.as_str())
         .collect();
 
-    // Heuristic 0: React/JSX patterns — very common in React Native bundles
+    // Heuristic 0: React/JSX patterns, very common in React Native bundles
     let react_hooks = ["useState", "useRef", "useEffect", "useCallback", "useMemo",
                        "useContext", "useReducer", "useLayoutEffect", "useImperativeHandle"];
     let react_methods = ["createElement", "createRef", "createContext", "forwardRef",
@@ -108,7 +108,7 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
             return Some("store".to_string());
         }
 
-        // Navigation pattern — requires at least one navigation-specific method
+        // Navigation pattern, requires at least one navigation-specific method
         if info.methods.iter().any(|m| matches!(m.as_str(), "navigate" | "goBack" | "reset"))
             || (info.methods.iter().any(|m| m == "push" || m == "replace")
                 && info.methods.iter().any(|m| matches!(m.as_str(), "navigate" | "goBack" | "reset" | "getParam" | "setParams")))

@@ -176,20 +176,19 @@ fn parse_common_tables(
 }
 
 // Parse Legacy-specific buffer sections.
+//
+// Section order MUST match Hermes `visitBytecodeSegmentsInOrder`
+// (BytecodeFileFormat.h): after string storage comes
+//   arrayBuffer → objKeyBuffer → objValueBuffer → bigIntTable → bigIntStorage
+//   → regExp… (regexp is parsed in parse_trailing_and_build).
+// Parsing BigInt *before* the array buffer shifts every subsequent section and
+// produces garbage string IDs (`<string:N>` placeholders) for array/object
+// literals, the root cause of ~93k unresolved-string-id hits on Discord HBC96.
 fn parse_legacy_buffers(
     reader: &mut ByteReader<'_>,
     header: &BytecodeHeader,
     sections: &mut Vec<SectionInfo>,
 ) -> Result<LayoutBuffers> {
-    let mut big_int_table = Vec::new();
-    let mut big_int_storage = Vec::new();
-    if let (Some(count), Some(size)) = (header.big_int_count, header.big_int_storage_size) {
-        big_int_table = track_section(reader, sections, "bigint_table",
-            Some(count), |r| parse_table_entries(r, count))?;
-        big_int_storage = track_section(reader, sections, "bigint_storage",
-            None, |r| Ok(r.read_bytes(size as usize)?.to_vec()))?;
-    }
-
     let array_buffer = if let Some(size) = header.array_buffer_size {
         track_section(reader, sections, "array_buffer",
             None, |r| Ok(r.read_bytes(size as usize)?.to_vec()))?
@@ -206,6 +205,16 @@ fn parse_legacy_buffers(
     } else {
         Vec::new()
     };
+
+    // BigInt sections follow object value buffer (Hermes order), not precede it.
+    let mut big_int_table = Vec::new();
+    let mut big_int_storage = Vec::new();
+    if let (Some(count), Some(size)) = (header.big_int_count, header.big_int_storage_size) {
+        big_int_table = track_section(reader, sections, "bigint_table",
+            Some(count), |r| parse_table_entries(r, count))?;
+        big_int_storage = track_section(reader, sections, "bigint_storage",
+            None, |r| Ok(r.read_bytes(size as usize)?.to_vec()))?;
+    }
 
     Ok(LayoutBuffers {
         big_int_table,
@@ -372,7 +381,7 @@ fn parse_exception_handlers(
         };
 
         if count == 0 || count > 1000 {
-            // Sanity check — more than 1000 handlers is suspicious
+            // Sanity check, more than 1000 handlers is suspicious
             continue;
         }
 

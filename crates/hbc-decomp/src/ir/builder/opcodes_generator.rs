@@ -30,7 +30,7 @@ pub fn handle_resume_generator(inst: &crate::Instruction) -> Option<FlowResult> 
 }
 
 // Handle CreateGenerator opcode.
-// CreateGenerator dst, env, funcIdx — creates a generator object wrapping the inner function.
+// CreateGenerator dst, env, funcIdx, creates a generator object wrapping the inner function.
 pub fn handle_create_generator(inst: &crate::Instruction) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
     // Third operand is the function index of the inner generator body

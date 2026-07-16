@@ -38,7 +38,7 @@ pub fn generate_ir(
 
     // STAGE F2: SSA / Live Range Splitting.
     // First resolve `globalThis` reads to the invariant value so the register
-    // that held it is freed — the HBC >=97 allocator reuses it for unrelated
+    // that held it is freed, the HBC >=97 allocator reuses it for unrelated
     // values, and an un-resolved read would force the SSA merge-freeze to
     // collapse the two live ranges under one name.
     transforms::resolve_global_reads(&mut cfg);

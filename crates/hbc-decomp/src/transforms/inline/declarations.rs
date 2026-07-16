@@ -12,7 +12,7 @@ pub fn insert_declarations(stmts: &mut Vec<Statement>, params: &[String]) {
 
     // A `closure_N` variable read before its first write is a *captured* variable
     // owned by an enclosing scope (e.g. a counter mutated inside a returned
-    // closure). It must not be re-declared here — a `const`/`let` would shadow the
+    // closure). It must not be re-declared here, a `const`/`let` would shadow the
     // outer binding (and `const x = x + 1` is a TDZ error). Detect these and skip
     // declaring them. The owning scope (where it is written first) still declares
     // it, but always with `let` since it is mutated across scopes.
@@ -44,7 +44,7 @@ pub fn insert_declarations(stmts: &mut Vec<Statement>, params: &[String]) {
         .collect();
     // Hoist destructuring-pattern names: patterns are emitted as bare assignments
     // (`[a,b] = e`, `({x,y} = e)`), so their names must be declared once at the
-    // top — two patterns can share a register-derived name (`x`/`y` reused), and
+    // top, two patterns can share a register-derived name (`x`/`y` reused), and
     // an inline `let` per pattern would redeclare.
     let mut pattern_names: Vec<String> = Vec::new();
     collect_pattern_names(stmts, &mut pattern_names);
@@ -77,7 +77,7 @@ pub fn insert_declarations(stmts: &mut Vec<Statement>, params: &[String]) {
 }
 
 // Closure variables (`closure_N`) whose first textual occurrence in the function
-// is a READ (i.e. read before written) — these are captured from an enclosing
+// is a READ (i.e. read before written), these are captured from an enclosing
 // scope and must not be declared here. Evaluation order: an assignment reads its
 // value expression before writing its target.
 fn free_captured_closures(stmts: &[Statement]) -> std::collections::HashSet<String> {
@@ -248,7 +248,7 @@ fn collect_scope_info(
 }
 
 // Variable names referenced (read or written) directly by a statement's own
-// expressions/targets (NOT recursing into nested block bodies — the caller
+// expressions/targets (NOT recursing into nested block bodies, the caller
 // handles recursion with scope tracking).
 fn stmt_var_refs(stmt: &Statement) -> Vec<String> {
     let mut names = Vec::new();
@@ -464,7 +464,7 @@ fn insert_decls_in_block(
                     declared.insert(name.clone());
                     let writes = write_count.get(name).copied().unwrap_or(1);
                     // A captured closure var declared in its owning scope is mutated
-                    // from nested closures (writes counted here can be 1) — always
+                    // from nested closures (writes counted here can be 1), always
                     // `let`, never `const`.
                     let kind = if is_closure_var(name) || writes > 1 {
                         VarKind::Let

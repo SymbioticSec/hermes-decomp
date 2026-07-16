@@ -8,7 +8,7 @@ pub fn is_chain_candidate(expr: &Expression) -> bool {
 // Count register definitions (assignment targets) across a statement AND all its
 // nested bodies (if/while/for/...). A register defined at the top level but
 // reassigned inside a branch is multi-def and must not be inlined from its
-// top-level definition — counting only top-level defs would miss the nested one.
+// top-level definition, counting only top-level defs would miss the nested one.
 pub fn count_register_defs(stmt: &Statement, counts: &mut BTreeMap<u32, usize>) {
     let mut counter = DefCounter { counts };
     counter.visit_statement(stmt);

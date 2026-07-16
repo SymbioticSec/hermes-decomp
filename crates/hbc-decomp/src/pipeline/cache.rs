@@ -83,7 +83,7 @@ struct PipelineSnapshot {
 impl PipelineContext {
     // Build the pipeline, using an on-disk cache at `cache_path` keyed by the
     // bytecode `bytes`. Any cache read/write failure (missing, corrupt, stale,
-    // permission) silently falls back to a normal build — the cache is an
+    // permission) silently falls back to a normal build, the cache is an
     // optimization, never a correctness dependency.
     pub fn build_cached(
         file: &BytecodeFile,

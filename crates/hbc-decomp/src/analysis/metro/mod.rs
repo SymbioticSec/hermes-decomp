@@ -11,7 +11,7 @@ pub(crate) const GENERIC_NAME_PREFIXES: &[&str] = &[
     "_interopRequire", "_interopDefault", "_interopNamespace",
     // Metro factory role names get a `_` prefix when they collide with a
     // builtin/reserved word during register naming, and are deduped to
-    // `_module`, `_module1`, `_exports2`, … — none are real module names.
+    // `_module`, `_module1`, `_exports2`, …, none are real module names.
     "_module", "_exports", "_require", "_global", "_dependencyMap",
     "_importDefault", "_importAll",
 ];
@@ -47,7 +47,7 @@ pub(crate) fn is_obviously_generic(name: &str) -> bool {
 
 pub use detection::MetroDetector;
 pub use graph::{DependencyGraph, DependencyTree};
-pub use propagation::propagate_module_names;
+pub use propagation::{propagate_module_names, rewrite_dependency_maps_late};
 pub use registry::{FactoryRoles, MetroModule, MetroRegistry};
 
 // Helper to expose analyze as a static method on MetroRegistry for compatibility

@@ -112,12 +112,12 @@ pub fn handle_new_object_with_parent(inst: &Instruction) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
     let parent = reg_expr(&inst.operands, 1)?;
 
-    // `Object.create(parent)` — a single genuine argument, NOT the Hermes call
+    // `Object.create(parent)`, a single genuine argument, NOT the Hermes call
     // ABI (no `this` receiver: NewObjectWithParent is its own opcode, not a Call).
     // strip_hermes_this() special-cases single-arg `Object.create` so it does not
     // mistake `parent` for an ABI receiver and drop it. (A real source
-    // `Object.create(proto)` compiles to a Call with two args — receiver + proto
-    // — and is stripped normally.)
+    // `Object.create(proto)` compiles to a Call with two args, receiver + proto
+    //, and is stripped normally.)
     let object_create = Expression::member(
         Expression::member(Expression::Value(crate::ir::Value::Global), "Object"),
         "create",
@@ -133,8 +133,8 @@ pub fn handle_new_object_with_parent(inst: &Instruction) -> Option<Statement> {
 
 // Handle NewObjectWithBuffer opcode.
 // Old format (5 operands, HBC ≤96): Reg8 dst, UInt16 prealloc, UInt16 numProps,
-//   UInt16 keyIdx, UInt16 valIdx — keys and values are directly at their offsets.
-// New format (3 operands, HBC ≥97): Reg8 dst, shapeId, valBufOffset — Hermes
+//   UInt16 keyIdx, UInt16 valIdx, keys and values are directly at their offsets.
+// New format (3 operands, HBC ≥97): Reg8 dst, shapeId, valBufOffset, Hermes
 //   added an "object shape table" (hidden-class dedup): shapeId indexes the
 //   shape table to get (key buffer offset, prop count); keys live in the object
 //   key buffer, values at valBufOffset in the (unified) literal value buffer.

@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 //
 // After closure resolution, `closure_N` in function X refers to slot N of X's parent.
 // If sibling functions A, B, C all reference `closure_3.setToken()`, we infer "authStore"
-// once and apply it everywhere — no `authStore`/`authStore2` inconsistency.
+// once and apply it everywhere, no `authStore`/`authStore2` inconsistency.
 //
 // Returns the number of closure variables renamed.
 pub fn rename_closure_variables_cross_function(
@@ -48,7 +48,7 @@ pub fn rename_closure_variables_cross_function(
                     // Simple slot (level 0) → parent
                     parent_id
                 } else {
-                    // Multi-level slot — walk up
+                    // Multi-level slot, walk up
                     let level = (slot >> 24) as usize;
                     let mut current = func_id;
                     let mut found = None;
@@ -142,9 +142,17 @@ pub fn rename_closure_variables_cross_function(
 }
 
 // Parse a closure variable name into its slot number.
-// "closure_5" → Some(5), "closure_16777221" → Some(16777221)
+// "closure_5" → Some(5), "closure_16777221" → Some(16777221), "c3" → Some(3)
 fn parse_closure_slot(name: &str) -> Option<u32> {
-    name.strip_prefix("closure_")?.parse::<u32>().ok()
+    if let Some(n) = name.strip_prefix("closure_") {
+        return n.parse::<u32>().ok();
+    }
+    if let Some(n) = name.strip_prefix('c') {
+        if !n.is_empty() && n.len() <= 6 && n.chars().all(|c| c.is_ascii_digit()) {
+            return n.parse::<u32>().ok();
+        }
+    }
+    None
 }
 
 // Single-function fallback (for functions without a known parent in ClosureContext).

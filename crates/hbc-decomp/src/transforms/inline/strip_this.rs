@@ -20,7 +20,7 @@ fn is_hermes_internal_concat(callee: &Expression) -> bool {
     false
 }
 
-// `Object.create` — `<...>.Object.create` or `Object.create`, regardless of how
+// `Object.create`, `<...>.Object.create` or `Object.create`, regardless of how
 // the global `Object` is rendered (bare variable, member on globalThis, etc.).
 fn is_object_create(callee: &Expression) -> bool {
     if let Expression::Member { object, property, .. } = callee {

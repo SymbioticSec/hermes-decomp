@@ -166,7 +166,7 @@ fn emit_case(case_body: &[Statement], out: &mut Vec<Statement>) -> Option<()> {
                 let (val, done) = parse_result_object(expr)?;
                 // A resume value flowing into user code (`x = yield v`) shows up
                 // as a reference to the synthetic resume params; we only handle the
-                // value-less form here — bail otherwise so we never emit `arg1`.
+                // value-less form here, bail otherwise so we never emit `arg1`.
                 if pre.iter().any(stmt_uses_resume_param) || expr_uses_resume_param(&val) {
                     return None;
                 }
@@ -183,7 +183,7 @@ fn emit_case(case_body: &[Statement], out: &mut Vec<Statement>) -> Option<()> {
             other => pre.push(other.clone()),
         }
     }
-    // No `{value,done}` return found in this case — not the shape we handle.
+    // No `{value,done}` return found in this case, not the shape we handle.
     None
 }
 

@@ -83,7 +83,7 @@ fn fold_array_spreads(stmts: &mut Vec<Statement>) {
                 aliases.insert(dst);
                 remove.push(j);
             } else if is_skippable_setup(&stmts[j], &aliases) {
-                // Unrelated pure call-frame setup — leave it (becomes dead).
+                // Unrelated pure call-frame setup, leave it (becomes dead).
             } else {
                 break;
             }
@@ -249,7 +249,7 @@ fn put_into_array(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> Op
     None
 }
 
-// A pure register assignment that does not reference the array — safe to step
+// A pure register assignment that does not reference the array, safe to step
 // over while scanning for the array's spread/put statements (e.g. the source
 // register and zero index loaded into the arraySpread call frame).
 fn is_skippable_setup(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> bool {

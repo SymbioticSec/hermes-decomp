@@ -178,7 +178,7 @@ fn is_object_keys_call(expr: &Expression) -> Option<Expression> {
     None
 }
 
-// `reg[<anything>]` — the GetNextPName lowering (property at the internal index).
+// `reg[<anything>]`, the GetNextPName lowering (property at the internal index).
 fn is_index_into(expr: &Expression, base_reg: u32) -> bool {
     if let Expression::Member { object, property: PropertyKey::Computed(_), .. } = expr {
         if let Expression::Value(Value::Register(r)) = object.as_ref() {

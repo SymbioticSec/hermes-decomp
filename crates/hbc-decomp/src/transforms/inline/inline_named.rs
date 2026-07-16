@@ -17,7 +17,7 @@ use super::counting::{
 pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
     // Phase 1: Count definitions and uses of all variables over the WHOLE
     // function (count_var_defs_uses recurses into nested blocks). The candidate
-    // sets are derived once here and reused for nested blocks — recomputing them
+    // sets are derived once here and reused for nested blocks, recomputing them
     // per-block is unsound: a variable assigned inside an `if` branch but read
     // *after* the `if` has a block-local use count of 0, so it would be wrongly
     // treated as dead and its branch (then the whole `if`) eliminated.
@@ -62,7 +62,7 @@ pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
 }
 
 // Process statements using PRE-COMPUTED (whole-function) candidate sets, and
-// recurse into nested blocks with the SAME sets — see `inline_named_variables`.
+// recurse into nested blocks with the SAME sets, see `inline_named_variables`.
 fn inline_named_with_candidates(
     stmts: Vec<Statement>,
     inline_candidates: &std::collections::HashSet<String>,
@@ -237,7 +237,7 @@ fn apply_multi_use_to_stmt(stmt: &mut Statement, defs: &BTreeMap<String, Express
         }
         Statement::Expr(e) => substitute_vars_in_expr(e, defs),
         Statement::Return(Some(e)) | Statement::Throw(e) => substitute_vars_in_expr(e, defs),
-        // Loop/branch conditions: substitute (safe — these defs are constants /
+        // Loop/branch conditions: substitute (safe, these defs are constants /
         // simple pure values). Bodies are handled by the recursion, but loop
         // bodies are intentionally skipped, so doing the condition here ensures a
         // hoisted constant (e.g. a loop bound) still reaches `while (i < 5)`.

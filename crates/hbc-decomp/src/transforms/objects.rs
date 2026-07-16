@@ -5,7 +5,7 @@ use std::collections::HashSet;
 pub fn transform_object_literals(statements: &mut Vec<Statement>) {
     // HBC ≥97 emits a shape-table object literal with placeholder values for
     // non-serializable properties (`{a:1, b:null}`), then fills them via
-    // `PutOwnBySlotIdx obj, val, slot` — which lowers to `obj[slot] = val`. Fold
+    // `PutOwnBySlotIdx obj, val, slot`, which lowers to `obj[slot] = val`. Fold
     // those slot fills back into the literal's Nth property before the rest of
     // the object-literal handling runs.
     fold_slot_index_fills(statements);
@@ -13,7 +13,7 @@ pub fn transform_object_literals(statements: &mut Vec<Statement>) {
     // A register assigned more than once in the whole body is a genuine
     // re-assignment: referencing it as a property value is unsafe because its
     // value may differ at the fold point. A register defined exactly once (the
-    // common case for nested object construction — `r1 = {}; r1.c = 42` then
+    // common case for nested object construction, `r1 = {}; r1.c = 42` then
     // `r0.b = r1`) is safe to reference; it will be inlined later. (The previous
     // forward-tracking wrongly counted an inner object's own definition as a
     // reassignment, blocking nested `{a:{b:{c:42}}}` reconstruction.)
@@ -77,14 +77,14 @@ pub fn transform_object_literals(statements: &mut Vec<Statement>) {
     // then populates them inner-first, so after folding the literals reference
     // registers defined *later* (`r4 = {a:r0}` before `r0 = {b:r1}`). Inline
     // single-use, single-def pure object/array literals into their use site so
-    // `{a:{b:{c:42}}}` is reconstructed (order-independent — these values are pure).
+    // `{a:{b:{c:42}}}` is reconstructed (order-independent, these values are pure).
     inline_single_use_literals(statements);
 }
 
 // Fold `obj = { k0:v0, k1:<placeholder>, ... }; obj[N] = val` (a slot-index
 // fill from PutOwnBySlotIdx) into the literal's Nth property. Only replaces a
 // placeholder value (null/undefined/empty), which is what the shape-table form
-// leaves for non-serializable property values — so a genuine numeric-key write
+// leaves for non-serializable property values, so a genuine numeric-key write
 // is never absorbed.
 fn fold_slot_index_fills(statements: &mut Vec<Statement>) {
     let mut i = 0;
@@ -183,7 +183,7 @@ fn inline_single_use_literals(statements: &mut Vec<Statement>) {
 
         // Find a register: defined once as a pure object/array literal, used
         // exactly once. Restricted to composite literals (not bare constants /
-        // register copies) — those are handled by the general inliner and folding
+        // register copies), those are handled by the general inliner and folding
         // them here would wrongly substitute e.g. an accumulator's init `0` into a
         // later `return`.
         let mut chosen: Option<(u32, Expression)> = None;

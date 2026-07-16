@@ -191,7 +191,7 @@ pub(super) fn extract_object_name_from_method_call(callee: &Expression) -> Optio
 
 // Like `extract_object_name_from_method_call`, but for naming a PARAMETER from a
 // call-site argument rather than a result. When an argument is `X.method(...)`
-// — including transformation methods such as `tokens.join("")` — the parameter
+//, including transformation methods such as `tokens.join("")`, the parameter
 // it feeds is reasonably named after `X`, the real source variable. Unlike the
 // result case, the transformation method is NOT skipped (the argument value
 // genuinely derives from `X`); generic object names are still rejected so we

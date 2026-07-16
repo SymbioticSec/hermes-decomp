@@ -1,7 +1,7 @@
 use crate::ir::{BinaryOp, Constant, Expression, Statement, UnaryOp, Value};
 
-// Convert a bottom-tested `while (true) { <body>; if (EXIT) { break; } }` — where
-// the exit test is the LAST statement — into the faithful, far more readable
+// Convert a bottom-tested `while (true) { <body>; if (EXIT) { break; } }`, where
+// the exit test is the LAST statement, into the faithful, far more readable
 // `do { <body> } while (!EXIT)`.
 //
 // Hermes compiles `for`/`while` loops to a guarded do-while shape (the exit test
@@ -10,7 +10,7 @@ use crate::ir::{BinaryOp, Constant, Expression, Statement, UnaryOp, Value};
 // closer to the original source and easier to audit.
 //
 // The rewrite is only applied when `<body>` contains no loop-level `continue` or
-// `break` (those change meaning under do-while's bottom condition — a `continue`
+// `break` (those change meaning under do-while's bottom condition, a `continue`
 // under `while (true)` skips the trailing exit test, but under `do/while` it runs
 // the condition), so it is always semantics-preserving.
 pub fn convert_while_true_loops(stmts: Vec<Statement>) -> Vec<Statement> {

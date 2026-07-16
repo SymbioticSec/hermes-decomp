@@ -34,7 +34,7 @@
 // Decompilation recurses deeply (CFG structure recovery, closure resolution)
 // and runs across Rayon workers. Rayon's default worker stack (~2 MB) overflows
 // and aborts the process on large real-world bundles (e.g. a Metro `global`
-// function). Call this once at program start — before any decompilation — so
+// function). Call this once at program start, before any decompilation, so
 // every worker gets enough stack. It is idempotent and best-effort: if the pool
 // is already initialized it does nothing.
 pub fn configure_thread_pool() {

@@ -124,7 +124,7 @@ pub(crate) fn apply_register_naming(
     }
     // Reserve every source-level variable name already present (destructuring
     // targets/keys, earlier-named variables, params). Generated register names
-    // must not collide with them — otherwise two distinct bindings end up sharing
+    // must not collide with them, otherwise two distinct bindings end up sharing
     // a name (`let {x, y}` clashing with a register also named `x`).
     collect_existing_var_names(&statements, &mut used_names);
 

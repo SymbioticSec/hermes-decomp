@@ -162,7 +162,7 @@ pub struct App {
     pub content_search_matches: Vec<(usize, usize)>, // (line_idx, char_idx) pairs
     pub content_search_index: usize, // Current match index (0-based)
 
-    // Full pipeline context (IPA, Metro, naming) — built in background
+    // Full pipeline context (IPA, Metro, naming), built in background
     pub pipeline_ctx: Option<Arc<PipelineContext>>,
     pub pipeline_rx: Option<Receiver<PipelineContext>>,
     pub pipeline_building: bool,
@@ -293,7 +293,7 @@ impl App {
             git_computing: false,
             git_progress: (0, 0),
             git_built_kind: None,
-            // Decompiled by default — it streams per function now, so there's
+            // Decompiled by default, it streams per function now, so there's
             // no opaque wait; `v` toggles to disassembly.
             git_kind: ViewMode::Decompile,
             git_normalize: true,
@@ -365,7 +365,7 @@ impl App {
             app.known_names = app.all_function_names.iter().cloned().collect();
         }
 
-        // The decompiler pipeline (IPA, Metro, naming) is built lazily — it
+        // The decompiler pipeline (IPA, Metro, naming) is built lazily, it
         // takes several seconds per file and would otherwise saturate all CPU
         // cores at startup, starving the (instant) disassembly views and making
         // the UI lag. It's kicked off the first time decompiled output is asked
@@ -660,7 +660,7 @@ impl App {
     // enabled and not already built/building for the current kind. Both disasm
     // and decompiled modes stream per function off-thread, so neither waits for
     // the full PipelineContext to build.
-    // Safe to call every tick — it early-returns when there's nothing to do.
+    // Safe to call every tick, it early-returns when there's nothing to do.
     pub fn request_git_diff(&mut self) {
         if !self.git_diff || self.git_computing || self.git_built_kind == Some(self.git_kind) {
             return;

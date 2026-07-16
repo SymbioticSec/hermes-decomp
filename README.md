@@ -2,20 +2,38 @@
 
 [![Build](https://github.com/SymbioticSec/hermes-decomp/actions/workflows/build.yml/badge.svg)](https://github.com/SymbioticSec/hermes-decomp/actions/workflows/build.yml)
 
-A Rust-based decompiler for Hermes bytecode files (`.hbc`), the JavaScript engine used by React Native applications.
+A Rust-based decompiler for Hermes bytecode files (`.hbc`), the JavaScript engine used by React Native applications. Supports **HBC versions 40-99**.
 
 ## Installation
 
 ### Download pre-built binaries
 
-Every push is built automatically by GitHub Actions for **Linux**, **macOS** (Apple Silicon), and **Windows**.
+Every push is built automatically by GitHub Actions for **Linux**, **macOS** (Apple Silicon / Intel), and **Windows**.
 Grab the latest binaries (`hermes-decomp` and the `hermes-mcp` server) from the
-[Actions tab](https://github.com/SymbioticSec/hermes-decomp/actions/workflows/build.yml):
-open the most recent successful run and download the artifact for your platform:
+[Actions tab](https://github.com/SymbioticSec/hermes-decomp/actions/workflows/build.yml)
+or from [GitHub Releases](https://github.com/SymbioticSec/hermes-decomp/releases):
 
-- `hermes-decomp-x86_64-unknown-linux-gnu`
-- `hermes-decomp-aarch64-apple-darwin`
-- `hermes-decomp-x86_64-pc-windows-msvc`
+| Asset suffix | Platform |
+|---|---|
+| `linux-x86_64` | Linux x86_64 |
+| `linux-arm64` | Linux aarch64 |
+| `macos-arm64` | macOS Apple Silicon |
+| `macos-x86_64` | macOS Intel |
+| `windows-x86_64` | Windows x86_64 |
+
+Each release archive contains `hermes-decomp` and `hermes-mcp`. Verify with `shasum -a 256 -c SHA256SUMS`.
+
+### Self-update
+
+If you already have a release binary installed:
+
+```bash
+hermes-decomp update --check     # print latest version + changelog
+hermes-decomp update --install   # download, SHA-256 verify, replace in place
+hermes-decomp update --version v0.1.7   # pin a specific release tag
+```
+
+Optional: set `HERMES_DECOMP_UPDATE_CHECK=1` to print a one-line notice when a newer release is available.
 
 ### Build from Source
 
@@ -34,49 +52,74 @@ The binaries will be at `target/release/hermes-decomp` and `target/release/herme
 
 ## Usage
 
+Binary name: **`hermes-decomp`**. All commands accept a path to a `.hbc` file or a React Native `.bundle`.
+
+Common optional flags on most commands:
+
+| Flag | Description |
+|---|---|
+| `--layout <auto\|legacy\|modern>` | File header layout (default: `auto`) |
+| `--function-layout <auto\|legacy16\|modern12>` | Per-function header layout (default: `auto`) |
+| `--format-version <N>` | Override detected HBC bytecode version |
+
 ### Commands
 
-**1. Info**
-Display metadata about the HBC file (version, headers, counts).
+**1. Info**, Print bytecode header info (version, function/string counts, sections).
+
 ```bash
 hermes-decomp info app.hbc
 ```
 
-**2. Disasm**
-Disassemble bytecode instructions into readable mnemonics.
+**2. Versions**, List all supported HBC opcode-table versions (40-99).
+
+```bash
+hermes-decomp versions
+```
+
+**3. Disasm**, Disassemble functions to Hermes assembly.
+
 ```bash
 hermes-decomp disasm app.hbc --function 5 --output disasm.txt
 # Options:
-#   --show-offsets    Show bytecode offsets
-#   --no-labels       Hide jump labels
-#   --no-strings      Don't resolve string IDs
-#   --info            Prepend a per-function metadata banner (params, frame,
-#                     registers, size, offset, flags, exception-handler count)
+#   --show-offsets    Annotate each instruction with its bytecode offset
+#   --no-labels       Don't emit jump labels (raw offsets only)
+#   --no-strings      Don't resolve string-table indices to literals
+#   --info            Per-function metadata banner (params, frame, regs,
+#                     size, offset, flags, exception-handler count)
 ```
 
 ![Disassembly Example](disasm.png)
 
-**3. Decompile**
-Lift bytecode into readable JavaScript (with control-flow recovery, naming, and ESM output for Metro bundles).
+**4. Decompile**, Lift bytecode into readable JavaScript (control-flow recovery, naming, ESM for Metro bundles).
+
 ```bash
 hermes-decomp decompile app.hbc --output decompiled.js
 hermes-decomp decompile app.hbc --function 5
+hermes-decomp decompile app.hbc --modules 100-150,200
+hermes-decomp decompile app.hbc --module-name "Login*,Auth*"
+hermes-decomp decompile app.hbc --exclude-module-name "react*,lodash*"
+hermes-decomp decompile app.hbc --from-module 42 --module-depth 3
 # Options:
-#   --resolve-closures    Closure resolution across functions (auto-enabled when decompiling all)
-#   --expand              Inline referenced functions
+#   --resolve-closures    Resolve closure vars across functions (auto when decompiling all)
+#   --expand              Expand referenced functions inline
 #   --expand-depth N      Expansion depth (default: 2)
 #   --show-offsets        Include bytecode offsets as comments
-#   --no-strings          Don't resolve string IDs
+#   --no-strings          Don't resolve string-table indices to literals
 #   --no-propagate        Disable constant/copy propagation
 #   --no-simplify         Disable expression simplification
-#   --no-structure        Disable if/while/for reconstruction
+#   --no-structure        Disable if/while/for reconstruction (flat goto form)
 #   --check-dead-code     Report functions unreachable from Metro roots
-#   --assembly            Binary Ninja-style output with absolute offsets
+#   --assembly            Absolute binary offsets on each line
 #   --json                Export IR as JSON instead of JS
+#   --modules SPEC        Only these Metro module IDs (ranges/list: "100-150,200,5")
+#   --module-name GLOB    Only modules whose name matches a glob (comma-separated)
+#   --exclude-module-name GLOB  Exclude modules by name glob
+#   --from-module N       Emit a module and its dependency subtree
+#   --module-depth N      Max dependency depth for --from-module (default: 3)
 #   --no-cache            Skip the on-disk analysis cache (always re-analyze)
 ```
 
-> **Analysis cache:** the first decompile/modules/deps/extract run on a file
+> **Analysis cache:** the first `decompile` / `modules` / `deps` / `extract` run on a file
 > writes a `<input>.hdcache` next to it holding the full analysis. Subsequent
 > runs (any of those commands, the TUI, and the MCP server) load it in ~0.2s
 > instead of re-running the multi-second pipeline. The cache is keyed by a
@@ -85,90 +128,96 @@ hermes-decomp decompile app.hbc --function 5
 
 ![Decompilation Example](decompile.png)
 
-**4. BinDiff**
-Compare two HBC files to find added, removed, or modified functions.
+**5. BinDiff**, Compare two HBC files (added / removed / modified functions).
+
 ```bash
 hermes-decomp bin-diff v1.hbc v2.hbc
-#   --diff-code    Compare decompiled code for modified functions
+#   --diff-code    Compare decompiled code for modified functions (slower)
 ```
 
-**5. TUI**
-Interactive terminal interface to browse functions and switch between disassembly and decompiled view.
+**6. TUI**, Interactive terminal UI (browse, search, decompile, split-view diff).
+
 ```bash
 hermes-decomp tui app.hbc
-
-# Split-View BinDiff
 hermes-decomp tui app.hbc --input2 app_v2.hbc
+#   --diff-code    In diff mode, compare decompiled code per function
 ```
 
-**6. Xref**
-Find cross-references to strings or functions.
+**7. Xref**, Find cross-references to strings or functions.
+
 ```bash
 hermes-decomp xref app.hbc --query "loginWithToken"
 hermes-decomp xref app.hbc --query 42 --kind function
+#   --kind string|function   (default: string)
 ```
 
-**7. Graphviz**
-Generate a Control Flow Graph (DOT format).
+**8. Graphviz**, Emit a Graphviz DOT control-flow graph for a function.
+
 ```bash
 hermes-decomp graphviz app.hbc --function 5 --open
 hermes-decomp graphviz app.hbc --function 5 --output cfg.dot
 ```
 
-**8. Callgraph**
-Build the function call graph (text or Graphviz DOT), optionally a depth-limited subgraph from a root function.
+**9. Callgraph**, Print the function call graph (text or Graphviz DOT). Writes to stdout (redirect to save).
+
 ```bash
 hermes-decomp callgraph app.hbc
 hermes-decomp callgraph app.hbc --function 42 --depth 3
-hermes-decomp callgraph app.hbc --function 42 --dot --output calls.dot
+hermes-decomp callgraph app.hbc --function 42 --dot > calls.dot
+#   --function N   Root function for a depth-limited subgraph
+#   --depth N      Max hops from --function (default: 3)
+#   --dot          Emit Graphviz DOT instead of a text edge listing
 ```
 
-**9. Extract**
-Extract all Metro modules into separate files (full-quality ESM per module).
+**10. Extract**, Extract each Metro module to its own ESM file.
+
 ```bash
 hermes-decomp extract app.hbc --output modules/
+#   --no-strings   Don't resolve string-table indices to literals
 ```
 
-**10. Modules / Deps**
-Inspect Metro module registry and dependencies.
+**11. Modules / Deps**, Inspect the Metro module registry and dependency tree.
+
 ```bash
 hermes-decomp modules app.hbc
 hermes-decomp modules app.hbc --limit 50
 hermes-decomp deps app.hbc --module 0 --depth 3
 ```
 
-**11. Dump**
-Extract raw structural data from the bytecode file. `--json` emits machine-readable output.
+**12. Dump**, Dump raw structural tables from the bytecode file. `--json` emits machine-readable output.
+
 ```bash
 hermes-decomp dump app.hbc --kind strings
 hermes-decomp dump app.hbc --kind functions
 hermes-decomp dump app.hbc --kind obj-shapes --json
-# --kind values: strings, functions, identifiers, cjs-modules, regexp,
+# --kind values: strings, functions, cjs-modules, regexp,
 #   obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer
 ```
 
-**12. Closures**
-Show closure slot mappings for a function.
+**13. Closures**, Show closure slot mappings for a function.
+
 ```bash
 hermes-decomp closures app.hbc --function 5
 ```
 
-**13. Debug**
-Show debug info (variable names, scopes, callees).
+**14. Debug**, Show embedded debug info (variable names, scopes, callees).
+
 ```bash
 hermes-decomp debug app.hbc --vars
 hermes-decomp debug app.hbc --scopes
 hermes-decomp debug app.hbc --callees
 ```
 
-**14. Versions**
-List all supported Hermes bytecode versions.
+**15. Update**, Check for and install updates from GitHub releases.
+
 ```bash
-hermes-decomp versions
+hermes-decomp update --check
+hermes-decomp update --install
+hermes-decomp update --version v0.1.7
 ```
 
-**15. JSON Export**
-Export the Intermediate Representation (IR) in JSON format for external tools.
+**16. JSON IR export**, Use `decompile --json` (not a separate subcommand).
+
 ```bash
 hermes-decomp decompile app.hbc --function 5 --json
 hermes-decomp decompile app.hbc --json
@@ -176,7 +225,7 @@ hermes-decomp decompile app.hbc --json
 
 ## MCP Server (AI Integration)
 
-The project includes an MCP (Model Context Protocol) server that exposes all decompiler features as tools for AI assistants (Claude, GPT, etc.).
+The project includes an MCP (Model Context Protocol) server that exposes decompiler features as tools for AI assistants (Claude, GPT, etc.).
 
 ### Build
 
@@ -202,8 +251,7 @@ A ready-to-edit template is provided at [`mcp-config.example.json`](mcp-config.e
 ### Transports
 
 By default the server speaks MCP over **stdio** (the config above launches it as a
-subprocess). It can also serve over **Streamable HTTP** for remote/multiple clients —
-each connection gets its own isolated session:
+subprocess). It can also serve over **Streamable HTTP** for remote/multiple clients, each connection gets its own isolated session:
 
 ```bash
 hermes-mcp                                  # stdio (default)
@@ -248,12 +296,14 @@ Point an HTTP-capable MCP client at the URL instead of a command:
 The core library `hbc-decomp` can be used in other Rust projects.
 
 ### Add to Cargo.toml
+
 ```toml
 [dependencies]
 hbc-decomp = { git = "https://github.com/SymbioticSec/hermes-decomp" }
 ```
 
 ### Example Usage
+
 ```rust
 use hbc_decomp::{Decompiler, DecompileOptionsV2};
 
@@ -285,25 +335,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `include_offsets` | `false` | Adds bytecode offset comments. |
 | `propagate` | `true` | Constant and copy propagation. |
 | `simplify` | `true` | Cleans up intermediate temporaries. |
-| `recover_structures`| `true` | Reconstructs `if`, `while`, `for` from jumps. |
+| `recover_structures` | `true` | Reconstructs `if`, `while`, `for` from jumps. |
 
 ## Technical Overview
 
 ### What is Hermes?
+
 Hermes is a JavaScript engine optimized for React Native. Unlike V8 or JSC which parse JS source at runtime, Hermes precompiles JavaScript into **bytecode** (`.hbc`) during the build process. This improves startup time but makes reverse engineering harder.
 
 ### Decompilation Process
 
-1.  **Parsing**: The binary HBC file is parsed to extract headers, string tables, and raw bytecode instructions.
-2.  **Disassembly**: Raw bytes are converted into readable opcodes (e.g., `Mov`, `Call`, `Add`).
-3.  **IR Generation**: Bytecode is lifted into a high-level **Intermediate Representation (IR)**.
-    *   Registers (`r0`, `r1`) are mapped to variables.
-    *   Control flow (Jumps) is analyzed to build a Control Flow Graph (CFG).
-4.  **Analysis & Transformation**:
-    *   **Data Flow**: Constant propagation, copy propagation.
-    *   **Structure Recovery**: Reconstructing `if`, `while`, `for` loops from graph edges.
-    *   **Pattern Matching**: Detecting `class`, `async`, `generator` state machines.
-5.  **Code Generation**: The optimized IR is converted back into valid JavaScript syntax.
+1. **Parsing**: The binary HBC file is parsed to extract headers, string tables, and raw bytecode instructions.
+2. **Disassembly**: Raw bytes are converted into readable opcodes (e.g., `Mov`, `Call`, `Add`).
+3. **IR Generation**: Bytecode is lifted into a high-level **Intermediate Representation (IR)**.
+   - Registers (`r0`, `r1`) are mapped to variables.
+   - Control flow (jumps) is analyzed to build a Control Flow Graph (CFG).
+4. **Analysis & Transformation**:
+   - **Data Flow**: Constant propagation, copy propagation.
+   - **Structure Recovery**: Reconstructing `if`, `while`, `for` loops from graph edges.
+   - **Pattern Matching**: Detecting `class`, `async`, `generator` state machines.
+   - **Metro / ESM**: Module factories unwrapped; `require`/`exports` rewritten to `import`/`export`.
+5. **Code Generation**: The optimized IR is converted back into valid JavaScript syntax.
 
 ## Contributing
 
@@ -316,7 +368,7 @@ problem or feature, avoid duplicate work, and agree on an approach before any co
 2. Wait for feedback / confirmation that a PR is welcome.
 3. Fork the repo and create a branch from `main`.
 4. Make your change and ensure `cargo build --release --workspace` and `cargo test --workspace` pass.
-   The CI builds on Linux, macOS, and Windows — keep all three green.
+   The CI builds on Linux, macOS, and Windows, keep all three green.
 5. Open a pull request that references the issue.
 
 ## Resources

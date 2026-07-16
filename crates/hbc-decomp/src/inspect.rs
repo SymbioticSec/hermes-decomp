@@ -403,9 +403,9 @@ fn reachable_within(
 
 // Build the bundle call graph and render it as text or Graphviz DOT.
 //
-// * `root` — if set, restrict to the subgraph reachable from that function.
-// * `depth` — max hops from `root` (ignored when `root` is `None`).
-// * `dot` — emit Graphviz DOT instead of a text edge listing.
+// * `root`, if set, restrict to the subgraph reachable from that function.
+// * `depth`, max hops from `root` (ignored when `root` is `None`).
+// * `dot`, emit Graphviz DOT instead of a text edge listing.
 pub fn render_call_graph(
     file: &BytecodeFile,
     format: &BytecodeFormat,

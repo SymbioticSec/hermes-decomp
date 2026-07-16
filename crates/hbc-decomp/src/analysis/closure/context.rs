@@ -73,7 +73,7 @@ impl ClosureContext {
     // function*(){})` pattern is recognised by `detect_async_generator_wrappers`.
     // Here we only PROPAGATE that flag from an async wrapper to the inner
     // generator body it drives. We must NOT guess "async" from the parent merely
-    // not being a generator — a real `function*` also has a non-generator parent,
+    // not being a generator, a real `function*` also has a non-generator parent,
     // and that guess rendered real generators as `async`/`await`.
     pub fn propagate_async_to_generators(&mut self) {
         // Iterate until no more changes (handles multi-level chains)
@@ -137,7 +137,7 @@ impl ClosureContext {
         // (`closure_0 += 1` in a returned closure) emits a `StoreToEnvironment`
         // that looks like a local slot whose value is the stored register
         // (`Variable("sum")`). That is a mutation of the parent's slot, not a new
-        // definition — letting it shadow the ancestor would rename the shared
+        // definition, letting it shadow the ancestor would rename the shared
         // variable per scope (parent sees `closure_0`, child sees `sum`). So a
         // local `Variable` entry does not override an inherited slot.
         if let Some(local_info) = self.function_closures.get(&function_id) {
