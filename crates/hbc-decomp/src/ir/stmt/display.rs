@@ -143,7 +143,16 @@ impl fmt::Display for AssignTarget {
                 write!(f, "{sanitized}")
             }
             AssignTarget::Register(r) => write!(f, "r{r}"),
-            AssignTarget::Member { object, property } => write!(f, "{object}.{property}"),
+            AssignTarget::Member { object, property } => {
+                let obj = format!("{object}");
+                let s = crate::ir::expr::display::format_member_access_with(
+                    &obj,
+                    "",
+                    &crate::ir::PropertyKey::Ident(property.clone()),
+                    |e| format!("{e}"),
+                );
+                write!(f, "{s}")
+            }
             AssignTarget::Index { object, key } => write!(f, "{object}[{key}]"),
             AssignTarget::ClosureVar { level, slot } => {
                 if *level == 0 {

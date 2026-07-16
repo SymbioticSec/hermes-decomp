@@ -65,7 +65,13 @@ impl Codegen {
             AssignTarget::Variable(n) => crate::util::sanitize_identifier(n),
             AssignTarget::Member { object, property } => {
                 let obj = self.generate_expr(object);
-                format!("{obj}.{property}")
+                // Same rules as Expression::Member, non-identifier keys need brackets.
+                crate::ir::expr::display::format_member_access_with(
+                    &obj,
+                    "",
+                    &crate::ir::PropertyKey::Ident(property.clone()),
+                    |e| self.generate_expr(e),
+                )
             }
             AssignTarget::Index { object, key } => {
                 let obj = self.generate_expr(object);
