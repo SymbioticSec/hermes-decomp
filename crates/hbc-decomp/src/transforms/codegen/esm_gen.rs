@@ -261,6 +261,15 @@ impl Codegen {
             }
         }
 
+        // Deduplicate exports (e.g. multiple export * from same module)
+        {
+            let mut seen = HashSet::new();
+            exports.retain(|e| seen.insert(e.clone()));
+        }
+
+        // `function name(){…}` + `export const name = …` → `export function name`
+        dedupe_function_export_collisions(&mut body_stmts, &mut exports);
+
         // Build output
         let mut output = String::new();
 
@@ -288,12 +297,6 @@ impl Codegen {
             output.push('\n');
         }
 
-        // Deduplicate exports (e.g. multiple export * from same module)
-        {
-            let mut seen = HashSet::new();
-            exports.retain(|e| seen.insert(e.clone()));
-        }
-
         // Exports
         if !exports.is_empty() {
             output.push('\n');
@@ -304,5 +307,78 @@ impl Codegen {
         }
 
         output
+    }
+}
+
+/// When body already has `function name(…)` and exports have `export const name = …`,
+/// promote the declaration to `export function name` and drop the export const.
+fn dedupe_function_export_collisions(body_stmts: &mut [String], exports: &mut Vec<String>) {
+    use std::collections::HashSet;
+
+    let mut fn_names: HashSet<String> = HashSet::new();
+    for body in body_stmts.iter() {
+        for line in body.lines() {
+            let t = line.trim_start();
+            if t.starts_with("export ") {
+                continue;
+            }
+            let rest = if let Some(r) = t.strip_prefix("async function ") {
+                r.trim_start_matches('*').trim_start()
+            } else if let Some(r) = t.strip_prefix("function ") {
+                r.trim_start_matches('*').trim_start()
+            } else {
+                continue;
+            };
+            if let Some(name) = rest.split(|c: char| c == '(' || c.is_whitespace()).next() {
+                if !name.is_empty() && crate::util::is_valid_identifier(name) {
+                    fn_names.insert(name.to_string());
+                }
+            }
+        }
+    }
+    if fn_names.is_empty() {
+        return;
+    }
+
+    let mut promote: HashSet<String> = HashSet::new();
+    exports.retain(|exp| {
+        let Some(rest) = exp.strip_prefix("export const ") else {
+            return true;
+        };
+        let Some((name, _)) = rest.split_once(" = ") else {
+            return true;
+        };
+        let name = name.trim();
+        if fn_names.contains(name) {
+            promote.insert(name.to_string());
+            false
+        } else {
+            true
+        }
+    });
+    if promote.is_empty() {
+        return;
+    }
+
+    for body in body_stmts.iter_mut() {
+        for name in &promote {
+            *body = body.replace(
+                &format!("async function {name}("),
+                &format!("export async function {name}("),
+            );
+            *body = body.replace(
+                &format!("function {name}("),
+                &format!("export function {name}("),
+            );
+            *body = body.replace(
+                &format!("async function* {name}("),
+                &format!("export async function* {name}("),
+            );
+            *body = body.replace(
+                &format!("function* {name}("),
+                &format!("export function* {name}("),
+            );
+            *body = body.replace("export export ", "export ");
+        }
     }
 }

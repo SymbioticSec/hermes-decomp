@@ -310,10 +310,9 @@ impl PipelineContext {
         // STAGE W16: Post-IPA transforms (reserved words, object/array folding, arguments simplification)
         Self::apply_post_ipa_transforms(all_ir);
 
-        // STAGE W16a: promote let→const where never reassigned
-        for stmts in all_ir.values_mut() {
-            transforms::promote_const_bindings(stmts);
-        }
+        // NOTE: do NOT run promote_const_bindings here. Env slots are shared
+        // across closures; a binding that looks unreassigned in one body is often
+        // mutated in a sibling. Promotion caused const-reassign / TDZ parse fails.
 
         // STAGE W16a2: while(true)+trailing break → do/while (after inlining cleans latch)
         {

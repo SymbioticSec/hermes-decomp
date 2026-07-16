@@ -135,7 +135,13 @@ impl Codegen {
                 }
 
                 let mut comment = String::new();
-                let callee_str = self.generate_expr(callee);
+                // function F(){}(args) is a SyntaxError; must be (function F(){})(args)
+                let callee_str = match callee.as_ref() {
+                    Expression::Function { .. } => {
+                        format!("({})", self.generate_expr(callee))
+                    }
+                    _ => self.generate_expr(callee),
+                };
 
                 if callee_str == "require" {
                     if let Some(map) = &self.import_map {
