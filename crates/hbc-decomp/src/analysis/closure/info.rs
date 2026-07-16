@@ -43,6 +43,11 @@ impl ClosureInfo {
     /// Hermes reuses environment slots aggressively. A slot that once held a
     /// regex and later holds `Math.random` must not keep the `re{N}` name for
     /// every use (flow-insensitive naming would otherwise mislabel).
+    ///
+    /// Mutable captured bindings are initialised once (often with a Constant)
+    /// then updated with temps (`sum = c0 + 1; c0 = sum`). Flow-insensitive
+    /// last-write would rename the *slot* to `sum` and turn the update into
+    /// `sum = sum + 1` (TDZ). Keep the first stable name for the slot.
     pub fn store_slot(&mut self, slot: u32, val: ClosureSlotValue) {
         let next = match self.slots.get(&slot) {
             None => val,
@@ -50,11 +55,20 @@ impl ClosureInfo {
                 ClosureSlotValue::RegExp => ClosureSlotValue::RegExp,
                 other => other,
             },
-            Some(_) => match val {
+            Some(prev) => match &val {
                 // Non-regex then regex ⇒ slot reuse; drop RegExp so we never
                 // emit `re{N}` for mixed slots.
                 ClosureSlotValue::RegExp => ClosureSlotValue::Unknown,
-                other => other,
+                // Temp / intermediate Variable must not rename a stable slot.
+                ClosureSlotValue::Variable(v) if is_ephemeral_slot_name(v) => {
+                    // Prefer an existing Constant/Function/stable Variable name.
+                    if slot_name_is_stable(prev) {
+                        prev.clone()
+                    } else {
+                        val
+                    }
+                }
+                other => other.clone(),
             },
         };
         self.slots.insert(slot, next);
@@ -213,6 +227,34 @@ impl ClosureInfo {
             }
             Some(ClosureSlotValue::Unknown) | None => format!("closure_{raw_slot}"),
         }
+    }
+}
+
+/// Names that are intermediate SSA-like temps, not the identity of a captured binding.
+fn is_ephemeral_slot_name(name: &str) -> bool {
+    if name == "tmp"
+        || name.strip_prefix("tmp").is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
+    {
+        return true;
+    }
+    if name.strip_prefix('r').is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+    {
+        return true;
+    }
+    // Common names inferred from binary ops / short-lived results.
+    matches!(
+        name,
+        "sum" | "diff" | "product" | "quotient" | "text" | "result" | "value" | "ret"
+            | "tmpResult" | "callResult"
+    ) || name.ends_with("Result")
+        || name.ends_with("Return")
+}
+
+fn slot_name_is_stable(val: &ClosureSlotValue) -> bool {
+    match val {
+        ClosureSlotValue::Constant(_) | ClosureSlotValue::Function { .. } => true,
+        ClosureSlotValue::Variable(v) => !is_ephemeral_slot_name(v),
+        ClosureSlotValue::RegExp | ClosureSlotValue::Unknown => false,
     }
 }
 
@@ -449,6 +491,15 @@ mod tests {
     fn string_constant_slash_is_not_ren() {
         let mut info = ClosureInfo::new();
         info.store_slot(0, ClosureSlotValue::Constant("\"/api/v1\"".into()));
+        assert_eq!(info.get_slot_name(0), "c0");
+    }
+
+    #[test]
+    fn mutable_counter_keeps_init_name_not_sum() {
+        // env[0] = 0; env[0] = sum  → still named c0, not sum
+        let mut info = ClosureInfo::new();
+        info.store_slot(0, ClosureSlotValue::Constant("0".into()));
+        info.store_slot(0, ClosureSlotValue::Variable("sum".into()));
         assert_eq!(info.get_slot_name(0), "c0");
     }
 }

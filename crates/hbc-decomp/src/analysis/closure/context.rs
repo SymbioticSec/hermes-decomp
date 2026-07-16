@@ -2,6 +2,37 @@ use super::info::{encode_level_slot, ClosureInfo, ClosureSlotValue};
 use crate::ir::{AssignTarget, Expression, Statement};
 use std::collections::{BTreeMap, HashSet};
 
+/// Intermediate SSA temps that must not rename a captured env slot.
+fn is_ephemeral_name(name: &str) -> bool {
+    if name == "tmp"
+        || name
+            .strip_prefix("tmp")
+            .is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
+    {
+        return true;
+    }
+    if name
+        .strip_prefix('r')
+        .is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+    {
+        return true;
+    }
+    matches!(
+        name,
+        "sum" | "diff" | "product" | "quotient" | "text" | "result" | "value" | "ret"
+            | "tmpResult" | "callResult"
+    ) || name.ends_with("Result")
+        || name.ends_with("Return")
+}
+
+fn slot_value_is_stable(val: &ClosureSlotValue) -> bool {
+    match val {
+        ClosureSlotValue::Constant(_) | ClosureSlotValue::Function { .. } => true,
+        ClosureSlotValue::Variable(v) => !is_ephemeral_name(v),
+        ClosureSlotValue::RegExp | ClosureSlotValue::Unknown => false,
+    }
+}
+
 // Maximum iterations for propagating async flags through generator chains.
 // Convergence typically occurs in 2-3 iterations; 20 guarantees termination.
 const MAX_ASYNC_PROPAGATION_ITERATIONS: usize = 20;
@@ -137,12 +168,49 @@ impl ClosureContext {
         }
 
         // Local env (IR level 0): raw slot keys == encode_level_slot(0, slot).
-        // Within one function, `store_slot` already handled RegExp reuse.
-        // Cross-scope false labels (require vs Symbol.iterator) are fixed by
-        // real levels, no prefer_local override needed for parent roles.
+        // Hermes GetEnvironment(0) in a nested function is often the *captured*
+        // parent environment (no local CreateEnvironment). Local analysis may
+        // then record only the temp `sum = c0+1; store sum`, renaming the slot
+        // to `sum`. Prefer a stable ancestor name for the same raw slot index.
         if let Some(local_info) = self.function_closures.get(&function_id) {
             for (slot, value) in &local_info.slots {
-                combined.slots.insert(*slot, value.clone());
+                let key = *slot; // level 0
+                let use_local = match value {
+                    ClosureSlotValue::Variable(v) if is_ephemeral_name(v) => {
+                        // Keep ancestor stable binding if present at any encoded level.
+                        !ancestors.iter().any(|anc| {
+                            self.function_closures.get(anc).is_some_and(|ai| {
+                                ai.slots
+                                    .get(slot)
+                                    .is_some_and(slot_value_is_stable)
+                            })
+                        })
+                    }
+                    _ => true,
+                };
+                if use_local {
+                    combined.slots.insert(key, value.clone());
+                }
+            }
+        }
+
+        // Also: if level-0 key is missing but ancestors have a stable slot, expose
+        // it at level 0 so Hermes-level-0 loads of the captured env resolve.
+        for (depth, &ancestor) in ancestors.iter().enumerate() {
+            if let Some(ancestor_info) = self.function_closures.get(&ancestor) {
+                for (&slot, value) in &ancestor_info.slots {
+                    if !slot_value_is_stable(value) {
+                        continue;
+                    }
+                    // Hermes: nested fn's env level 0 is often the same object as
+                    // the parent's CreateEnvironment (depth 0 ancestor).
+                    if depth == 0 {
+                        combined
+                            .slots
+                            .entry(slot)
+                            .or_insert_with(|| value.clone());
+                    }
+                }
             }
         }
 

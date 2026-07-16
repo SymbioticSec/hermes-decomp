@@ -10,13 +10,12 @@ pub fn insert_declarations(stmts: &mut Vec<Statement>, params: &[String]) {
     let mut let_declared: std::collections::HashSet<String> = std::collections::HashSet::new();
     count_writes(stmts, &mut write_count, &mut let_declared);
 
-    // A `closure_N` variable read before its first write is a *captured* variable
-    // owned by an enclosing scope (e.g. a counter mutated inside a returned
-    // closure). It must not be re-declared here, a `const`/`let` would shadow the
-    // outer binding (and `const x = x + 1` is a TDZ error). Detect these and skip
-    // declaring them. The owning scope (where it is written first) still declares
-    // it, but always with `let` since it is mutated across scopes.
-    let free_closures = free_captured_closures(stmts);
+    // A variable whose first occurrence is a READ is free / captured from an
+    // enclosing scope (e.g. counter `c0` mutated inside a returned closure, or
+    // legacy `closure_N`). Re-declaring it here shadows the outer binding and
+    // causes TDZ (`const c0 = c0 + 1`). Skip declaring free vars; the owner
+    // scope still declares them (as `let` when mutated across scopes).
+    let free_closures = free_captured_vars(stmts);
 
     let param_set: std::collections::HashSet<&str> = params.iter().map(|s| s.as_str()).collect();
     let mut declared: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -76,23 +75,34 @@ pub fn insert_declarations(stmts: &mut Vec<Statement>, params: &[String]) {
     insert_decls_in_block(stmts, &write_count, &let_declared, &param_set, &free_closures, &mut declared);
 }
 
-// Closure variables (`closure_N`) whose first textual occurrence in the function
-// is a READ (i.e. read before written), these are captured from an enclosing
-// scope and must not be declared here. Evaluation order: an assignment reads its
-// value expression before writing its target.
-fn free_captured_closures(stmts: &[Statement]) -> std::collections::HashSet<String> {
-    let mut first_seen: BTreeMap<String, bool> = BTreeMap::new(); // name -> first occurrence was a read
+fn is_env_slot_name(name: &str) -> bool {
+    // closure_0, c0, c12, typical Hermes env / counter bindings
+    if name.strip_prefix("closure_").is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+    {
+        return true;
+    }
+    name.len() >= 2
+        && name.starts_with('c')
+        && name[1..].chars().all(|c| c.is_ascii_digit())
+}
+
+// Variables whose first textual occurrence in the function is a READ (read
+// before written), captured from an enclosing scope. Must not be declared
+// here. Evaluation order: an assignment reads its value expression before
+// writing its target.
+fn free_captured_vars(stmts: &[Statement]) -> std::collections::HashSet<String> {
+    let mut first_seen: BTreeMap<String, bool> = BTreeMap::new(); // name -> first was a read
     scan_first_use(stmts, &mut first_seen);
     first_seen
         .into_iter()
-        .filter(|(name, read_first)| *read_first && is_closure_var(name))
+        .filter(|(name, read_first)| {
+            *read_first
+                && is_valid_js_identifier(name)
+                // Don't treat reserved/global builtins as free "locals" to skip,                 // they simply aren't declared; skipping is still correct.
+                && !name.is_empty()
+        })
         .map(|(name, _)| name)
         .collect()
-}
-
-fn is_closure_var(name: &str) -> bool {
-    name.strip_prefix("closure_")
-        .is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
 }
 
 // Record, per variable, whether its first occurrence (pre-order, value-before-
@@ -463,10 +473,11 @@ fn insert_decls_in_block(
                 {
                     declared.insert(name.clone());
                     let writes = write_count.get(name).copied().unwrap_or(1);
-                    // A captured closure var declared in its owning scope is mutated
-                    // from nested closures (writes counted here can be 1), always
-                    // `let`, never `const`.
-                    let kind = if is_closure_var(name) || writes > 1 {
+                    // Prefer `let` when mutated more than once, or when the name
+                    // looks like a Hermes env slot (`c0`, `closure_N`), those
+                    // are often mutated from nested closures even if this
+                    // function only shows one write.
+                    let kind = if writes > 1 || is_env_slot_name(name) {
                         VarKind::Let
                     } else {
                         VarKind::Const
