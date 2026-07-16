@@ -53,10 +53,16 @@ impl PipelineContext {
             }
             let params: Vec<String> = if let Some(names) = self.global_analysis.param_names.get(&func_id) {
                 names.iter().enumerate()
-                    .map(|(idx, n)| n.clone().unwrap_or_else(|| format!("arg{idx}")))
+                    .map(|(idx, n)| {
+                        let raw = n.clone().unwrap_or_else(|| format!("arg{idx}"));
+                        crate::util::sanitize_identifier(&raw)
+                    })
                     .collect()
             } else {
                 get_function_params(file, func_id)
+                    .into_iter()
+                    .map(|p| crate::util::sanitize_identifier(&p))
+                    .collect()
             };
 
             let mut body_stmts = stmts.clone();

@@ -18,6 +18,7 @@ pub mod diff;
 pub mod events;
 pub mod formatting;
 pub mod gitdiff;
+pub mod modules;
 pub mod ui;
 
 use app::App;

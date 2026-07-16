@@ -14,6 +14,9 @@ use super::{decompile_or_log, disasm_or_log};
 
 impl App {
     pub fn content(&mut self) -> (Text<'static>, Option<Text<'static>>) {
+        if self.view == ViewMode::Modules {
+            return (Text::raw(self.module_content()), None);
+        }
         if self.function_names.is_empty() {
             if self.diff_analyzing {
                 return (Text::raw("Analyzing functions..."), None);
@@ -30,6 +33,7 @@ impl App {
 
         match self.view {
             ViewMode::Info => (Text::raw(self.format_info_wrapper()), None),
+            ViewMode::Modules => (Text::raw(self.module_content()), None),
             ViewMode::Disasm => {
                 if only_in_file2 {
                     let id2 = self.selected_function_id2().unwrap();
@@ -370,4 +374,31 @@ impl App {
         )
     }
 
+    /// Decompile the selected Metro module (factory function as ESM).
+    pub fn module_content(&mut self) -> String {
+        if self.pipeline_building && self.pipeline_ctx.is_none() {
+            return "Analyzing Metro modules… (pipeline building)\nPress m again after analysis finishes."
+                .into();
+        }
+        let Some(ctx) = self.pipeline_ctx.clone() else {
+            return "No pipeline context. Press m to start analysis.".into();
+        };
+        if self.modules.rows.is_empty() {
+            self.modules.rebuild_from(&ctx);
+        }
+        let Some(row) = self.modules.selected_row().cloned() else {
+            return "No modules found (bundle may not use Metro __d).".into();
+        };
+        if let Some(cached) = self.modules.cache.get(&row.module_id) {
+            return cached.clone();
+        }
+        let code = ctx.generate_function_code(&self.file, row.function_id);
+        let header = format!(
+            "// Module {} ({})  factory=F{}  exports={}  deps={}\n\n",
+            row.module_id, row.name, row.function_id, row.export_count, row.dep_count
+        );
+        let full = format!("{header}{code}");
+        self.modules.cache.insert(row.module_id, full.clone());
+        full
+    }
 }

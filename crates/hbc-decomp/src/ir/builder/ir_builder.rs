@@ -4,6 +4,7 @@ use crate::{BytecodeFile, BytecodeFormat, Instruction, Result};
 use std::collections::BTreeMap;
 
 use super::dispatch::dispatch_instruction;
+use super::env_state::EnvRegMap;
 use super::jump_analysis::find_block_starts_with_handlers;
 use super::opcodes_flow::FlowResult;
 
@@ -118,6 +119,8 @@ impl<'a> IRBuilder<'a> {
         // so cfg.get_mut(current_block).expect(...) below cannot fail.
         let mut current_block = cfg.entry;
         let mut current_stmts: Vec<Statement> = Vec::new();
+        // Flow-insensitive last-write map: env register → nesting level.
+        let mut env_map = EnvRegMap::new();
 
         for inst in instructions {
             if let Some(&block_id) = offset_to_block.get(&inst.offset) {
@@ -141,8 +144,15 @@ impl<'a> IRBuilder<'a> {
                 }
             }
 
-            let result =
-                dispatch_instruction(inst, self.file, self.format, self.options.resolve_strings, func_bytecode_offset, frame_size);
+            let result = dispatch_instruction(
+                inst,
+                self.file,
+                self.format,
+                self.options.resolve_strings,
+                func_bytecode_offset,
+                frame_size,
+                &mut env_map,
+            );
 
             match result {
                 // A handler that lowers one opcode to several statements returns

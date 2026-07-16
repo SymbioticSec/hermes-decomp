@@ -1,49 +1,6 @@
 use super::info::{encode_level_slot, ClosureInfo, ClosureSlotValue};
-use crate::analysis::metro::registry::FactoryRoles;
 use crate::ir::{AssignTarget, Expression, Statement};
 use std::collections::{BTreeMap, HashSet};
-
-/// Names applied by `ClosureInfo::apply_metro_param_roles` for factory params.
-fn is_metro_role_name(name: &str) -> bool {
-    matches!(
-        name,
-        "global"
-            | "require"
-            | "module"
-            | "exports"
-            | "dependencyMap"
-            | "importDefault"
-            | "importAll"
-            | "deps"
-    )
-}
-
-fn is_metro_role_slot(value: &ClosureSlotValue) -> bool {
-    matches!(value, ClosureSlotValue::Variable(v) if is_metro_role_name(v))
-}
-
-fn is_metro_role_or_param_slot(value: &ClosureSlotValue) -> bool {
-    match value {
-        ClosureSlotValue::Variable(v) => {
-            is_metro_role_name(v) || FactoryRoles::extract_param_index(v).is_some()
-        }
-        _ => false,
-    }
-}
-
-/// Whether a local store should replace an inherited slot name (slot reuse)
-/// rather than being treated as a mutation of the captured variable.
-fn prefer_local_over_inherited(prev: &ClosureSlotValue, local: &ClosureSlotValue) -> bool {
-    // Parent Metro role + local non-role (Babel helpers, etc.)
-    if is_metro_role_slot(prev) && !is_metro_role_or_param_slot(local) {
-        return true;
-    }
-    // Parent exclusive regex + local non-regex
-    if matches!(prev, ClosureSlotValue::RegExp) && !matches!(local, ClosureSlotValue::RegExp) {
-        return true;
-    }
-    false
-}
 
 // Maximum iterations for propagating async flags through generator chains.
 // Convergence typically occurs in 2-3 iterations; 20 guarantees termination.
@@ -162,39 +119,29 @@ impl ClosureContext {
             current = parent;
         }
 
-        // Ancestor scopes first, so their *definitions* are visible when we decide
-        // whether a local entry is really a mutation of an inherited slot.
-        // Level 0 = direct parent. Closer ancestors win (or_insert).
-        for (level, &ancestor) in ancestors.iter().enumerate() {
+        // IR contract (see ir/builder/env_state.rs):
+        //   ClosureVar.level 0 = this function's environment
+        //   ClosureVar.level 1 = direct parent, 2 = grandparent, …
+        // Ancestor depth d maps to IR level d+1. Keys never collide with local
+        // level-0 slots that share the same slot *index*.
+        for (depth, &ancestor) in ancestors.iter().enumerate() {
             if let Some(ancestor_info) = self.function_closures.get(&ancestor) {
+                let ir_level = (depth as u32) + 1;
                 for (&slot, value) in &ancestor_info.slots {
-                    // Store with the level info so we can resolve ClosureVar { level, slot }
-                    let ir_level = level as u32;
                     let key = encode_level_slot(ir_level, slot);
+                    // Closer ancestors win if a deeper one already filled the key
+                    // (should not happen, each level is unique).
                     combined.slots.entry(key).or_insert_with(|| value.clone());
                 }
             }
         }
 
-        // Local slots (raw keys). IR always uses `ClosureVar { level: 0 }` (see
-        // opcodes_environment), so parent/child slot indices share a key space.
-        //
-        // Default: local `Variable` store = mutation of a capture → keep parent
-        // name (`sum += 1` must not rename the shared var).
-        //
-        // Exceptions (`prefer_local_over_inherited`): Hermes reused the slot
-        // index for a different value, keep local so we never emit false-but-
-        // plausible labels (`require`/`re{N}`).
+        // Local env (IR level 0): raw slot keys == encode_level_slot(0, slot).
+        // Within one function, `store_slot` already handled RegExp reuse.
+        // Cross-scope false labels (require vs Symbol.iterator) are fixed by
+        // real levels, no prefer_local override needed for parent roles.
         if let Some(local_info) = self.function_closures.get(&function_id) {
             for (slot, value) in &local_info.slots {
-                if let Some(prev) = combined.slots.get(slot) {
-                    if matches!(value, ClosureSlotValue::Variable(_)) {
-                        if prefer_local_over_inherited(prev, value) {
-                            combined.slots.insert(*slot, value.clone());
-                        }
-                        continue;
-                    }
-                }
                 combined.slots.insert(*slot, value.clone());
             }
         }

@@ -41,6 +41,8 @@ pub enum ViewMode {
     Decompile,
     Info,
     Diff,
+    /// Metro module browser (list + decompile factory as ESM module).
+    Modules,
 }
 
 use super::diff::{spawn_diff_status_worker, DiffMode, DiffProgressMsg, DiffStatus};
@@ -50,7 +52,8 @@ impl ViewMode {
         match self {
             ViewMode::Disasm => ViewMode::Decompile,
             ViewMode::Decompile => ViewMode::Info,
-            ViewMode::Info => {
+            ViewMode::Info => ViewMode::Modules,
+            ViewMode::Modules => {
                 if has_diff {
                     ViewMode::Diff
                 } else {
@@ -67,6 +70,7 @@ impl ViewMode {
             ViewMode::Decompile => "Decompile",
             ViewMode::Info => "Info",
             ViewMode::Diff => "BinDiff (Split View)",
+            ViewMode::Modules => "Modules",
         }
     }
 }
@@ -183,6 +187,9 @@ pub struct App {
     pub xref_list: Vec<(String, u32, XrefKind)>,
     pub xref_selected: usize,
     pub xref_scroll: u16,
+
+    // Metro module browser (ViewMode::Modules)
+    pub modules: super::modules::ModulesState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -327,6 +334,7 @@ impl App {
             xref_list: Vec::new(),
             xref_selected: 0,
             xref_scroll: 0,
+            modules: super::modules::ModulesState::default(),
         };
 
         let map1_start = Instant::now();
@@ -931,6 +939,7 @@ impl App {
             }
             ViewMode::Decompile => self.decompile_content(),
             ViewMode::Info => self.format_info_wrapper(),
+            ViewMode::Modules => self.module_content(),
             ViewMode::Diff => {
                 let (left, _) = self.content();
                 left.lines

@@ -62,7 +62,7 @@ impl Codegen {
         use crate::ir::AssignTarget;
         match target {
             AssignTarget::Register(r) => format!("r{r}"),
-            AssignTarget::Variable(n) => n.clone(),
+            AssignTarget::Variable(n) => crate::util::sanitize_identifier(n),
             AssignTarget::Member { object, property } => {
                 let obj = self.generate_expr(object);
                 format!("{obj}.{property}")

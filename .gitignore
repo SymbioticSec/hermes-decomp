@@ -29,6 +29,11 @@ examples/
 # One-off refactoring scripts
 *.py
 
+# Local working plans (not for git)
+IMPROVEMENTS_PLAN.md
+PLAN*.md
+ROADMAP.md
+
 # Environment
 .env
 .env.local

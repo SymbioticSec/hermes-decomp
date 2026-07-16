@@ -263,11 +263,22 @@ impl PipelineContext {
             transforms::strip_hermes_this(stmts);
         }
 
-        // STAGE W13: Inline single-use temporaries (tmp*, closure_*, rN)
+        // STAGE W13: Inline single-use temporaries (tmp*, closure_*, rN), parallel.
         let t = std::time::Instant::now();
-        for stmts in all_ir.values_mut() {
-            let old = std::mem::take(stmts);
-            *stmts = transforms::inline_named_variables(old);
+        {
+            use rayon::prelude::*;
+            let keys: Vec<u32> = all_ir.keys().copied().collect();
+            let mut entries: Vec<(u32, Vec<Statement>)> = keys
+                .into_iter()
+                .filter_map(|id| all_ir.remove(&id).map(|s| (id, s)))
+                .collect();
+            entries.par_iter_mut().for_each(|(_, stmts)| {
+                let old = std::mem::take(stmts);
+                *stmts = transforms::inline_named_variables(old);
+            });
+            for (id, stmts) in entries {
+                all_ir.insert(id, stmts);
+            }
         }
         log::debug!("[pipeline] variable inlining: {:.2?}", t.elapsed());
 
@@ -298,6 +309,11 @@ impl PipelineContext {
 
         // STAGE W16: Post-IPA transforms (reserved words, object/array folding, arguments simplification)
         Self::apply_post_ipa_transforms(all_ir);
+
+        // STAGE W16a: promote let→const where never reassigned
+        for stmts in all_ir.values_mut() {
+            transforms::promote_const_bindings(stmts);
+        }
 
         // STAGE W16b: Collapse generator wrappers. A `function* gen()` compiles to
         // a thin wrapper that does `CreateGenerator(body); return it`, with the

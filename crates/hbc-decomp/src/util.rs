@@ -55,12 +55,17 @@ fn is_identifier_part(ch: char) -> bool {
 }
 
 // Sanitize a string to be a valid JavaScript identifier:
-// - `@@symbol` -> `Symbol_symbol` (Hermes internal symbols)
+// - `@@iterator` → `iterable` (Babel for-of helper param; legal + readable)
+// - other `@@symbol` → `Symbol_symbol` (Hermes internal symbols)
 // - Invalid characters -> replaced with `_`
 // - Leading digits -> prefixed with `_`
 pub fn sanitize_identifier(name: &str) -> String {
     if let Some(symbol_name) = name.strip_prefix("@@") {
-        return format!("Symbol_{symbol_name}");
+        return match symbol_name {
+            "iterator" => "iterable".to_string(),
+            "asyncIterator" => "asyncIterable".to_string(),
+            other => format!("Symbol_{other}"),
+        };
     }
 
     if is_valid_identifier(name) {

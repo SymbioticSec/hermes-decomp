@@ -6,10 +6,10 @@ pub use context::ClosureContext;
 use info::encode_level_slot;
 pub use info::{ClosureInfo, ClosureSlotValue};
 
-// Hermes bytecode uses an "Environment" system for closures.
-// Instead of named variables, inner functions access variables via (Environment Index, Slot Index) pairs.
-// This pass translates `LoadFromEnvironment(env, slot)` instructions into named variables
-// like `outer0_1` or recovers original names if debug info is available.
+// Hermes bytecode uses an environment system for closures.
+// IR: `ClosureVar { level, slot }` where level 0 = current function env, 1 = parent, …
+// (levels come from GetEnvironment during IR build, see ir/builder/env_state.rs).
+// This pass renames those slots to JS identifiers via ClosureInfo::get_slot_name.
 pub fn resolve_closures(stmts: Vec<Statement>, info: &ClosureInfo) -> Vec<Statement> {
     stmts.into_iter().map(|s| resolve_stmt(s, info)).collect()
 }

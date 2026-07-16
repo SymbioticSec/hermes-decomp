@@ -20,6 +20,7 @@ pub mod logic_patterns;
 pub mod spread_rest;
 pub mod ssa;
 pub mod ternary_returns;
+mod var_kind;
 pub mod var_naming;
 pub mod worklet_source;
 
@@ -46,5 +47,6 @@ pub use logic_patterns::transform_logic;
 pub use spread_rest::transform_spread_rest;
 pub use ssa::transform_to_ssa;
 pub use ternary_returns::optimize_ternary_returns;
+pub use var_kind::promote_const_bindings;
 pub use var_naming::{infer_variable_names, rename_closure_variables, rename_closure_variables_cross_function, rename_closures_from_definitions};
 pub use worklet_source::collect_worklet_sources;

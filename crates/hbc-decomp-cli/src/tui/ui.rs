@@ -56,7 +56,11 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(layout[1]);
 
-    draw_function_list(frame, app, body[0]);
+    if app.view == ViewMode::Modules {
+        draw_module_list(frame, app, body[0]);
+    } else {
+        draw_function_list(frame, app, body[0]);
+    }
 
     // Check if in diff mode for split view content
     if app.view == ViewMode::Diff {
@@ -75,6 +79,8 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
         let (content, _) = app.content();
         let title = if app.view == ViewMode::Decompile && app.pipeline_building {
             "Decompile (analyzing...)"
+        } else if app.view == ViewMode::Modules && app.pipeline_building {
+            "Modules (analyzing...)"
         } else {
             app.view.title()
         };
@@ -97,6 +103,8 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
             Span::styled(" scroll ", Style::default().fg(Color::DarkGray)),
             Span::styled("g", Style::default().fg(Color::White)),
             Span::styled(" xref ", Style::default().fg(Color::DarkGray)),
+            Span::styled("m", Style::default().fg(Color::White)),
+            Span::styled(" modules ", Style::default().fg(Color::DarkGray)),
             Span::styled("d", Style::default().fg(Color::White)),
             Span::styled(" diff colors ", Style::default().fg(Color::DarkGray)),
             Span::styled("v", Style::default().fg(Color::White)),
@@ -238,6 +246,47 @@ fn draw_function_list(frame: &mut Frame, app: &mut App, area: Rect) {
     // Record the inner (content) area so mouse clicks can map to a row.
     app.list_inner = Block::default().borders(Borders::ALL).inner(list_area);
     frame.render_stateful_widget(list, list_area, &mut app.list_state);
+}
+
+fn draw_module_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    let title = if app.pipeline_building && app.modules.rows.is_empty() {
+        "Modules (analyzing…)"
+    } else {
+        "Modules (m)"
+    };
+    let page = area.height.saturating_sub(2) as usize;
+    let items: Vec<ListItem> = app
+        .modules
+        .filtered
+        .iter()
+        .enumerate()
+        .skip(app.modules.scroll)
+        .take(page.max(1))
+        .map(|(fi, _)| {
+            let label = app.modules.label(fi);
+            if fi == app.modules.selected {
+                ListItem::new(Line::from(Span::styled(
+                    label,
+                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                )))
+            } else {
+                ListItem::new(Line::from(Span::styled(label, Style::default())))
+            }
+        })
+        .collect();
+
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .title(format!(
+                "{title}  {}/{}",
+                app.modules.filtered.len(),
+                app.modules.rows.len()
+            )),
+    );
+    app.list_inner = Block::default().borders(Borders::ALL).inner(area);
+    frame.render_widget(list, area);
 }
 
 fn draw_content_pane(

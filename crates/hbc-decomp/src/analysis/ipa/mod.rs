@@ -1,4 +1,5 @@
 mod body_hints;
+mod error_string_hints;
 mod graph;
 mod hints_tables;
 mod inference;
@@ -93,6 +94,22 @@ pub fn run_ipa(
                     }
             }
             self_param_names.entry(func_id).or_default().push(site);
+        }
+        // Pass 1c: Error-string hints (`throw new Error("… email …")` + param)
+        let err_hints = error_string_hints::hints_from_error_strings(stmts);
+        if !err_hints.is_empty() {
+            let max_idx = err_hints.keys().copied().max().unwrap_or(0) as usize;
+            if max_idx < MAX_PARAM_SLOTS {
+                let mut site = vec![None; max_idx + 1];
+                for (idx, names) in err_hints {
+                    if let Some(name) = names.into_iter().next() {
+                        if (idx as usize) < site.len() {
+                            site[idx as usize] = Some(name);
+                        }
+                    }
+                }
+                self_param_names.entry(func_id).or_default().push(site);
+            }
         }
     }
 

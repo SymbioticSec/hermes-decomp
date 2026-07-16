@@ -7,18 +7,19 @@ impl Codegen {
         match stmt {
             Statement::Expr(e) => format!("{indent}{};\n", self.generate_expr(e)),
             Statement::Let { name, value, kind } => {
+                let name = crate::util::sanitize_identifier(name);
                 // Skip invalid JS identifiers (numbers, string literals)
                 let first_char = name.chars().next().unwrap_or('_');
                 if first_char.is_ascii_digit() || first_char == '"' || first_char == '\'' {
                     return String::new();
                 }
                 // Skip global aliases (const Object = globalThis.Object, const Object2 = ...)
-                if Self::is_global_alias_def(name, value) {
+                if Self::is_global_alias_def(&name, value) {
                     return String::new();
                 }
                 // Skip self-assignments (const x = x)
                 if let crate::ir::Expression::Value(crate::ir::Value::Variable(v)) = value {
-                    if v == name {
+                    if crate::util::sanitize_identifier(v) == name {
                         return String::new();
                     }
                 }
@@ -29,7 +30,7 @@ impl Codegen {
                 // Convert `const name = function name(...)` → `function name(...)`
                 // when function name matches variable name (redundant named expression)
                 if let crate::ir::Expression::Function { name: Some(fn_name), .. } = value {
-                    if fn_name == name {
+                    if crate::util::sanitize_identifier(fn_name) == name {
                         let rendered = self.generate_expr(value);
                         return format!("{indent}{rendered}\n");
                     }
