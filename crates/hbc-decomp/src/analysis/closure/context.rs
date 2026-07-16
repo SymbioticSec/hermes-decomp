@@ -1,6 +1,49 @@
 use super::info::{encode_level_slot, ClosureInfo, ClosureSlotValue};
+use crate::analysis::metro::registry::FactoryRoles;
 use crate::ir::{AssignTarget, Expression, Statement};
 use std::collections::{BTreeMap, HashSet};
+
+/// Names applied by `ClosureInfo::apply_metro_param_roles` for factory params.
+fn is_metro_role_name(name: &str) -> bool {
+    matches!(
+        name,
+        "global"
+            | "require"
+            | "module"
+            | "exports"
+            | "dependencyMap"
+            | "importDefault"
+            | "importAll"
+            | "deps"
+    )
+}
+
+fn is_metro_role_slot(value: &ClosureSlotValue) -> bool {
+    matches!(value, ClosureSlotValue::Variable(v) if is_metro_role_name(v))
+}
+
+fn is_metro_role_or_param_slot(value: &ClosureSlotValue) -> bool {
+    match value {
+        ClosureSlotValue::Variable(v) => {
+            is_metro_role_name(v) || FactoryRoles::extract_param_index(v).is_some()
+        }
+        _ => false,
+    }
+}
+
+/// Whether a local store should replace an inherited slot name (slot reuse)
+/// rather than being treated as a mutation of the captured variable.
+fn prefer_local_over_inherited(prev: &ClosureSlotValue, local: &ClosureSlotValue) -> bool {
+    // Parent Metro role + local non-role (Babel helpers, etc.)
+    if is_metro_role_slot(prev) && !is_metro_role_or_param_slot(local) {
+        return true;
+    }
+    // Parent exclusive regex + local non-regex
+    if matches!(prev, ClosureSlotValue::RegExp) && !matches!(local, ClosureSlotValue::RegExp) {
+        return true;
+    }
+    false
+}
 
 // Maximum iterations for propagating async flags through generator chains.
 // Convergence typically occurs in 2-3 iterations; 20 guarantees termination.
@@ -133,18 +176,24 @@ impl ClosureContext {
             }
         }
 
-        // Local slots (level 0). A function that mutates a *captured* variable
-        // (`closure_0 += 1` in a returned closure) emits a `StoreToEnvironment`
-        // that looks like a local slot whose value is the stored register
-        // (`Variable("sum")`). That is a mutation of the parent's slot, not a new
-        // definition, letting it shadow the ancestor would rename the shared
-        // variable per scope (parent sees `closure_0`, child sees `sum`). So a
-        // local `Variable` entry does not override an inherited slot.
+        // Local slots (raw keys). IR always uses `ClosureVar { level: 0 }` (see
+        // opcodes_environment), so parent/child slot indices share a key space.
+        //
+        // Default: local `Variable` store = mutation of a capture → keep parent
+        // name (`sum += 1` must not rename the shared var).
+        //
+        // Exceptions (`prefer_local_over_inherited`): Hermes reused the slot
+        // index for a different value, keep local so we never emit false-but-
+        // plausible labels (`require`/`re{N}`).
         if let Some(local_info) = self.function_closures.get(&function_id) {
             for (slot, value) in &local_info.slots {
-                let is_mutation = matches!(value, ClosureSlotValue::Variable(_));
-                if is_mutation && combined.slots.contains_key(slot) {
-                    continue;
+                if let Some(prev) = combined.slots.get(slot) {
+                    if matches!(value, ClosureSlotValue::Variable(_)) {
+                        if prefer_local_over_inherited(prev, value) {
+                            combined.slots.insert(*slot, value.clone());
+                        }
+                        continue;
+                    }
                 }
                 combined.slots.insert(*slot, value.clone());
             }
@@ -185,6 +234,19 @@ impl ClosureContext {
         for (&func_id, info) in self.function_closures.iter_mut() {
             if let Some(names) = param_names.get(&func_id) {
                 info.update_with_param_names(names);
+            }
+        }
+    }
+
+    /// Apply Metro factory param role names (`arg1`→`require`, …) only to
+    /// functions that are actual Metro factories (`is_factory`).
+    ///
+    /// Must not be applied to arbitrary functions: their `argN` are normal
+    /// parameters, not Metro roles (see Babel helpers mislabeled as `require`).
+    pub fn apply_metro_factory_param_roles(&mut self, is_factory: impl Fn(u32) -> bool) {
+        for (&func_id, info) in self.function_closures.iter_mut() {
+            if is_factory(func_id) {
+                info.apply_metro_param_roles();
             }
         }
     }
@@ -253,7 +315,7 @@ impl ClosureContext {
                 if let AssignTarget::ClosureVar { slot, level } = target {
                     if *level == 0 {
                         if let Some(val) = super::info::value_from_expr(value, Some(reg_values), true) {
-                            info.slots.insert(*slot, val);
+                            info.store_slot(*slot, val);
                         }
                     }
                 }

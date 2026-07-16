@@ -180,8 +180,13 @@ impl PipelineContext {
         log::debug!("[pipeline] module name propagation: {:.2?}", t.elapsed());
 
         // STAGE W6: Closure Resolution (first pass)
+        // Apply Metro roles only on factory functions' slot maps (shared so
+        // children can inherit `require`/`dependencyMap` for true captures).
+        // Nested helpers that *reuse* the same slot index drop the role via
+        // `prefer_local_over_inherited` (avoids `let require = Symbol_iterator`).
         let t = std::time::Instant::now();
-        if let Some(ctx) = closure_ctx.as_ref() {
+        if let Some(ctx) = closure_ctx.as_mut() {
+            ctx.apply_metro_factory_param_roles(|id| registry.function_to_module.contains_key(&id));
             Self::resolve_all_closures(all_ir, ctx);
         }
         log::debug!("[pipeline] closure resolution: {:.2?}", t.elapsed());
@@ -207,6 +212,7 @@ impl PipelineContext {
         let t = std::time::Instant::now();
         if let Some(ctx) = closure_ctx.as_mut() {
             ctx.update_with_ipa_names(&global_analysis.param_names);
+            ctx.apply_metro_factory_param_roles(|id| registry.function_to_module.contains_key(&id));
             Self::resolve_all_closures(all_ir, ctx);
         }
         log::debug!("[pipeline] IPA closure re-resolve: {:.2?}", t.elapsed());

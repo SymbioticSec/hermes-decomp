@@ -12,6 +12,10 @@ pub fn encode_level_slot(level: u32, slot: u32) -> u32 {
 pub enum ClosureSlotValue {
     Function { id: u32, name: Option<String> },
     Constant(String),
+    /// Slot exclusively holds a RegExp literal (no non-regex stores observed).
+    /// Only this variant is named `re{N}`, string constants starting with `/`
+    /// and reused env slots must not look like regexes.
+    RegExp,
     Variable(String),
     Unknown,
 }
@@ -32,6 +36,28 @@ impl ClosureInfo {
         Self {
             slots: BTreeMap::new(),
         }
+    }
+
+    /// Record a store into an env slot with reuse-aware merge.
+    ///
+    /// Hermes reuses environment slots aggressively. A slot that once held a
+    /// regex and later holds `Math.random` must not keep the `re{N}` name for
+    /// every use (flow-insensitive naming would otherwise mislabel).
+    pub fn store_slot(&mut self, slot: u32, val: ClosureSlotValue) {
+        let next = match self.slots.get(&slot) {
+            None => val,
+            Some(ClosureSlotValue::RegExp) => match val {
+                ClosureSlotValue::RegExp => ClosureSlotValue::RegExp,
+                other => other,
+            },
+            Some(_) => match val {
+                // Non-regex then regex ⇒ slot reuse; drop RegExp so we never
+                // emit `re{N}` for mixed slots.
+                ClosureSlotValue::RegExp => ClosureSlotValue::Unknown,
+                other => other,
+            },
+        };
+        self.slots.insert(slot, next);
     }
 
     pub fn analyze(stmts: &[Statement]) -> Self {
@@ -57,7 +83,7 @@ impl ClosureInfo {
 
                 if let AssignTarget::ClosureVar { slot, .. } = target {
                     if let Some(val) = value_from_expr(value, Some(reg_values), true) {
-                        self.slots.insert(*slot, val);
+                        self.store_slot(*slot, val);
                     }
                 }
             }
@@ -129,6 +155,23 @@ impl ClosureInfo {
         }
     }
 
+    /// Map generic factory parameter names (`argN`/`pN`) to Metro roles
+    /// (`require`, `dependencyMap`, …).
+    ///
+    /// **Must only be called for Metro factory functions** (keys of
+    /// `registry.function_to_module`). Applying this to arbitrary functions
+    /// renames their `arg1` captures to `require` (e.g. Babel
+    /// `_createForOfIteratorHelperLoose` → `let require = Symbol_iterator`).
+    pub fn apply_metro_param_roles(&mut self) {
+        for value in self.slots.values_mut() {
+            if let ClosureSlotValue::Variable(v) = value {
+                if let Some(role) = metro_param_role_name(v) {
+                    *v = role.to_string();
+                }
+            }
+        }
+    }
+
     pub fn get_slot_name(&self, slot: u32) -> String {
         // The raw slot index (the key may be level-encoded for ancestor scopes).
         let raw_slot = slot & 0x00FF_FFFF;
@@ -140,30 +183,28 @@ impl ClosureInfo {
                     format!("f{id}")
                 }
             }
+            // Exclusive RegExp slot only (see `store_slot` merge rules).
+            Some(ClosureSlotValue::RegExp) => format!("re{raw_slot}"),
             // A slot initialised with a constant is a *mutable captured variable*
             // (e.g. a counter `var c = 0` shared with an inner closure), not an
             // alias for the constant. Prefer a short descriptive name derived
             // from the constant when it's a non-empty string (so
             // `env[0] = "ADMINISTRATOR"` → `ADMINISTRATOR` instead of
-            // `closure_0`); regex → `re{slot}`; else `c{slot}`.
+            // `closure_0`); else `c{slot}`.
+            // NOTE: never treat string constants starting with `/` as regex,             // only `ClosureSlotValue::RegExp` maps to `re{N}`.
             Some(ClosureSlotValue::Constant(c)) => {
-                if c.starts_with('/') {
-                    // Hermes RegExp display starts with `/`
-                    format!("re{raw_slot}")
-                } else if let Some(name) = name_from_constant_text(c) {
+                if let Some(name) = name_from_constant_text(c) {
                     name
                 } else {
                     format!("c{raw_slot}")
                 }
             }
             Some(ClosureSlotValue::Variable(v)) => {
-                // Prefer semantic names. Map Metro factory params (argN/pN) to
-                // their role names so children see `require`/`dependencyMap`
-                // instead of `closure_N` (Discord: ~8.5k `let closure_N = argN`).
+                // Prefer semantic names. Metro factory roles (`require`, etc.)
+                // are applied eagerly via `apply_metro_param_roles` only on
+                // factory functions, never here (avoids false `require` labels).
                 if v == "arguments" {
                     "args".to_string()
-                } else if let Some(role) = metro_param_role_name(v) {
-                    role.to_string()
                 } else if is_meaningful_closure_name(v) {
                     v.clone()
                 } else {
@@ -178,6 +219,8 @@ impl ClosureInfo {
 // Map generic factory parameter names to Metro roles.
 // Classic: (global, require, module, exports, dependencyMap) → arg0..arg4
 // Modern:  + importDefault/importAll → arg0..arg6
+//
+// Only invoked from `apply_metro_param_roles` on verified Metro factories.
 fn metro_param_role_name(name: &str) -> Option<&'static str> {
     let idx = FactoryRoles::extract_param_index(name)?;
     Some(match idx {
@@ -280,9 +323,9 @@ pub fn value_from_expr(
             id: id.0,
             name: name.clone(),
         }),
-        Expression::RegExp { pattern, flags } => {
-            // Keep a compact tag so get_slot_name can emit re{N}.
-            Some(ClosureSlotValue::Constant(format!("/{pattern}/{flags}")))
+        Expression::RegExp { .. } => {
+            // Dedicated variant, only exclusive-RegExp slots become re{N}.
+            Some(ClosureSlotValue::RegExp)
         }
         Expression::Value(Value::Register(r)) => {
             reg_values.and_then(|rv| rv.get(r).cloned())
@@ -354,5 +397,58 @@ pub fn ident_from_property_key(prop: &crate::ir::PropertyKey) -> Option<String> 
             Some(name.clone())
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metro_roles_not_applied_in_get_slot_name() {
+        let mut info = ClosureInfo::new();
+        info.slots
+            .insert(1, ClosureSlotValue::Variable("arg1".into()));
+        // Without apply_metro_param_roles, arg1 stays generic (not "require").
+        assert_eq!(info.get_slot_name(1), "closure_1");
+    }
+
+    #[test]
+    fn metro_roles_applied_only_via_explicit_call() {
+        let mut info = ClosureInfo::new();
+        info.slots
+            .insert(1, ClosureSlotValue::Variable("arg1".into()));
+        info.slots
+            .insert(4, ClosureSlotValue::Variable("arg4".into()));
+        info.apply_metro_param_roles();
+        assert_eq!(info.get_slot_name(1), "require");
+        assert_eq!(info.get_slot_name(4), "dependencyMap");
+    }
+
+    #[test]
+    fn re_n_only_for_exclusive_regexp_slots() {
+        let mut info = ClosureInfo::new();
+        info.store_slot(3, ClosureSlotValue::RegExp);
+        assert_eq!(info.get_slot_name(3), "re3");
+
+        // Non-regex store overwrites RegExp → no reN.
+        info.store_slot(3, ClosureSlotValue::Variable("parseInt".into()));
+        assert_eq!(info.get_slot_name(3), "parseInt");
+    }
+
+    #[test]
+    fn re_n_dropped_when_regex_follows_non_regex() {
+        let mut info = ClosureInfo::new();
+        info.store_slot(5, ClosureSlotValue::Variable("tmp".into()));
+        info.store_slot(5, ClosureSlotValue::RegExp);
+        // Mixed reuse → Unknown → closure_N, not re5.
+        assert_eq!(info.get_slot_name(5), "closure_5");
+    }
+
+    #[test]
+    fn string_constant_slash_is_not_ren() {
+        let mut info = ClosureInfo::new();
+        info.store_slot(0, ClosureSlotValue::Constant("\"/api/v1\"".into()));
+        assert_eq!(info.get_slot_name(0), "c0");
     }
 }

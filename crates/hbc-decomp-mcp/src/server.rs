@@ -595,6 +595,7 @@ impl HermesService {
                         format!("Function(id={id}{name_str})")
                     }
                     hbc_decomp::ClosureSlotValue::Constant(s) => format!("Constant(\"{s}\")"),
+                    hbc_decomp::ClosureSlotValue::RegExp => "RegExp".to_string(),
                     hbc_decomp::ClosureSlotValue::Variable(s) => format!("Variable(\"{s}\")"),
                     hbc_decomp::ClosureSlotValue::Unknown => "Unknown".to_string(),
                 };

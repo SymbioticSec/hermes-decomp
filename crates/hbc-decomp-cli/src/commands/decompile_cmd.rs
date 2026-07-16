@@ -103,6 +103,7 @@ pub fn print_closure_info(
                     }
                 }
                 hbc_decomp::ClosureSlotValue::Constant(c) => format!("constant: {c}"),
+                hbc_decomp::ClosureSlotValue::RegExp => "regexp".to_string(),
                 hbc_decomp::ClosureSlotValue::Variable(v) => format!("variable: {v}"),
                 hbc_decomp::ClosureSlotValue::Unknown => "unknown".to_string(),
             };
