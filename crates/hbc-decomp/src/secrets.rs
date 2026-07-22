@@ -231,7 +231,10 @@ mod tests {
 
     #[test]
     fn detects_aws_key() {
-        let f = dummy_file(&["AKIAIOSFODNN7EXAMPLE", "hello"]);
+        // Assemble a value matching the AWS access key shape (AKIA + 16 chars) at
+        // runtime so no literal credential is stored in the source.
+        let aws = format!("AKIA{}", "1234567890ABCDEF");
+        let f = dummy_file(&[aws.as_str(), "hello"]);
         let hits = scan_secrets(&f, &[]);
         assert!(hits.iter().any(|h| h.pattern_name == "aws_access_key_id"));
     }

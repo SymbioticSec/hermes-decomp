@@ -109,6 +109,54 @@ fn main() {
         builtin_versions.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
     )
     .unwrap();
+
+    emit_build_fingerprint(&manifest_dir);
+}
+
+// Emit a compile-time fingerprint of the decompiler build: its version, every
+// source file, and the embedded format and builtin tables. The analysis cache
+// keys on this so a rebuilt decompiler never reuses a cache produced by an older
+// build. It is computed here, at compile time, so the runtime never has to read
+// the executable.
+fn emit_build_fingerprint(manifest_dir: &Path) {
+    let src_dir = manifest_dir.join("src");
+    println!("cargo:rerun-if-changed={}", src_dir.display());
+    println!("cargo:rerun-if-changed={}", manifest_dir.join("Cargo.toml").display());
+
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a 64-bit offset basis
+    fnv_update(&mut hash, env::var("CARGO_PKG_VERSION").unwrap_or_default().as_bytes());
+
+    let mut files = Vec::new();
+    collect_files(&src_dir, "rs", &mut files);
+    collect_files(&manifest_dir.join("resources"), "json", &mut files);
+    files.sort();
+    for f in &files {
+        if let Ok(bytes) = fs::read(f) {
+            fnv_update(&mut hash, &bytes);
+        }
+    }
+
+    println!("cargo:rustc-env=DECOMP_BUILD_FINGERPRINT={hash:016x}");
+}
+
+fn fnv_update(hash: &mut u64, bytes: &[u8]) {
+    for &b in bytes {
+        *hash ^= b as u64;
+        *hash = hash.wrapping_mul(0x0000_0100_0000_01b3); // FNV-1a 64-bit prime
+    }
+}
+
+fn collect_files(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_files(&path, ext, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some(ext) {
+                out.push(path);
+            }
+        }
+    }
 }
 
 fn parse_version(path: &Path) -> Option<u32> {

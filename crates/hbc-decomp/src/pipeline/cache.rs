@@ -5,17 +5,18 @@
 // depends on the bytecode itself *and the decompiler binary*, so we serialize
 // the resulting context to disk keyed by:
 //   - SHA-256 of the `.hbc` bytes
-//   - SHA-256 of the running `hermes-decomp` executable (auto-invalidates on
-//     any rebuild, no manual CACHE_VERSION bump required for output changes)
+//   - a compile-time build fingerprint from build.rs (crate version, source
+//     files, and embedded tables), which auto-invalidates on any rebuild with
+//     no manual CACHE_VERSION bump required for output changes
 //   - a manual CACHE_VERSION (schema / wire-format safety net)
 //   - output-affecting options
-// A later invocation on the same file with the same binary deserializes the
-// context (sub-second); any mismatch rebuilds transparently.
+// A later invocation on the same file with the same build deserializes the
+// context (sub-second). Any mismatch rebuilds transparently.
 
 use std::collections::BTreeMap;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::analysis::{ClosureContext, GlobalAnalysis, MetroRegistry};
 use crate::error::Result;
@@ -49,24 +50,16 @@ fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// Identity of the running decompiler binary (SHA-256 of `current_exe()`).
+/// Identity of the decompiler build (SHA-256 of a compile-time fingerprint from
+/// build.rs covering the crate version, every source file, and the embedded
+/// format and builtin tables).
 ///
-/// Computed once per process. Any recompilation produces a different binary
-/// image → different fingerprint → automatic cache miss. A wrong key is only a
-/// miss (rebuild), never a wrong result.
-///
-/// If the executable cannot be read, returns a sentinel that will not match a
-/// real digest, so we never reuse a foreign cache entry.
+/// Any change to the decompiler produces a different fingerprint → automatic
+/// cache miss on a rebuilt binary. A wrong key is only a miss (rebuild), never a
+/// wrong result. The value is a compile-time constant, so this never reads the
+/// executable at runtime.
 pub fn binary_fingerprint() -> [u8; 32] {
-    static FP: OnceLock<[u8; 32]> = OnceLock::new();
-    *FP.get_or_init(|| match std::env::current_exe().and_then(std::fs::read) {
-        Ok(bytes) => hash_bytes(&bytes),
-        Err(_) => {
-            // 0xFF… is not a SHA-256 of any real file (SHA-256 is uniform; we
-            // only need "won't collide with a previous real fingerprint").
-            [0xFF; 32]
-        }
-    })
+    hash_bytes(env!("DECOMP_BUILD_FINGERPRINT").as_bytes())
 }
 
 // Only these options actually change the built context (see build_with_options).
@@ -281,13 +274,15 @@ mod tests {
     }
 
     #[test]
-    fn binary_fingerprint_is_stable_within_process() {
+    fn binary_fingerprint_is_stable_and_derived_from_build() {
         let a = binary_fingerprint();
         let b = binary_fingerprint();
         assert_eq!(a, b);
-        // Real exe hash is almost certainly not the all-0xFF sentinel.
-        // (In exotic environments where current_exe fails, both are the sentinel.)
         assert_eq!(a.len(), 32);
+        // It is the SHA-256 of the compile-time build fingerprint, never a
+        // zeroed or all-0xFF placeholder.
+        assert_ne!(a, [0u8; 32]);
+        assert_ne!(a, [0xFF; 32]);
     }
 }
 
