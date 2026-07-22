@@ -103,6 +103,7 @@ pub fn print_closure_info(
                     }
                 }
                 hbc_decomp::ClosureSlotValue::Constant(c) => format!("constant: {c}"),
+                hbc_decomp::ClosureSlotValue::RegExp => "regexp".to_string(),
                 hbc_decomp::ClosureSlotValue::Variable(v) => format!("variable: {v}"),
                 hbc_decomp::ClosureSlotValue::Unknown => "unknown".to_string(),
             };
@@ -218,7 +219,7 @@ pub fn format_assembly_output(
 
     for line in raw_output.lines() {
         if let Some(caps) = offset_re.captures(line) {
-            // This is an offset marker line — store the offset and skip the line
+            // This is an offset marker line, store the offset and skip the line
             current_offset = Some(caps[1].to_string());
             continue;
         }

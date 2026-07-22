@@ -2,6 +2,37 @@ use super::info::{encode_level_slot, ClosureInfo, ClosureSlotValue};
 use crate::ir::{AssignTarget, Expression, Statement};
 use std::collections::{BTreeMap, HashSet};
 
+/// Intermediate SSA temps that must not rename a captured env slot.
+fn is_ephemeral_name(name: &str) -> bool {
+    if name == "tmp"
+        || name
+            .strip_prefix("tmp")
+            .is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
+    {
+        return true;
+    }
+    if name
+        .strip_prefix('r')
+        .is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+    {
+        return true;
+    }
+    matches!(
+        name,
+        "sum" | "diff" | "product" | "quotient" | "text" | "result" | "value" | "ret"
+            | "tmpResult" | "callResult"
+    ) || name.ends_with("Result")
+        || name.ends_with("Return")
+}
+
+fn slot_value_is_stable(val: &ClosureSlotValue) -> bool {
+    match val {
+        ClosureSlotValue::Constant(_) | ClosureSlotValue::Function { .. } => true,
+        ClosureSlotValue::Variable(v) => !is_ephemeral_name(v),
+        ClosureSlotValue::RegExp | ClosureSlotValue::Unknown => false,
+    }
+}
+
 // Maximum iterations for propagating async flags through generator chains.
 // Convergence typically occurs in 2-3 iterations; 20 guarantees termination.
 const MAX_ASYNC_PROPAGATION_ITERATIONS: usize = 20;
@@ -73,7 +104,7 @@ impl ClosureContext {
     // function*(){})` pattern is recognised by `detect_async_generator_wrappers`.
     // Here we only PROPAGATE that flag from an async wrapper to the inner
     // generator body it drives. We must NOT guess "async" from the parent merely
-    // not being a generator — a real `function*` also has a non-generator parent,
+    // not being a generator, a real `function*` also has a non-generator parent,
     // and that guess rendered real generators as `async`/`await`.
     pub fn propagate_async_to_generators(&mut self) {
         // Iterate until no more changes (handles multi-level chains)
@@ -119,34 +150,67 @@ impl ClosureContext {
             current = parent;
         }
 
-        // Ancestor scopes first, so their *definitions* are visible when we decide
-        // whether a local entry is really a mutation of an inherited slot.
-        // Level 0 = direct parent. Closer ancestors win (or_insert).
-        for (level, &ancestor) in ancestors.iter().enumerate() {
+        // IR contract (see ir/builder/env_state.rs):
+        //   ClosureVar.level 0 = this function's environment
+        //   ClosureVar.level 1 = direct parent, 2 = grandparent, …
+        // Ancestor depth d maps to IR level d+1. Keys never collide with local
+        // level-0 slots that share the same slot *index*.
+        for (depth, &ancestor) in ancestors.iter().enumerate() {
             if let Some(ancestor_info) = self.function_closures.get(&ancestor) {
+                let ir_level = (depth as u32) + 1;
                 for (&slot, value) in &ancestor_info.slots {
-                    // Store with the level info so we can resolve ClosureVar { level, slot }
-                    let ir_level = level as u32;
                     let key = encode_level_slot(ir_level, slot);
+                    // Closer ancestors win if a deeper one already filled the key
+                    // (should not happen, each level is unique).
                     combined.slots.entry(key).or_insert_with(|| value.clone());
                 }
             }
         }
 
-        // Local slots (level 0). A function that mutates a *captured* variable
-        // (`closure_0 += 1` in a returned closure) emits a `StoreToEnvironment`
-        // that looks like a local slot whose value is the stored register
-        // (`Variable("sum")`). That is a mutation of the parent's slot, not a new
-        // definition — letting it shadow the ancestor would rename the shared
-        // variable per scope (parent sees `closure_0`, child sees `sum`). So a
-        // local `Variable` entry does not override an inherited slot.
+        // Local env (IR level 0): raw slot keys == encode_level_slot(0, slot).
+        // Hermes GetEnvironment(0) in a nested function is often the *captured*
+        // parent environment (no local CreateEnvironment). Local analysis may
+        // then record only the temp `sum = c0+1; store sum`, renaming the slot
+        // to `sum`. Prefer a stable ancestor name for the same raw slot index.
         if let Some(local_info) = self.function_closures.get(&function_id) {
             for (slot, value) in &local_info.slots {
-                let is_mutation = matches!(value, ClosureSlotValue::Variable(_));
-                if is_mutation && combined.slots.contains_key(slot) {
-                    continue;
+                let key = *slot; // level 0
+                let use_local = match value {
+                    ClosureSlotValue::Variable(v) if is_ephemeral_name(v) => {
+                        // Keep ancestor stable binding if present at any encoded level.
+                        !ancestors.iter().any(|anc| {
+                            self.function_closures.get(anc).is_some_and(|ai| {
+                                ai.slots
+                                    .get(slot)
+                                    .is_some_and(slot_value_is_stable)
+                            })
+                        })
+                    }
+                    _ => true,
+                };
+                if use_local {
+                    combined.slots.insert(key, value.clone());
                 }
-                combined.slots.insert(*slot, value.clone());
+            }
+        }
+
+        // Also: if level-0 key is missing but ancestors have a stable slot, expose
+        // it at level 0 so Hermes-level-0 loads of the captured env resolve.
+        for (depth, &ancestor) in ancestors.iter().enumerate() {
+            if let Some(ancestor_info) = self.function_closures.get(&ancestor) {
+                for (&slot, value) in &ancestor_info.slots {
+                    if !slot_value_is_stable(value) {
+                        continue;
+                    }
+                    // Hermes: nested fn's env level 0 is often the same object as
+                    // the parent's CreateEnvironment (depth 0 ancestor).
+                    if depth == 0 {
+                        combined
+                            .slots
+                            .entry(slot)
+                            .or_insert_with(|| value.clone());
+                    }
+                }
             }
         }
 
@@ -189,6 +253,19 @@ impl ClosureContext {
         }
     }
 
+    /// Apply Metro factory param role names (`arg1`→`require`, …) only to
+    /// functions that are actual Metro factories (`is_factory`).
+    ///
+    /// Must not be applied to arbitrary functions: their `argN` are normal
+    /// parameters, not Metro roles (see Babel helpers mislabeled as `require`).
+    pub fn apply_metro_factory_param_roles(&mut self, is_factory: impl Fn(u32) -> bool) {
+        for (&func_id, info) in self.function_closures.iter_mut() {
+            if is_factory(func_id) {
+                info.apply_metro_param_roles();
+            }
+        }
+    }
+
     pub fn get_function_name(&self, function_id: u32) -> Option<&str> {
         self.function_names.get(&function_id).map(|s| s.as_str())
     }
@@ -213,26 +290,14 @@ impl ClosureContext {
     ) {
         match stmt {
             Statement::Assign { target, value } => {
+                self.track_nested_functions(parent_fn, value);
+
                 if let Expression::Function {
                     id,
                     name,
-                    is_async,
-                    is_generator,
                     ..
                 } = value
                 {
-                    self.add_child(parent_fn, id.0);
-                    if let Some(n) = name {
-                        self.add_function_name(id.0, n.clone());
-                    }
-
-                    if *is_async {
-                        self.mark_async(id.0);
-                    }
-                    if *is_generator {
-                        self.mark_generator(id.0);
-                    }
-
                     if let AssignTarget::Register(r) = target {
                         reg_values.insert(
                             *r,
@@ -253,10 +318,22 @@ impl ClosureContext {
                 if let AssignTarget::ClosureVar { slot, level } = target {
                     if *level == 0 {
                         if let Some(val) = super::info::value_from_expr(value, Some(reg_values), true) {
-                            info.slots.insert(*slot, val);
+                            info.store_slot(*slot, val);
                         }
                     }
                 }
+            }
+            Statement::Let { value, name, .. } => {
+                self.track_nested_functions(parent_fn, value);
+                if let Expression::Function { id, name: fn_name, .. } = value {
+                    // Prefer the binding name when the function expression is anonymous.
+                    if fn_name.is_none() {
+                        self.add_function_name(id.0, name.clone());
+                    }
+                }
+            }
+            Statement::Return(Some(value)) | Statement::Expr(value) | Statement::Throw(value) => {
+                self.track_nested_functions(parent_fn, value);
             }
             Statement::If {
                 then_body,
@@ -295,6 +372,82 @@ impl ClosureContext {
                 for s in finally_body {
                     self.analyze_stmt_context(parent_fn, s, info, reg_values);
                 }
+            }
+            _ => {}
+        }
+    }
+
+    // Track Function expressions nested in values: bare `function*`, or
+    // CreateGenerator's `(function*(){})()` call form.
+    fn track_nested_functions(&mut self, parent_fn: u32, expr: &Expression) {
+        match expr {
+            Expression::Function {
+                id,
+                name,
+                is_async,
+                is_generator,
+                ..
+            } => {
+                self.add_child(parent_fn, id.0);
+                if let Some(n) = name {
+                    self.add_function_name(id.0, n.clone());
+                }
+                if *is_async {
+                    self.mark_async(id.0);
+                }
+                if *is_generator {
+                    self.mark_generator(id.0);
+                }
+            }
+            Expression::Call { callee, arguments } => {
+                self.track_nested_functions(parent_fn, callee);
+                for arg in arguments {
+                    self.track_nested_functions(parent_fn, arg);
+                }
+            }
+            Expression::Member { object, .. } => {
+                self.track_nested_functions(parent_fn, object);
+            }
+            Expression::New { callee, arguments } => {
+                self.track_nested_functions(parent_fn, callee);
+                for arg in arguments {
+                    self.track_nested_functions(parent_fn, arg);
+                }
+            }
+            Expression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                self.track_nested_functions(parent_fn, condition);
+                self.track_nested_functions(parent_fn, then_expr);
+                self.track_nested_functions(parent_fn, else_expr);
+            }
+            Expression::Assignment { target, value } => {
+                self.track_nested_functions(parent_fn, target);
+                self.track_nested_functions(parent_fn, value);
+            }
+            Expression::Array { elements } => {
+                for e in elements.iter().flatten() {
+                    self.track_nested_functions(parent_fn, e);
+                }
+            }
+            Expression::Object { properties } => {
+                for p in properties {
+                    self.track_nested_functions(parent_fn, &p.value);
+                }
+            }
+            Expression::Unary { operand, .. }
+            | Expression::Spread(operand)
+            | Expression::Await(operand) => {
+                self.track_nested_functions(parent_fn, operand);
+            }
+            Expression::Binary { left, right, .. } => {
+                self.track_nested_functions(parent_fn, left);
+                self.track_nested_functions(parent_fn, right);
+            }
+            Expression::Yield { value, .. } => {
+                self.track_nested_functions(parent_fn, value);
             }
             _ => {}
         }

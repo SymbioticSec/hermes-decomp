@@ -1,4 +1,4 @@
-// Reserved for future constant propagation improvement — not yet used in the pipeline.
+// Reserved for future constant propagation improvement, not yet used in the pipeline.
 
 use crate::ir::{AssignTarget, BlockId, Statement, CFG};
 use std::collections::{BTreeMap, HashSet};

@@ -153,7 +153,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             module_depth,
             no_cache,
         } => {
+            // Progress on stderr so long full-bundle runs are not silent.
+            // Still quiet for tiny single-function dumps unless writing to a file.
+            let want_progress = output.is_some() || function.is_none();
+            hbc_decomp::set_progress_enabled(want_progress);
+
+            let decomp_start = std::time::Instant::now();
+            if want_progress {
+                eprintln!(
+                    "hermes-decomp: decompiling {} …",
+                    input.display()
+                );
+            }
+
             let (file, file_bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
+            if want_progress {
+                let mb = file_bytes.len() as f64 / (1024.0 * 1024.0);
+                eprintln!(
+                    "  • parsed: HBC v{}, {} functions, {:.2} MiB",
+                    file.header.version, file.header.function_count, mb
+                );
+            }
             let cache_path = hbc_decomp::default_cache_path(&input);
             let format = load_format(&file, format_version)?;
             let options = DecompileOptionsV2 {
@@ -238,6 +258,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 content
             };
             write_output(output, &content)?;
+            if want_progress {
+                eprintln!(
+                    "hermes-decomp: finished in {:.1}s",
+                    decomp_start.elapsed().as_secs_f64()
+                );
+            }
         }
         Command::Closures {
             input,
@@ -414,6 +440,139 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             version,
         } => {
             commands::update_cmd::run(check, install, version)?;
+        }
+        Command::Secrets {
+            input,
+            layout,
+            function_layout,
+            json,
+            show_full,
+        } => {
+            commands::write_cmd::run_secrets(&input, layout, function_layout, json, show_full)?;
+        }
+        Command::FridaHooks {
+            input,
+            module,
+            export,
+            output,
+            format_version,
+            layout,
+            function_layout,
+        } => {
+            commands::write_cmd::run_frida_hooks(
+                &input,
+                layout,
+                function_layout,
+                format_version,
+                module,
+                export,
+                output,
+            )?;
+        }
+        Command::EmitHasm {
+            input,
+            function,
+            output,
+            format_version,
+            layout,
+            function_layout,
+        } => {
+            commands::write_cmd::run_emit_hasm(
+                &input,
+                function,
+                output,
+                layout,
+                function_layout,
+                format_version,
+            )?;
+        }
+        Command::Asm {
+            input,
+            hasm,
+            function,
+            output,
+            format_version,
+            layout,
+            function_layout,
+        } => {
+            commands::write_cmd::run_asm(
+                &input,
+                &hasm,
+                function,
+                &output,
+                layout,
+                function_layout,
+                format_version,
+            )?;
+        }
+        Command::PatchString {
+            input,
+            output,
+            id,
+            old,
+            new,
+            format_version,
+            layout,
+            function_layout,
+        } => {
+            commands::write_cmd::run_patch_string(
+                &input,
+                &output,
+                id,
+                old,
+                new,
+                layout,
+                function_layout,
+                format_version,
+            )?;
+        }
+        Command::PatchFunction {
+            input,
+            output,
+            function,
+            hasm,
+            format_version,
+            layout,
+            function_layout,
+        } => {
+            commands::write_cmd::run_patch_function(
+                &input,
+                &output,
+                function,
+                &hasm,
+                layout,
+                function_layout,
+                format_version,
+            )?;
+        }
+        Command::InjectStub {
+            input,
+            output,
+            function,
+            kind,
+            format_version,
+            layout,
+            function_layout,
+        } => {
+            commands::write_cmd::run_inject_stub(
+                &input,
+                &output,
+                function,
+                &kind,
+                layout,
+                function_layout,
+                format_version,
+            )?;
+        }
+        Command::Create {
+            version,
+            output,
+            string,
+        } => {
+            commands::write_cmd::run_create(version, &output, string)?;
+        }
+        Command::AsmCheck { input, function } => {
+            commands::write_cmd::run_roundtrip_check(&input, function)?;
         }
     }
 

@@ -17,7 +17,7 @@ use super::{decompile_or_log, disasm_or_log};
 
 // Canonicalize build-volatile identifiers so that lines differing only by a
 // Metro module id (e.g. `module_955` vs `module_769`) compare equal and don't
-// show up as real changes. Used only for the *comparison* — the original text
+// show up as real changes. Used only for the *comparison*, the original text
 // is still displayed.
 fn normalize(line: &str) -> String {
     static MODULE: OnceLock<Regex> = OnceLock::new();
@@ -43,7 +43,7 @@ pub enum GitRow {
         text: String,
     },
     // Lines that differ only by volatile ids (e.g. Metro `module_955` vs
-    // `module_769`) — treated as unchanged, shown without highlight.
+    // `module_769`), treated as unchanged, shown without highlight.
     Cosmetic {
         old: usize,
         new: usize,
@@ -195,7 +195,7 @@ pub fn align(left: &str, right: &str, normalize_ids: bool) -> Vec<GitRow> {
 // Aligned rows for a single function (header + diff + trailing blank).
 fn rows_for_function(job: &GitDiffJob, name: &str) -> Vec<GitRow> {
     // An empty side means the function is absent there (added/removed), which is
-    // a legitimate diff state — not an error. render() logs real decode errors.
+    // a legitimate diff state, not an error. render() logs real decode errors.
     let left = match job.map1.get(name) {
         Some(&id) => render(&job.file1, &job.format1, id, job.kind),
         None => String::new(),
@@ -245,7 +245,7 @@ pub fn spawn(job: GitDiffJob) -> Receiver<GitMsg> {
         let mut batch = Vec::new();
         for (i, name) in job.names.iter().enumerate() {
             // Contain any panic to a single function so one bad case can't take
-            // down the whole diff build — but log it rather than swallow it.
+            // down the whole diff build, but log it rather than swallow it.
             let rows = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 rows_for_function(&job, name)
             })) {

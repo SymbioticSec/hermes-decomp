@@ -60,7 +60,7 @@ fn collect_expr_signals(
             }
             collect_expr_signals(object, param_map, sig);
         }
-        // `require(..., dependencyMap[k], ...)` — callee param + an arg that
+        // `require(..., dependencyMap[k], ...)`, callee param + an arg that
         // indexes another param. This is Metro's canonical require-of-dep shape.
         Expression::Call { callee, arguments } | Expression::New { callee, arguments } => {
             if let Some(callee_idx) = resolve_param_idx(callee, param_map) {

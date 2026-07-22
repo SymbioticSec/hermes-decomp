@@ -195,7 +195,7 @@ pub fn handle_select_object(inst: &Instruction) -> Option<FlowResult> {
     // Hermes `SelectObject dst, thisObject, constructorReturn`: the result of
     // `new Ctor(...)` is the constructor's return value when it is an object,
     // otherwise the freshly-created `this`. The constructor return (operand 2)
-    // holds our reconstructed `new Ctor(...)` expression, so prefer it — using
+    // holds our reconstructed `new Ctor(...)` expression, so prefer it, using
     // operand 1 (the CreateThis placeholder) surfaced the instance as
     // `new.target`.
     // operand 1 is `thisObject` (the CreateThis placeholder); we only need the

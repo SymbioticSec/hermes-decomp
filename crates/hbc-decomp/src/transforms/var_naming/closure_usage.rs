@@ -108,15 +108,24 @@ pub(super) struct ClosureUsageInfo {
     pub methods: Vec<String>,
     // Whether this closure is called directly as a function (e.g., `closure_12(x)`)
     pub called_as_function: bool,
+    // Times indexed: `closure_N[k]`, often a captured dependencyMap / table.
+    pub indexed_accesses: usize,
+    // Spread `...closure_N`, often the captured `arguments` array.
+    pub spread: bool,
 }
 
-// Check if a variable name is a generic closure name (closure_N pattern).
+// Check if a variable name is a generic closure name (`closure_N` or short `cN`
+// from constant-initialised env slots).
 pub(super) fn is_closure_name(name: &str) -> bool {
     if let Some(suffix) = name.strip_prefix("closure_") {
-        suffix.chars().all(|c| c.is_ascii_digit()) && !suffix.is_empty()
-    } else {
-        false
+        return !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit());
     }
+    if let Some(suffix) = name.strip_prefix('c') {
+        return !suffix.is_empty()
+            && suffix.len() <= 6
+            && suffix.chars().all(|c| c.is_ascii_digit());
+    }
+    false
 }
 
 // Collect usage information for all closure_N variables in a statement tree.
@@ -190,47 +199,68 @@ fn collect_closure_usage_in_target(target: &AssignTarget, usage: &mut BTreeMap<S
     }
 }
 
-// Function invocation methods (not domain-specific — exclude from method analysis).
+// Function invocation methods (not domain-specific, exclude from method analysis).
 fn is_invocation_method(name: &str) -> bool {
     matches!(name, "call" | "apply" | "bind")
 }
 
 fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String, ClosureUsageInfo>) {
     match expr {
-        // closure_N.property (read)
+        // closure_N.property (read) or closure_N[k] (index)
         Expression::Member { object, property, .. } => {
             if let Expression::Value(Value::Variable(name)) = &**object {
                 if is_closure_name(name) {
-                    if let Some(prop) = ident_from_property(property) {
-                        if !is_invocation_method(&prop) {
-                            let info = usage.entry(name.clone()).or_default();
-                            info.properties.push(prop);
+                    match property {
+                        PropertyKey::Index(_) | PropertyKey::Computed(_) => {
+                            usage.entry(name.clone()).or_default().indexed_accesses += 1;
                         }
-                    }
-                }
-            }
-            // Recurse
-            collect_closure_usage_in_expr(object, usage);
-        }
-        // closure_N(args) — direct function call
-        Expression::Call { callee, arguments } => {
-            // Check for closure_N.method(args) — method call
-            if let Expression::Member { object, property, .. } = &**callee {
-                if let Expression::Value(Value::Variable(name)) = &**object {
-                    if is_closure_name(name) {
-                        if let Some(method) = ident_from_property(property) {
-                            if is_invocation_method(&method) {
-                                // closure_N.call(...) / .apply(...) → treat as bare function call
-                                usage.entry(name.clone()).or_default().called_as_function = true;
-                            } else {
-                                let info = usage.entry(name.clone()).or_default();
-                                info.methods.push(method);
+                        _ => {
+                            if let Some(prop) = ident_from_property(property) {
+                                if !is_invocation_method(&prop) {
+                                    let info = usage.entry(name.clone()).or_default();
+                                    info.properties.push(prop);
+                                }
                             }
                         }
                     }
                 }
             }
-            // Check for closure_N(args) — bare call
+            // Recurse into object and computed keys
+            collect_closure_usage_in_expr(object, usage);
+            if let PropertyKey::Computed(key) = property {
+                collect_closure_usage_in_expr(key, usage);
+            }
+        }
+        // closure_N(args), direct function call
+        Expression::Call { callee, arguments } => {
+            // Check for closure_N.method(args), method call
+            if let Expression::Member { object, property, .. } = &**callee {
+                if let Expression::Value(Value::Variable(name)) = &**object {
+                    if is_closure_name(name) {
+                        match property {
+                            // closure_N[i](…), indexed table / TurboModule shape
+                            PropertyKey::Index(_) | PropertyKey::Computed(_) => {
+                                let info = usage.entry(name.clone()).or_default();
+                                info.indexed_accesses += 1;
+                                info.called_as_function = true;
+                            }
+                            _ => {
+                                if let Some(method) = ident_from_property(property) {
+                                    if is_invocation_method(&method) {
+                                        // closure_N.call(...) / .apply(...)
+                                        usage.entry(name.clone()).or_default().called_as_function =
+                                            true;
+                                    } else {
+                                        let info = usage.entry(name.clone()).or_default();
+                                        info.methods.push(method);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Check for closure_N(args), bare call
             if let Expression::Value(Value::Variable(name)) = &**callee {
                 if is_closure_name(name) {
                     usage.entry(name.clone()).or_default().called_as_function = true;
@@ -267,7 +297,15 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
             collect_closure_usage_in_expr(target, usage);
             collect_closure_usage_in_expr(value, usage);
         }
-        Expression::Spread(inner) | Expression::Await(inner) => {
+        Expression::Spread(inner) => {
+            if let Expression::Value(Value::Variable(name)) = inner.as_ref() {
+                if is_closure_name(name) {
+                    usage.entry(name.clone()).or_default().spread = true;
+                }
+            }
+            collect_closure_usage_in_expr(inner, usage);
+        }
+        Expression::Await(inner) => {
             collect_closure_usage_in_expr(inner, usage);
         }
         Expression::Yield { value, .. } => {

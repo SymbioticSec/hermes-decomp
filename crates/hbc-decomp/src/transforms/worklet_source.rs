@@ -4,7 +4,7 @@
 // `code` property is the ORIGINAL source string, e.g.
 //   { code: "function fooWorklet(x){const{a,b}=this.__closure; ...}", location, sourceMap }
 // Hermes compiles that string as an ordinary string constant, so it survives
-// verbatim in the `.hbc` string table — names and all. The compiled worklet
+// verbatim in the `.hbc` string table, names and all. The compiled worklet
 // carries the same function name in the bytecode name table, so we can join the
 // recovered source to its function by name and emit the real source instead of
 // our (lossy, sometimes mis-structured) decompilation. Pure blackbox: both the

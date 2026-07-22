@@ -159,7 +159,7 @@ fn iterator_begin(stmt: &Statement) -> Option<(u32, Expression)> {
 }
 
 // Legacy iterator begin. Hermes (HBC < 74) lowers `[a,b] = src` to
-// `iter = src[Symbol.iterator].call(src)` — in IR a `Call` of the iterator
+// `iter = src[Symbol.iterator].call(src)`, in IR a `Call` of the iterator
 // method with `src` as the sole (this) argument. The iterator register is fresh
 // (never reused), so we read `src` directly from the call argument and resolve
 // `next = iter.next` from the def map. We deliberately do NOT verify the
@@ -205,7 +205,7 @@ fn begin_callee_reg(stmt: &Statement) -> Option<u32> {
     None
 }
 
-// Legacy `result = next.call(iter)` — opens an element, binding `result`.
+// Legacy `result = next.call(iter)`, opens an element, binding `result`.
 fn is_legacy_next(value: &Expression, next_reg: u32, iter_reg: u32) -> bool {
     if let Expression::Call { callee, arguments } = value {
         return reg_of(callee) == Some(next_reg)
@@ -215,7 +215,7 @@ fn is_legacy_next(value: &Expression, next_reg: u32, iter_reg: u32) -> bool {
     false
 }
 
-// Legacy `elem = result.value` — returns the result register.
+// Legacy `elem = result.value`, returns the result register.
 fn legacy_value_source(value: &Expression) -> Option<u32> {
     if let Expression::Member { object, property: PropertyKey::Ident(p), .. } = value {
         if p == "value" {

@@ -182,7 +182,7 @@ fn analyze_expr_with_suggestion(
         Expression::Member { object, .. } => {
             // NOTE: do NOT name the object register after a property read from it
             // (`iter.done` does not make `iter` mean "done"). That backwards
-            // heuristic both produced nonsense names and created collisions — the
+            // heuristic both produced nonsense names and created collisions, the
             // object reg and a sibling reg holding the *value* `x.done` both became
             // "done", so the generator consumer's `r` and `r.done` aliased.
             analyze_expr_with_suggestion(namer, object, suggestion);

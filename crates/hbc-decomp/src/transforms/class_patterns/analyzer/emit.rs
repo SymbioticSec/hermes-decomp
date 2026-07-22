@@ -20,7 +20,7 @@ fn is_synthesized_default_ctor(body: &Option<Vec<Statement>>) -> bool {
     is_object_create_new_target(expr) || calls_apply_arguments(expr)
 }
 
-// `Object.create(new.target.prototype)` — the synthesized base constructor.
+// `Object.create(new.target.prototype)`, the synthesized base constructor.
 fn is_object_create_new_target(expr: &Expression) -> bool {
     let Expression::Call { callee, arguments } = expr else { return false };
     let is_create = matches!(callee.as_ref(),
@@ -152,7 +152,7 @@ impl<'a> ClassAnalyzer<'a> {
                 .ok()?;
             // Method/constructor bodies emitted here bypass the whole-program
             // `strip_hermes_this` pass (it does not recurse into Statement::Class),
-            // so apply it locally — otherwise super calls render as
+            // so apply it locally, otherwise super calls render as
             // `super.who(this)` instead of `super.who()`.
             crate::transforms::strip_hermes_this(&mut body);
             Some(body)
@@ -164,7 +164,7 @@ impl<'a> ClassAnalyzer<'a> {
     pub(super) fn build_class(&self, builder: &ClassBuilder) -> Statement {
         let mut methods = Vec::new();
 
-        // Add constructor first if present — but omit the compiler-synthesized
+        // Add constructor first if present, but omit the compiler-synthesized
         // default constructor (the source had none), so we emit a class with no
         // explicit `constructor`.
         if let Some(ref ctor) = builder.constructor {

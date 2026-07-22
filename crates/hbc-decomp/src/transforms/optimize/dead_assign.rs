@@ -7,7 +7,7 @@ pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     while let Some(stmt) = iter.next() {
         if let Statement::Assign { target: AssignTarget::Register(r), value } = &stmt {
             if let Some(next) = iter.peek() {
-                // Drop `r = v; r = w` (first def dead) only when `v` is pure — a
+                // Drop `r = v; r = w` (first def dead) only when `v` is pure, a
                 // call/await/etc. must still run for its side effect even if its
                 // result register is immediately overwritten.
                 if overwrites_register(next, *r)

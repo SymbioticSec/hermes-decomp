@@ -4,9 +4,9 @@
 //
 // Bit layout (within the flags byte):
 //   bit 0 (0x01): strict mode
-//   bit 3 (0x08): hasExceptionHandler — info section carries an exception table
+//   bit 3 (0x08): hasExceptionHandler, info section carries an exception table
 //   bit 4 (0x10): prohibitInvoke == ProhibitConstruct (cannot be used with `new`)
-//   bit 5 (0x20): overflowed — the header is a "large"/overflowed header stored
+//   bit 5 (0x20): overflowed, the header is a "large"/overflowed header stored
 //                 out-of-line; the inline fields encode the offset to it.
 
 // Strict-mode flag (bit 0).

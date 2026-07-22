@@ -2,10 +2,16 @@
 //
 // `PipelineContext::build_with_options` takes several seconds on a large bundle
 // because it runs the full analysis pipeline over every function. That work only
-// depends on the bytecode itself, so we serialize the resulting context to disk
-// keyed by a hash of the `.hbc` bytes. A later invocation on the same, unchanged
-// file deserializes the context (sub-second) instead of recomputing it; if the
-// file changes, the hash changes and the cache is transparently rebuilt.
+// depends on the bytecode itself *and the decompiler binary*, so we serialize
+// the resulting context to disk keyed by:
+//   - SHA-256 of the `.hbc` bytes
+//   - a compile-time build fingerprint from build.rs (crate version, source
+//     files, and embedded tables), which auto-invalidates on any rebuild with
+//     no manual CACHE_VERSION bump required for output changes
+//   - a manual CACHE_VERSION (schema / wire-format safety net)
+//   - output-affecting options
+// A later invocation on the same file with the same build deserializes the
+// context (sub-second). Any mismatch rebuilds transparently.
 
 use std::collections::BTreeMap;
 use std::io::{BufReader, BufWriter};
@@ -21,10 +27,10 @@ use crate::opcode::BytecodeFormat;
 use super::context::PipelineContext;
 use super::DecompileOptionsV2;
 
-// Bump whenever the pipeline output or any serialized type changes in a way that
-// would make an older cache produce wrong results. Stale caches (older version)
-// are ignored and rebuilt.
-pub const CACHE_VERSION: u32 = 2;
+// Bump when the *on-disk schema* changes (header fields, snapshot layout) in a
+// way that old entries must not be read. Pipeline *output* changes are covered
+// by `binary_fingerprint()`, no need to bump for every decompiler fix.
+pub const CACHE_VERSION: u32 = 3;
 const MAGIC: [u8; 4] = *b"HDC1";
 
 // Standard cache path for an input file: `<input>.hdcache` next to it.
@@ -44,6 +50,18 @@ fn hash_bytes(bytes: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// Identity of the decompiler build (SHA-256 of a compile-time fingerprint from
+/// build.rs covering the crate version, every source file, and the embedded
+/// format and builtin tables).
+///
+/// Any change to the decompiler produces a different fingerprint → automatic
+/// cache miss on a rebuilt binary. A wrong key is only a miss (rebuild), never a
+/// wrong result. The value is a compile-time constant, so this never reads the
+/// executable at runtime.
+pub fn binary_fingerprint() -> [u8; 32] {
+    hash_bytes(env!("DECOMP_BUILD_FINGERPRINT").as_bytes())
+}
+
 // Only these options actually change the built context (see build_with_options).
 fn options_key(options: &DecompileOptionsV2) -> u32 {
     (options.assembly_mode as u32) | ((options.include_offsets as u32) << 1)
@@ -54,16 +72,20 @@ struct CacheHeader {
     magic: [u8; 4],
     cache_version: u32,
     file_hash: [u8; 32],
+    /// SHA-256 of the decompiler binary that produced this entry.
+    binary_hash: [u8; 32],
     options_key: u32,
 }
 
 impl CacheHeader {
     // A cached entry is usable only if every field matches: same magic, same
-    // cache format version, same bytecode (hash) and same output-affecting options.
+    // cache format version, same bytecode, same decompiler binary, and same
+    // output-affecting options.
     fn matches(&self, want: &CacheHeader) -> bool {
         self.magic == want.magic
             && self.cache_version == want.cache_version
             && self.file_hash == want.file_hash
+            && self.binary_hash == want.binary_hash
             && self.options_key == want.options_key
     }
 }
@@ -83,7 +105,7 @@ struct PipelineSnapshot {
 impl PipelineContext {
     // Build the pipeline, using an on-disk cache at `cache_path` keyed by the
     // bytecode `bytes`. Any cache read/write failure (missing, corrupt, stale,
-    // permission) silently falls back to a normal build — the cache is an
+    // permission) silently falls back to a normal build, the cache is an
     // optimization, never a correctness dependency.
     pub fn build_cached(
         file: &BytecodeFile,
@@ -96,22 +118,33 @@ impl PipelineContext {
             magic: MAGIC,
             cache_version: CACHE_VERSION,
             file_hash: hash_bytes(bytes),
+            binary_hash: binary_fingerprint(),
             options_key: options_key(options),
         };
 
         if let Some(ctx) = try_load(cache_path, &header) {
             log::debug!("[cache] hit: {}", cache_path.display());
+            super::progress::status(format!(
+                "cache hit: {} (skipping analysis)",
+                cache_path.display()
+            ));
             return Ok(ctx);
         }
 
+        super::progress::status(format!(
+            "cache miss: building analysis ({})",
+            cache_path.display()
+        ));
         let t = std::time::Instant::now();
         let ctx = Self::build_with_options(file, format, options)?;
         log::debug!("[cache] miss: built in {:.2?}", t.elapsed());
 
         if let Err(e) = try_save(cache_path, &header, &ctx) {
             log::debug!("[cache] save failed ({}): {e}", cache_path.display());
+            super::progress::status(format!("cache save failed: {e}"));
         } else {
             log::debug!("[cache] wrote: {}", cache_path.display());
+            super::progress::status(format!("cache written: {}", cache_path.display()));
         }
 
         Ok(ctx)
@@ -205,18 +238,51 @@ mod tests {
 
     #[test]
     fn stale_header_is_rejected() {
-        let want = CacheHeader { magic: MAGIC, cache_version: CACHE_VERSION, file_hash: [1u8; 32], options_key: 0 };
+        let want = CacheHeader {
+            magic: MAGIC,
+            cache_version: CACHE_VERSION,
+            file_hash: [1u8; 32],
+            binary_hash: [2u8; 32],
+            options_key: 0,
+        };
         // Same file must match itself.
         assert!(want.matches(&want));
         // A different bytecode hash must be rejected (stale, not a cache hit).
-        let other_file = CacheHeader { file_hash: [9u8; 32], ..want };
+        let other_file = CacheHeader {
+            file_hash: [9u8; 32],
+            ..want
+        };
         assert!(!want.matches(&other_file));
+        // A different decompiler binary must be rejected (pipeline output change).
+        let other_binary = CacheHeader {
+            binary_hash: [3u8; 32],
+            ..want
+        };
+        assert!(!want.matches(&other_binary));
         // A different cache-format version must be rejected.
-        let other_version = CacheHeader { cache_version: CACHE_VERSION + 1, ..want };
+        let other_version = CacheHeader {
+            cache_version: CACHE_VERSION + 1,
+            ..want
+        };
         assert!(!want.matches(&other_version));
         // Different output-affecting options must be rejected.
-        let other_opts = CacheHeader { options_key: 1, ..want };
+        let other_opts = CacheHeader {
+            options_key: 1,
+            ..want
+        };
         assert!(!want.matches(&other_opts));
+    }
+
+    #[test]
+    fn binary_fingerprint_is_stable_and_derived_from_build() {
+        let a = binary_fingerprint();
+        let b = binary_fingerprint();
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 32);
+        // It is the SHA-256 of the compile-time build fingerprint, never a
+        // zeroed or all-0xFF placeholder.
+        assert_ne!(a, [0u8; 32]);
+        assert_ne!(a, [0xFF; 32]);
     }
 }
 

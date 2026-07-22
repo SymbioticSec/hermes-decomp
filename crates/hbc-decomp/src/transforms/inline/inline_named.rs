@@ -17,7 +17,7 @@ use super::counting::{
 pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
     // Phase 1: Count definitions and uses of all variables over the WHOLE
     // function (count_var_defs_uses recurses into nested blocks). The candidate
-    // sets are derived once here and reused for nested blocks — recomputing them
+    // sets are derived once here and reused for nested blocks, recomputing them
     // per-block is unsound: a variable assigned inside an `if` branch but read
     // *after* the `if` has a block-local use count of 0, so it would be wrongly
     // treated as dead and its branch (then the whole `if`) eliminated.
@@ -43,7 +43,8 @@ pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
                 return false;
             }
             let uses = use_count.get(*name).copied().unwrap_or(0);
-            uses > 1 && uses <= 32
+            // Allow more multi-use pure inlines (cheap member chains / consts).
+            uses > 1 && uses <= 48
         })
         .map(|(name, _)| name.clone())
         .collect();
@@ -62,7 +63,7 @@ pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
 }
 
 // Process statements using PRE-COMPUTED (whole-function) candidate sets, and
-// recurse into nested blocks with the SAME sets — see `inline_named_variables`.
+// recurse into nested blocks with the SAME sets, see `inline_named_variables`.
 fn inline_named_with_candidates(
     stmts: Vec<Statement>,
     inline_candidates: &std::collections::HashSet<String>,
@@ -209,19 +210,35 @@ fn is_constant_expr(expr: &Expression) -> bool {
 
 // Check if an expression is simple and pure (safe to duplicate for multi-use inlining).
 fn is_simple_pure_expr(expr: &Expression) -> bool {
+    is_simple_pure_expr_depth(expr, 0)
+}
+
+fn is_simple_pure_expr_depth(expr: &Expression, depth: u8) -> bool {
+    if depth > 4 {
+        return false;
+    }
     match expr {
-        // Simple values: variables, constants, parameters, globals
         Expression::Value(Value::Variable(_))
         | Expression::Value(Value::Parameter(_))
         | Expression::Value(Value::Constant(_))
         | Expression::Value(Value::Global)
-        | Expression::Value(Value::NewTarget) => true,
-        // Member access on a simple value: x.foo, x[0]
-        Expression::Member { object, .. } => is_simple_pure_expr(object),
-        // Unary on simple value: !x, typeof x, -x
-        Expression::Unary { operand, .. } => is_simple_pure_expr(operand),
-        // Short binary on simple values: a + b, a === b (but not calls within)
-        Expression::Binary { left, right, .. } => is_simple_pure_expr(left) && is_simple_pure_expr(right),
+        | Expression::Value(Value::This)
+        | Expression::Value(Value::NewTarget)
+        | Expression::Value(Value::Super) => true,
+        // Member / index chains: a.b.c, a[0]
+        Expression::Member { object, property, .. } => {
+            is_simple_pure_expr_depth(object, depth + 1)
+                && match property {
+                    crate::ir::PropertyKey::Computed(k) => {
+                        is_simple_pure_expr_depth(k, depth + 1)
+                    }
+                    _ => true,
+                }
+        }
+        Expression::Unary { operand, .. } => is_simple_pure_expr_depth(operand, depth + 1),
+        Expression::Binary { left, right, .. } => {
+            is_simple_pure_expr_depth(left, depth + 1) && is_simple_pure_expr_depth(right, depth + 1)
+        }
         _ => false,
     }
 }
@@ -237,7 +254,7 @@ fn apply_multi_use_to_stmt(stmt: &mut Statement, defs: &BTreeMap<String, Express
         }
         Statement::Expr(e) => substitute_vars_in_expr(e, defs),
         Statement::Return(Some(e)) | Statement::Throw(e) => substitute_vars_in_expr(e, defs),
-        // Loop/branch conditions: substitute (safe — these defs are constants /
+        // Loop/branch conditions: substitute (safe, these defs are constants /
         // simple pure values). Bodies are handled by the recursion, but loop
         // bodies are intentionally skipped, so doing the condition here ensures a
         // hoisted constant (e.g. a loop bound) still reaches `while (i < 5)`.

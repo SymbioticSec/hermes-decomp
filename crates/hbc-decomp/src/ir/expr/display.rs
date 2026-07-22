@@ -13,22 +13,49 @@ impl fmt::Display for Expression {
     }
 }
 
+fn escape_js_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Safe as `obj.name` (not `obj["name"]`).
+fn is_dot_property_name(name: &str) -> bool {
+    if name.is_empty() || name.starts_with('#') {
+        return false;
+    }
+    if name.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    crate::util::is_valid_identifier(name)
+}
+
 pub fn format_key(key: &PropertyKey) -> String {
     match key {
         PropertyKey::Ident(name) => {
             if let Some(symbol_name) = name.strip_prefix("@@") {
                 format!("[Symbol.{symbol_name}]")
-            } else if name.chars().all(|c| c.is_ascii_digit()) {
-                format!("\"{name}\"")
-            } else {
+            } else if is_dot_property_name(name) {
                 name.clone()
+            } else {
+                format!("\"{}\"", escape_js_string(name))
             }
         }
         PropertyKey::String(s) => {
             if let Some(symbol_name) = s.strip_prefix("@@") {
                 format!("[Symbol.{symbol_name}]")
             } else {
-                format!("\"{s}\"")
+                format!("\"{}\"", escape_js_string(s))
             }
         }
         PropertyKey::Computed(e) => format!("[{}]", format_expr(e)),
@@ -46,17 +73,17 @@ pub fn format_member_access_with(
         PropertyKey::Ident(name) => {
             if let Some(symbol_name) = name.strip_prefix("@@") {
                 format!("{obj}{opt}[Symbol.{symbol_name}]")
-            } else if name.chars().all(|c| c.is_ascii_digit()) {
-                format!("{obj}{opt}[{name}]")
-            } else {
+            } else if is_dot_property_name(name) {
                 format!("{obj}{opt}.{name}")
+            } else {
+                format!("{obj}{opt}[\"{}\"]", escape_js_string(name))
             }
         }
         PropertyKey::String(s) => {
             if let Some(symbol_name) = s.strip_prefix("@@") {
                 format!("{obj}{opt}[Symbol.{symbol_name}]")
             } else {
-                format!("{obj}{opt}[\"{s}\"]")
+                format!("{obj}{opt}[\"{}\"]", escape_js_string(s))
             }
         }
         PropertyKey::Computed(e) => format!("{obj}{opt}[{}]", format_computed(e)),
@@ -104,7 +131,11 @@ fn join_exprs(exprs: &[Expression]) -> String {
 }
 
 fn format_call(callee: &Expression, arguments: &[Expression], extra_suffix: &str) -> String {
-    let callee_str = format_expr(callee);
+    // Named function expressions as callees need parens: (function F(){})(args)
+    let callee_str = match callee {
+        Expression::Function { .. } => format!("({})", format_expr(callee)),
+        _ => format_expr(callee),
+    };
 
     if let Some((first, rest)) = arguments.split_first() {
         let is_trivial_this = matches!(
@@ -358,4 +389,22 @@ mod tests {
         );
         assert_eq!(format!("{expr}"), "(r0 ** r1) ** r2");
     }
+
+    #[test]
+    fn special_property_names_use_brackets() {
+        use crate::ir::Value;
+        let expr = Expression::Member {
+            object: Box::new(Expression::Value(Value::Variable("obj".into()))),
+            property: PropertyKey::Ident("#private".into()),
+            optional: false,
+        };
+        assert_eq!(format!("{expr}"), "obj[\"#private\"]");
+        let expr = Expression::Member {
+            object: Box::new(Expression::Value(Value::Variable("obj".into()))),
+            property: PropertyKey::Ident("@wry/context:Slot".into()),
+            optional: false,
+        };
+        assert_eq!(format!("{expr}"), "obj[\"@wry/context:Slot\"]");
+    }
 }
+

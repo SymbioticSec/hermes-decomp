@@ -29,6 +29,16 @@ examples/
 # One-off refactoring scripts
 *.py
 
+# Local working plans (not for git)
+IMPROVEMENTS_PLAN.md
+PLAN*.md
+ROADMAP.md
+DISCORD.md
+DISOCRD.md
+TESTING_DEVICE.md
+TESTING*.md
+device_test.sh
+
 # Environment
 .env
 .env.local
@@ -52,3 +62,4 @@ test_defaults.hbc
 # On-disk analysis cache (produced next to .hbc/.bundle inputs)
 *.hdcache
 *.hdcache.tmp
+paper/

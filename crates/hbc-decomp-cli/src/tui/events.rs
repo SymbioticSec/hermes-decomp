@@ -144,14 +144,27 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.open_xref();
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if app.selected > 0 {
+            if app.view == ViewMode::Cfg {
+                app.cfg_move_block(-1);
+            } else if app.view == ViewMode::Modules {
+                app.modules.move_sel(-1, 20);
+                app.scroll = 0;
+            } else if app.selected > 0 {
                 app.set_selected(app.selected - 1);
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if app.selected + 1 < app.function_names.len() {
+            if app.view == ViewMode::Cfg {
+                app.cfg_move_block(1);
+            } else if app.view == ViewMode::Modules {
+                app.modules.move_sel(1, 20);
+                app.scroll = 0;
+            } else if app.selected + 1 < app.function_names.len() {
                 app.set_selected(app.selected + 1);
             }
+        }
+        KeyCode::Enter if app.view == ViewMode::Cfg => {
+            app.set_view(ViewMode::Disasm);
         }
         KeyCode::PageUp => {
             app.scroll = app.scroll.saturating_sub(20);
@@ -165,10 +178,22 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('1') => app.set_view(ViewMode::Disasm),
         KeyCode::Char('2') => app.set_view(ViewMode::Decompile),
         KeyCode::Char('3') => app.set_view(ViewMode::Info),
+        KeyCode::Char('5') => app.set_view(ViewMode::Cfg),
         KeyCode::Char('4') => {
             if has_diff {
                 app.set_view(ViewMode::Diff)
             }
+        }
+        // Metro module browser, kicks off pipeline if needed.
+        KeyCode::Char('m') => {
+            app.ensure_pipeline_building();
+            if let Some(ctx) = app.pipeline_ctx.clone() {
+                if app.modules.rows.is_empty() {
+                    app.modules.rebuild_from(&ctx);
+                }
+            }
+            app.set_view(ViewMode::Modules);
+            app.scroll = 0;
         }
         // `v` toggles between disassembly and decompiled code. In the split
         // diff view it flips which of the two is being diffed instead.

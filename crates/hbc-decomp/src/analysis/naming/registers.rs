@@ -11,7 +11,7 @@ pub struct RegisterInfo {
     // If assigned via destructuring: the property key name
     pub destructuring_key: Option<String>,
     // If assigned a named function value, its own name (e.g. a Babel/Metro helper
-    // `_typeof`, `_interopRequireDefault`, …) — used verbatim instead of "fn".
+    // `_typeof`, `_interopRequireDefault`, …), used verbatim instead of "fn".
     pub function_name: Option<String>,
     pub use_count: usize,
 }
@@ -54,6 +54,9 @@ fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
             analyze_expr(value, info);
             analyze_target(target, info);
         }
+        // Track registers used in `delete obj[key]` so they receive names
+        // (otherwise they leak as `delete r5[r4]`).
+        Statement::Delete { target, .. } => analyze_expr(target, info),
         Statement::Expr(e) => analyze_expr(e, info),
         Statement::Return(Some(e)) => analyze_expr(e, info),
         Statement::Throw(e) => analyze_expr(e, info),

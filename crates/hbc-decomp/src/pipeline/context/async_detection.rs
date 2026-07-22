@@ -146,7 +146,7 @@ pub(super) fn unwrap_async_wrappers(
     param_names: &mut BTreeMap<u32, Vec<Option<String>>>,
     file: &BytecodeFile,
 ) -> usize {
-    // Step 1: Detect wrappers — collect (wrapper_id, inner_generator_id)
+    // Step 1: Detect wrappers, collect (wrapper_id, inner_generator_id)
     let mut wrappers: Vec<(u32, u32)> = Vec::new();
 
     let mut async_keys: Vec<_> = all_ir.keys().copied().collect();
@@ -161,7 +161,7 @@ pub(super) fn unwrap_async_wrappers(
     let count = wrappers.len();
 
     for (wrapper_id, inner_id) in wrappers {
-        // Step 2: Follow the chain — if inner's body is just Return(Function{C}), use C
+        // Step 2: Follow the chain, if inner's body is just Return(Function{C}), use C
         let body_id = find_innermost_body(all_ir, inner_id);
 
         // Step 3: Copy body's IR to the wrapper function

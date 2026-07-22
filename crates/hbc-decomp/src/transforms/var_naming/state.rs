@@ -56,7 +56,7 @@ impl VariableNamer {
 
 }
 
-// Infer a name from an expression (free function — no state needed).
+// Infer a name from an expression (free function, no state needed).
 pub fn infer_name_from_expr(expr: &Expression) -> Option<String> {
     match expr {
         // fetch(url) → response

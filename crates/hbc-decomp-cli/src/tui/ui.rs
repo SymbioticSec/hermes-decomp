@@ -56,7 +56,11 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(layout[1]);
 
-    draw_function_list(frame, app, body[0]);
+    if app.view == ViewMode::Modules {
+        draw_module_list(frame, app, body[0]);
+    } else {
+        draw_function_list(frame, app, body[0]);
+    }
 
     // Check if in diff mode for split view content
     if app.view == ViewMode::Diff {
@@ -75,13 +79,28 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
         let (content, _) = app.content();
         let title = if app.view == ViewMode::Decompile && app.pipeline_building {
             "Decompile (analyzing...)"
+        } else if app.view == ViewMode::Modules && app.pipeline_building {
+            "Modules (analyzing...)"
         } else {
             app.view.title()
         };
         draw_content_pane(frame, app, body[1], content, title);
     }
 
-    let footer_line = if app.file2.is_some() {
+    let footer_line = if app.view == ViewMode::Cfg {
+        Line::from(vec![
+            Span::styled("q", Style::default().fg(Color::White)),
+            Span::styled(" quit ", Style::default().fg(Color::DarkGray)),
+            Span::styled("j/k", Style::default().fg(Color::White)),
+            Span::styled(" block ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Enter", Style::default().fg(Color::White)),
+            Span::styled(" disasm ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Tab/5", Style::default().fg(Color::White)),
+            Span::styled(" views ", Style::default().fg(Color::DarkGray)),
+            Span::styled("PgUp/Dn", Style::default().fg(Color::White)),
+            Span::styled(" scroll", Style::default().fg(Color::DarkGray)),
+        ])
+    } else if app.file2.is_some() {
         Line::from(vec![
             Span::styled("q", Style::default().fg(Color::White)),
             Span::styled(" quit ", Style::default().fg(Color::DarkGray)),
@@ -97,6 +116,8 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
             Span::styled(" scroll ", Style::default().fg(Color::DarkGray)),
             Span::styled("g", Style::default().fg(Color::White)),
             Span::styled(" xref ", Style::default().fg(Color::DarkGray)),
+            Span::styled("m", Style::default().fg(Color::White)),
+            Span::styled(" modules ", Style::default().fg(Color::DarkGray)),
             Span::styled("d", Style::default().fg(Color::White)),
             Span::styled(" diff colors ", Style::default().fg(Color::DarkGray)),
             Span::styled("v", Style::default().fg(Color::White)),
@@ -161,7 +182,7 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Double)
-                    .title(" Search in content — \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
+                    .title(" Search in content, \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
             ),
             popup,
         );
@@ -238,6 +259,47 @@ fn draw_function_list(frame: &mut Frame, app: &mut App, area: Rect) {
     // Record the inner (content) area so mouse clicks can map to a row.
     app.list_inner = Block::default().borders(Borders::ALL).inner(list_area);
     frame.render_stateful_widget(list, list_area, &mut app.list_state);
+}
+
+fn draw_module_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    let title = if app.pipeline_building && app.modules.rows.is_empty() {
+        "Modules (analyzing…)"
+    } else {
+        "Modules (m)"
+    };
+    let page = area.height.saturating_sub(2) as usize;
+    let items: Vec<ListItem> = app
+        .modules
+        .filtered
+        .iter()
+        .enumerate()
+        .skip(app.modules.scroll)
+        .take(page.max(1))
+        .map(|(fi, _)| {
+            let label = app.modules.label(fi);
+            if fi == app.modules.selected {
+                ListItem::new(Line::from(Span::styled(
+                    label,
+                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                )))
+            } else {
+                ListItem::new(Line::from(Span::styled(label, Style::default())))
+            }
+        })
+        .collect();
+
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .title(format!(
+                "{title}  {}/{}",
+                app.modules.filtered.len(),
+                app.modules.rows.len()
+            )),
+    );
+    app.list_inner = Block::default().borders(Borders::ALL).inner(area);
+    frame.render_widget(list, area);
 }
 
 fn draw_content_pane(
@@ -429,7 +491,7 @@ fn apply_selection_styling(
 }
 
 // One side of a diff row: git-style sign (`+`/`-`/space), a line-number
-// gutter, then the text — either syntax-highlighted or diff-tinted, with the
+// gutter, then the text, either syntax-highlighted or diff-tinted, with the
 // active search term highlighted on top.
 #[allow(clippy::too_many_arguments)]
 fn git_side_line(
@@ -507,7 +569,7 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
     };
     let title = Paragraph::new(Line::from(vec![
         Span::styled(" Git Diff ", Style::default().fg(Color::Black).bg(Color::Cyan)),
-        Span::raw(format!("  base (file 1) vs modified (file 2) — {kind}")),
+        Span::raw(format!("  base (file 1) vs modified (file 2), {kind}")),
         Span::styled(progress, Style::default().fg(Color::Yellow)),
         Span::styled(search, Style::default().fg(Color::Cyan)),
     ]));
@@ -548,7 +610,7 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
     if app.git_rows.is_empty() {
         let msg = if app.git_computing {
             let (done, total) = app.git_progress;
-            format!("\n   {spin}  {} bundle… {done}/{total} functions\n\n        Streaming per function — results appear as they finish. Press 'v' to switch asm/code.", if app.git_kind == ViewMode::Disasm { "Disassembling" } else { "Decompiling" })
+            format!("\n   {spin}  {} bundle… {done}/{total} functions\n\n        Streaming per function, results appear as they finish. Press 'v' to switch asm/code.", if app.git_kind == ViewMode::Disasm { "Disassembling" } else { "Decompiling" })
         } else {
             "\n   No diff available yet…".to_string()
         };
@@ -679,7 +741,7 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Double)
-                    .title(" Search — \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
+                    .title(" Search, \u{2193}/Enter: next  \u{2191}: prev  Esc: close "),
             ),
             popup,
         );
@@ -723,10 +785,8 @@ fn draw_xref_popup(frame: &mut Frame, app: &App) {
 
     let callee_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Callee).count();
     let caller_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Caller).count();
-    let title = format!(
-        " Xrefs: {} callees, {} callers — Enter: jump  Esc: close ",
-        callee_count, caller_count
-    );
+    let title =
+        format!(" Xrefs: {callee_count} callees, {caller_count} callers, Enter: jump  Esc: close ");
 
     frame.render_widget(
         Paragraph::new(items).block(

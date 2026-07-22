@@ -62,10 +62,16 @@ impl Codegen {
         use crate::ir::AssignTarget;
         match target {
             AssignTarget::Register(r) => format!("r{r}"),
-            AssignTarget::Variable(n) => n.clone(),
+            AssignTarget::Variable(n) => crate::util::sanitize_identifier(n),
             AssignTarget::Member { object, property } => {
                 let obj = self.generate_expr(object);
-                format!("{obj}.{property}")
+                // Same rules as Expression::Member, non-identifier keys need brackets.
+                crate::ir::expr::display::format_member_access_with(
+                    &obj,
+                    "",
+                    &crate::ir::PropertyKey::Ident(property.clone()),
+                    |e| self.generate_expr(e),
+                )
             }
             AssignTarget::Index { object, key } => {
                 let obj = self.generate_expr(object);
@@ -73,8 +79,7 @@ impl Codegen {
                 format!("{obj}[{k}]")
             }
             // Must match the `Value::ClosureVar` rendering (ir/types.rs) so a load
-            // and a store of the same captured slot use the same identifier —
-            // otherwise `c += 1` reads `closure_0` but writes `closure_var_0_0`.
+            // and a store of the same captured slot use the same identifier,             // otherwise `c += 1` reads `closure_0` but writes `closure_var_0_0`.
             AssignTarget::ClosureVar { level, slot } => {
                 if *level == 0 {
                     format!("closure_{slot}")

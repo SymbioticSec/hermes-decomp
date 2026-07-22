@@ -140,6 +140,13 @@ pub fn find_block_starts_with_handlers(
         }
     }
 
+    // Keep only leaders that land on a real instruction. A terminator such as the
+    // final Ret records the offset just past itself as a leader, and a try region
+    // end is exclusive; when either points at the end of the function it would
+    // otherwise create an empty, unreachable phantom block.
+    let inst_offsets: BTreeSet<u32> = insts.iter().map(|i| i.offset).collect();
+    targets.retain(|t| inst_offsets.contains(t));
+
     targets
 }
 

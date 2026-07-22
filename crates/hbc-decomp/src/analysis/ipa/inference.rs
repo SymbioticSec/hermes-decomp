@@ -237,7 +237,7 @@ mod tests {
         let result = vote_on_names(sites);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], Some("email".to_string()));
-        // "password" and "pass" each appear once — either is acceptable
+        // "password" and "pass" each appear once, either is acceptable
         assert!(result[1].is_some());
     }
 

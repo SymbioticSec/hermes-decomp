@@ -37,8 +37,11 @@ pub fn read_buffer_series(
 
     while values.len() < count as usize {
         let (tag, length) = read_buffer_tag(&mut reader)?;
+        // Hermes never emits length-0 sequences, but a corrupt/misaligned stream
+        // can produce them. Skip empty tags rather than aborting the whole series
+        // so a single bad tag doesn't wipe the rest of a large literal.
         if length == 0 {
-            return Err(Error::Parse("data buffer entry length is zero".to_string()));
+            continue;
         }
         for _ in 0..length {
             let value = read_buffer_value(file, tag, &mut reader)?;

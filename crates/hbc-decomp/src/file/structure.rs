@@ -82,6 +82,9 @@ pub struct BytecodeFile {
     pub debug_info: Option<DebugInfo>,
     pub exception_handlers: BTreeMap<u32, Vec<ExceptionHandler>>,
     pub sections: Vec<SectionInfo>,
+    /// Original file bytes when parsed from disk. Used by the write path for
+    /// identity serialize and surgical patches (keeps overflow headers intact).
+    pub raw_bytes: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]

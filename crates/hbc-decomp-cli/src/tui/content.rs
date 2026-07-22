@@ -14,6 +14,9 @@ use super::{decompile_or_log, disasm_or_log};
 
 impl App {
     pub fn content(&mut self) -> (Text<'static>, Option<Text<'static>>) {
+        if self.view == ViewMode::Modules {
+            return (Text::raw(self.module_content()), None);
+        }
         if self.function_names.is_empty() {
             if self.diff_analyzing {
                 return (Text::raw("Analyzing functions..."), None);
@@ -30,6 +33,7 @@ impl App {
 
         match self.view {
             ViewMode::Info => (Text::raw(self.format_info_wrapper()), None),
+            ViewMode::Modules => (Text::raw(self.module_content()), None),
             ViewMode::Disasm => {
                 if only_in_file2 {
                     let id2 = self.selected_function_id2().unwrap();
@@ -37,6 +41,7 @@ impl App {
                 }
                 (self.disasm_content(), None)
             }
+            ViewMode::Cfg => (Text::raw(self.cfg_content()), None),
             ViewMode::Decompile => {
                 if only_in_file2 {
                     let id2 = self.selected_function_id2().unwrap();
@@ -280,7 +285,7 @@ impl App {
         }
 
         // Use full pipeline context if available (IPA, Metro, naming). Otherwise
-        // fall back to a fast single-function decompile — NEVER build a
+        // fall back to a fast single-function decompile, NEVER build a
         // whole-file closure context here: that ran on the UI thread inside
         // terminal.draw() and froze the TUI for seconds on large bundles. The
         // background pipeline upgrades quality once it's ready.
@@ -336,7 +341,7 @@ impl App {
                 .unwrap()
                 .generate_function_code(file2, function_id)
         } else {
-            // Fast fallback while the pipeline builds — no whole-file work on
+            // Fast fallback while the pipeline builds, no whole-file work on
             // the UI thread (see decompile_content for why).
             let file2 = self.file2.as_ref().unwrap();
             let format2 = self.format2.as_ref().unwrap();
@@ -370,4 +375,31 @@ impl App {
         )
     }
 
+    /// Decompile the selected Metro module (factory function as ESM).
+    pub fn module_content(&mut self) -> String {
+        if self.pipeline_building && self.pipeline_ctx.is_none() {
+            return "Analyzing Metro modules… (pipeline building)\nPress m again after analysis finishes."
+                .into();
+        }
+        let Some(ctx) = self.pipeline_ctx.clone() else {
+            return "No pipeline context. Press m to start analysis.".into();
+        };
+        if self.modules.rows.is_empty() {
+            self.modules.rebuild_from(&ctx);
+        }
+        let Some(row) = self.modules.selected_row().cloned() else {
+            return "No modules found (bundle may not use Metro __d).".into();
+        };
+        if let Some(cached) = self.modules.cache.get(&row.module_id) {
+            return cached.clone();
+        }
+        let code = ctx.generate_function_code(&self.file, row.function_id);
+        let header = format!(
+            "// Module {} ({})  factory=F{}  exports={}  deps={}\n\n",
+            row.module_id, row.name, row.function_id, row.export_count, row.dep_count
+        );
+        let full = format!("{header}{code}");
+        self.modules.cache.insert(row.module_id, full.clone());
+        full
+    }
 }

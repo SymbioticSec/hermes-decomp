@@ -6,6 +6,8 @@ pub enum Error {
     Parse(String),
     UnsupportedVersion(u32),
     MissingFormat(u32),
+    /// Bytecode write / assemble / patch path (`write` module).
+    Write(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -27,6 +29,7 @@ impl fmt::Display for Error {
             Error::MissingFormat(version) => {
                 write!(f, "missing opcode format for bytecode version: {version}")
             }
+            Error::Write(msg) => write!(f, "write error: {msg}"),
         }
     }
 }

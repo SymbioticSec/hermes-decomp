@@ -355,6 +355,137 @@ pub enum Command {
         #[arg(long)]
         version: Option<String>,
     },
+    /// Scan string table for likely secrets / credentials.
+    Secrets {
+        input: PathBuf,
+        #[arg(long, value_enum, default_value = "auto")]
+        layout: LayoutArg,
+        #[arg(long, value_enum, default_value = "auto")]
+        function_layout: FunctionLayoutArg,
+        /// Emit JSON instead of a text report.
+        #[arg(long)]
+        json: bool,
+        /// Show full secret values (default redacts middle).
+        #[arg(long)]
+        show_full: bool,
+    },
+    /// Generate Frida hooks for a Metro module's exports.
+    FridaHooks {
+        input: PathBuf,
+        /// Metro module id to hook.
+        #[arg(long)]
+        module: u32,
+        /// Comma-separated export names (default: all known exports).
+        #[arg(long)]
+        export: Option<String>,
+        /// Output directory for before.js / after.js / agent.js / run.sh.
+        #[arg(short = 'o', long, default_value = "./frida_hooks_out")]
+        output: PathBuf,
+        #[arg(long)]
+        format_version: Option<u32>,
+        #[arg(long, value_enum, default_value = "auto")]
+        layout: LayoutArg,
+        #[arg(long, value_enum, default_value = "auto")]
+        function_layout: FunctionLayoutArg,
+    },
+    /// Emit HASM (disasm) for one function to a file.
+    EmitHasm {
+        input: PathBuf,
+        #[arg(long)]
+        function: u32,
+        #[arg(short = 'o', long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        format_version: Option<u32>,
+        #[arg(long, value_enum, default_value = "auto")]
+        layout: LayoutArg,
+        #[arg(long, value_enum, default_value = "auto")]
+        function_layout: FunctionLayoutArg,
+    },
+    /// Assemble HASM text into a function body and write a new .hbc.
+    Asm {
+        /// Base .hbc / bundle to patch.
+        input: PathBuf,
+        /// HASM text file (our disasm dialect).
+        hasm: PathBuf,
+        #[arg(long)]
+        function: u32,
+        #[arg(short = 'o', long)]
+        output: PathBuf,
+        #[arg(long)]
+        format_version: Option<u32>,
+        #[arg(long, value_enum, default_value = "auto")]
+        layout: LayoutArg,
+        #[arg(long, value_enum, default_value = "auto")]
+        function_layout: FunctionLayoutArg,
+    },
+    /// Patch a string table entry (same-length only for now).
+    PatchString {
+        input: PathBuf,
+        #[arg(short = 'o', long)]
+        output: PathBuf,
+        #[arg(long)]
+        id: Option<u32>,
+        #[arg(long)]
+        old: Option<String>,
+        #[arg(long)]
+        new: String,
+        #[arg(long)]
+        format_version: Option<u32>,
+        #[arg(long, value_enum, default_value = "auto")]
+        layout: LayoutArg,
+        #[arg(long, value_enum, default_value = "auto")]
+        function_layout: FunctionLayoutArg,
+    },
+    /// Patch a function body from a HASM file (alias of `asm`).
+    PatchFunction {
+        input: PathBuf,
+        #[arg(short = 'o', long)]
+        output: PathBuf,
+        #[arg(long)]
+        function: u32,
+        #[arg(long)]
+        hasm: PathBuf,
+        #[arg(long)]
+        format_version: Option<u32>,
+        #[arg(long, value_enum, default_value = "auto")]
+        layout: LayoutArg,
+        #[arg(long, value_enum, default_value = "auto")]
+        function_layout: FunctionLayoutArg,
+    },
+    /// Inject a small bytecode stub into a function.
+    InjectStub {
+        input: PathBuf,
+        #[arg(short = 'o', long)]
+        output: PathBuf,
+        #[arg(long)]
+        function: u32,
+        /// Stub kind: `nop` or `log`.
+        #[arg(long, default_value = "log")]
+        kind: String,
+        #[arg(long)]
+        format_version: Option<u32>,
+        #[arg(long, value_enum, default_value = "auto")]
+        layout: LayoutArg,
+        #[arg(long, value_enum, default_value = "auto")]
+        function_layout: FunctionLayoutArg,
+    },
+    /// Create a minimal valid .hbc from scratch. Legacy headers for v96 and lower, modern headers for v97 and newer.
+    Create {
+        #[arg(long, default_value = "96")]
+        version: u32,
+        #[arg(short = 'o', long)]
+        output: PathBuf,
+        /// Optional strings to include (default: global).
+        #[arg(long)]
+        string: Vec<String>,
+    },
+    /// Verify HASM encode round-trip for one function (disasm→parse→encode).
+    AsmCheck {
+        input: PathBuf,
+        #[arg(long, default_value = "0")]
+        function: u32,
+    },
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug)]

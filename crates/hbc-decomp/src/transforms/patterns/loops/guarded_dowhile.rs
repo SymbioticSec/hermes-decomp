@@ -3,7 +3,7 @@ use crate::ir::{AssignTarget, Expression, Statement, Value, VarKind};
 // Fold the guarded do-while shape Hermes emits for `for`/`while` loops back into a
 // natural `for`/`while`.
 //
-// Hermes lowers loops with "loop inversion": the test is emitted twice — once as a
+// Hermes lowers loops with "loop inversion": the test is emitted twice, once as a
 // top guard and once at the bottom (the back-edge). After `convert_while_true_loops`
 // that surfaces as:
 //
@@ -116,7 +116,7 @@ fn try_fold_for(
     if !expr_mentions_var(cond, var) {
         return None;
     }
-    // GUARD must be COND evaluated at the initial value — proves the top test is the
+    // GUARD must be COND evaluated at the initial value, proves the top test is the
     // loop's entry test, so `if (GUARD) do…while(COND)` == `for(init; COND; update)`.
     if substitute_var(cond.clone(), var, init_val) != *guard {
         return None;

@@ -5,18 +5,32 @@ use std::collections::BTreeMap;
 // Converts `x = expr;` into `const x = expr;` (if never reassigned) or `let x = expr;`.
 // Skips parameters and variables already declared via `Statement::Let`.
 pub fn insert_declarations(stmts: &mut Vec<Statement>, params: &[String]) {
+    insert_declarations_with_extra_writes(stmts, params, &BTreeMap::new());
+}
+
+// Like `insert_declarations`, but folds in write counts from nested/descendant
+// functions (closures, getters) that mutate free variables declared here.
+// Without this, a parent emits `const tmp = …` while an inlined child does
+// `tmp = …` → "Assignment to constant variable".
+pub fn insert_declarations_with_extra_writes(
+    stmts: &mut Vec<Statement>,
+    params: &[String],
+    extra_writes: &BTreeMap<String, usize>,
+) {
     // Phase 1: Count total writes per variable across the entire function body
     let mut write_count: BTreeMap<String, usize> = BTreeMap::new();
     let mut let_declared: std::collections::HashSet<String> = std::collections::HashSet::new();
     count_writes(stmts, &mut write_count, &mut let_declared);
+    for (name, n) in extra_writes {
+        *write_count.entry(name.clone()).or_insert(0) += *n;
+    }
 
-    // A `closure_N` variable read before its first write is a *captured* variable
-    // owned by an enclosing scope (e.g. a counter mutated inside a returned
-    // closure). It must not be re-declared here — a `const`/`let` would shadow the
-    // outer binding (and `const x = x + 1` is a TDZ error). Detect these and skip
-    // declaring them. The owning scope (where it is written first) still declares
-    // it, but always with `let` since it is mutated across scopes.
-    let free_closures = free_captured_closures(stmts);
+    // A variable whose first occurrence is a READ is free / captured from an
+    // enclosing scope (e.g. counter `c0` mutated inside a returned closure, or
+    // legacy `closure_N`). Re-declaring it here shadows the outer binding and
+    // causes TDZ (`const c0 = c0 + 1`). Skip declaring free vars; the owner
+    // scope still declares them (as `let` when mutated across scopes).
+    let free_closures = free_captured_vars(stmts);
 
     let param_set: std::collections::HashSet<&str> = params.iter().map(|s| s.as_str()).collect();
     let mut declared: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -44,7 +58,7 @@ pub fn insert_declarations(stmts: &mut Vec<Statement>, params: &[String]) {
         .collect();
     // Hoist destructuring-pattern names: patterns are emitted as bare assignments
     // (`[a,b] = e`, `({x,y} = e)`), so their names must be declared once at the
-    // top — two patterns can share a register-derived name (`x`/`y` reused), and
+    // top, two patterns can share a register-derived name (`x`/`y` reused), and
     // an inline `let` per pattern would redeclare.
     let mut pattern_names: Vec<String> = Vec::new();
     collect_pattern_names(stmts, &mut pattern_names);
@@ -76,23 +90,34 @@ pub fn insert_declarations(stmts: &mut Vec<Statement>, params: &[String]) {
     insert_decls_in_block(stmts, &write_count, &let_declared, &param_set, &free_closures, &mut declared);
 }
 
-// Closure variables (`closure_N`) whose first textual occurrence in the function
-// is a READ (i.e. read before written) — these are captured from an enclosing
-// scope and must not be declared here. Evaluation order: an assignment reads its
-// value expression before writing its target.
-fn free_captured_closures(stmts: &[Statement]) -> std::collections::HashSet<String> {
-    let mut first_seen: BTreeMap<String, bool> = BTreeMap::new(); // name -> first occurrence was a read
+fn is_env_slot_name(name: &str) -> bool {
+    // closure_0, c0, c12, typical Hermes env / counter bindings
+    if name.strip_prefix("closure_").is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+    {
+        return true;
+    }
+    name.len() >= 2
+        && name.starts_with('c')
+        && name[1..].chars().all(|c| c.is_ascii_digit())
+}
+
+// Variables whose first textual occurrence in the function is a READ (read
+// before written), captured from an enclosing scope. Must not be declared
+// here. Evaluation order: an assignment reads its value expression before
+// writing its target.
+fn free_captured_vars(stmts: &[Statement]) -> std::collections::HashSet<String> {
+    let mut first_seen: BTreeMap<String, bool> = BTreeMap::new(); // name -> first was a read
     scan_first_use(stmts, &mut first_seen);
     first_seen
         .into_iter()
-        .filter(|(name, read_first)| *read_first && is_closure_var(name))
+        .filter(|(name, read_first)| {
+            *read_first
+                && is_valid_js_identifier(name)
+                // Don't treat reserved/global builtins as free "locals" to skip,                 // they simply aren't declared; skipping is still correct.
+                && !name.is_empty()
+        })
         .map(|(name, _)| name)
         .collect()
-}
-
-fn is_closure_var(name: &str) -> bool {
-    name.strip_prefix("closure_")
-        .is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
 }
 
 // Record, per variable, whether its first occurrence (pre-order, value-before-
@@ -248,7 +273,7 @@ fn collect_scope_info(
 }
 
 // Variable names referenced (read or written) directly by a statement's own
-// expressions/targets (NOT recursing into nested block bodies — the caller
+// expressions/targets (NOT recursing into nested block bodies, the caller
 // handles recursion with scope tracking).
 fn stmt_var_refs(stmt: &Statement) -> Vec<String> {
     let mut names = Vec::new();
@@ -463,10 +488,11 @@ fn insert_decls_in_block(
                 {
                     declared.insert(name.clone());
                     let writes = write_count.get(name).copied().unwrap_or(1);
-                    // A captured closure var declared in its owning scope is mutated
-                    // from nested closures (writes counted here can be 1) — always
-                    // `let`, never `const`.
-                    let kind = if is_closure_var(name) || writes > 1 {
+                    // Prefer `let` when mutated more than once, or when the name
+                    // looks like a Hermes env slot (`c0`, `closure_N`), those
+                    // are often mutated from nested closures even if this
+                    // function only shows one write.
+                    let kind = if writes > 1 || is_env_slot_name(name) {
                         VarKind::Let
                     } else {
                         VarKind::Const
@@ -545,4 +571,146 @@ fn is_valid_js_identifier(name: &str) -> bool {
 // Check if assignment is a self-assignment: `name = name`
 fn is_self_assignment_var(name: &str, value: &Expression) -> bool {
     matches!(value, Expression::Value(Value::Variable(v)) if v == name)
+}
+
+// Aggregate writes from nested/descendant function bodies so the parent scope
+// chooses `let` when a child mutates a shared name.
+//
+// Two cases matter:
+// 1. Free (read-before-write) captures, classic closure mutation
+//    (`const c = 0; () => { c = c + 1 }` → parent must be `let`).
+// 2. Write-first reassignment of an outer name, constructors/getters often do
+//    `items = […]` without reading first. The free-only path misses these; we
+//    still count any nested `Assign` to a Variable that is not an explicit
+//    `Let` in that body. Extra keys that never appear in the parent are ignored
+//    by `insert_declarations` (harmless). Same-name shadowing may demote a
+//    parent `const` → `let`, which stays valid JS.
+pub fn extra_writes_from_nested_bodies(nested_bodies: &[&[Statement]]) -> BTreeMap<String, usize> {
+    let mut extra: BTreeMap<String, usize> = BTreeMap::new();
+    for body in nested_bodies {
+        let free = free_captured_vars(body);
+        let mut writes: BTreeMap<String, usize> = BTreeMap::new();
+        let mut lets = std::collections::HashSet::new();
+        count_writes(body, &mut writes, &mut lets);
+
+        for (name, c) in writes {
+            // Explicit `let/const name = …` in the child owns the binding; those
+            // writes stay local and must not force the parent to `let`.
+            if lets.contains(&name) {
+                continue;
+            }
+            if free.contains(&name) {
+                // Free mutation: at least 2 so a single nested write forces let.
+                *extra.entry(name).or_insert(0) += c.max(2);
+            } else {
+                // Write-first (or mixed) assign without a local Let, may target
+                // an outer binding once inlined/rendered. +c is enough for
+                // parent_local(1) + nested(1) → let.
+                *extra.entry(name).or_insert(0) += c.max(1);
+            }
+        }
+    }
+    extra
+}
+
+#[cfg(test)]
+mod nested_const_tests {
+    use super::*;
+    use crate::ir::{Constant, Expression, Value};
+
+    #[test]
+    fn nested_mutation_forces_let_not_const() {
+        // Parent: tmp = 0;  Child free-mutates tmp → parent must use let.
+        let mut parent = vec![Statement::Assign {
+            target: AssignTarget::Variable("tmp".into()),
+            value: Expression::constant(Constant::Integer(0)),
+        }];
+        let child = vec![
+            // first use is read (free), then write
+            Statement::Assign {
+                target: AssignTarget::Variable("tmp".into()),
+                value: Expression::Binary {
+                    op: crate::ir::BinaryOp::Add,
+                    left: Box::new(Expression::Value(Value::Variable("tmp".into()))),
+                    right: Box::new(Expression::constant(Constant::Integer(1))),
+                },
+            },
+        ];
+        let extra = extra_writes_from_nested_bodies(&[&child]);
+        assert!(extra.get("tmp").copied().unwrap_or(0) >= 2);
+        insert_declarations_with_extra_writes(&mut parent, &[], &extra);
+        match &parent[0] {
+            Statement::Let { kind, name, .. } => {
+                assert_eq!(name, "tmp");
+                assert_eq!(*kind, VarKind::Let, "expected let when nested writes");
+            }
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_nested_writes_keeps_const() {
+        let mut parent = vec![Statement::Assign {
+            target: AssignTarget::Variable("x".into()),
+            value: Expression::constant(Constant::Integer(1)),
+        }];
+        insert_declarations_with_extra_writes(&mut parent, &[], &BTreeMap::new());
+        match &parent[0] {
+            Statement::Let { kind, .. } => assert_eq!(*kind, VarKind::Const),
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn write_first_nested_reassign_forces_let() {
+        // Parent: items = [];  Child (constructor/getter): items = [1] as first use.
+        // Free-only counting used to miss this; parent must still be let.
+        let mut parent = vec![Statement::Assign {
+            target: AssignTarget::Variable("items".into()),
+            value: Expression::Array { elements: vec![] },
+        }];
+        let child = vec![Statement::Assign {
+            target: AssignTarget::Variable("items".into()),
+            value: Expression::Array {
+                elements: vec![Some(Expression::constant(Constant::Integer(1)))],
+            },
+        }];
+        let extra = extra_writes_from_nested_bodies(&[&child]);
+        assert!(
+            extra.get("items").copied().unwrap_or(0) >= 1,
+            "nested write-first must contribute extra writes, got {extra:?}"
+        );
+        insert_declarations_with_extra_writes(&mut parent, &[], &extra);
+        match &parent[0] {
+            Statement::Let { kind, name, .. } => {
+                assert_eq!(name, "items");
+                assert_eq!(*kind, VarKind::Let, "expected let for cross-scope reassignment");
+            }
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_local_let_does_not_force_parent_let() {
+        // Child owns `items` via Let, pure shadowing, parent stays const.
+        let mut parent = vec![Statement::Assign {
+            target: AssignTarget::Variable("items".into()),
+            value: Expression::Array { elements: vec![] },
+        }];
+        let child = vec![Statement::Let {
+            name: "items".into(),
+            value: Expression::Array { elements: vec![] },
+            kind: VarKind::Let,
+        }];
+        let extra = extra_writes_from_nested_bodies(&[&child]);
+        assert!(
+            !extra.contains_key("items"),
+            "explicit nested Let must not leak writes, got {extra:?}"
+        );
+        insert_declarations_with_extra_writes(&mut parent, &[], &extra);
+        match &parent[0] {
+            Statement::Let { kind, .. } => assert_eq!(*kind, VarKind::Const),
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
 }

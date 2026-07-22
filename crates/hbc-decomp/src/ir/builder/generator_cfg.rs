@@ -99,7 +99,7 @@ pub fn transform_generator_cfg(cfg: &mut CFG) {
                 value: yield_expr,
             });
         } else {
-            // No resume result — just emit as expression statement
+            // No resume result, just emit as expression statement
             block.statements.push(Statement::Expr(yield_expr));
         }
 

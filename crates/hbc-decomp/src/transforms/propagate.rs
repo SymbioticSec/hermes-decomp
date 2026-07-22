@@ -22,7 +22,7 @@ pub fn propagate(cfg: &mut CFG, config: &PropagationConfig) {
     // Global copies of loop-/branch-invariant values (a register defined exactly
     // once as a Parameter, Global, or Constant). These are valid in every block,
     // so seed them so a value used across blocks (e.g. a switch discriminant read
-    // in sibling branches) is substituted consistently — not just within the
+    // in sibling branches) is substituted consistently, not just within the
     // defining block.
     let globals = global_invariant_copies(cfg);
 
@@ -49,7 +49,7 @@ pub fn propagate(cfg: &mut CFG, config: &PropagationConfig) {
 // Motivation: the HBC >=97 register allocator aggressively reuses the register
 // that held `globalThis` for unrelated later values (e.g. nested-ternary string
 // results). The merge-freeze in `transform_to_ssa` then keeps that register
-// under a single name, collapsing the two independent live ranges — producing
+// under a single name, collapsing the two independent live ranges, producing
 // corrupt output like `g = globalThis; ...; g = "pos"; g.print(...)`. Resolving
 // the `globalThis` reads up front frees the register so only the later values
 // occupy it, and the freeze stays correct. Must run BEFORE `transform_to_ssa`.
@@ -161,9 +161,9 @@ pub fn resolve_global_reads(cfg: &mut CFG) {
 // copies globally, so the increment renders as `i = i + 1`.
 //
 // Correctness: a use of `a` may be replaced by `b` only when
-//   1. `a` is defined exactly once (this copy) — every use is reached solely by
+//   1. `a` is defined exactly once (this copy), every use is reached solely by
 //      it; and
-//   2. `b` has not been redefined on any path from the copy to the use — checked
+//   2. `b` has not been redefined on any path from the copy to the use, checked
 //      by requiring `b`'s reaching-definition set at the use to equal its set at
 //      the copy. If `b` were reassigned in between, the two sets differ and the
 //      copy is left in place (a still-valid, if redundant, statement).
@@ -230,7 +230,7 @@ pub fn propagate_copies(cfg: &mut CFG) {
         cur
     };
 
-    // Pass 1 — record each copy's source-register reaching set at the copy point.
+    // Pass 1, record each copy's source-register reaching set at the copy point.
     let mut signatures: HashMap<u32, HashSet<DefSite>> = HashMap::new();
     for block in cfg.blocks() {
         let mut cur = per_reg_reaching(block.id);
@@ -277,7 +277,7 @@ pub fn propagate_copies(cfg: &mut CFG) {
             .collect()
     };
 
-    // Pass 2 — substitute uses.
+    // Pass 2, substitute uses.
     for block_id in cfg.block_ids().collect::<Vec<_>>() {
         let mut cur = per_reg_reaching(block_id);
         let stmts = match cfg.get_mut(block_id) {
@@ -393,7 +393,7 @@ fn propagate_block(cfg: &mut CFG, block_id: BlockId, globals: &BTreeMap<u32, Exp
     // Return/Throw values live in the terminator, not in `statements`, so
     // without this a register copied from a parameter (e.g. a switch
     // discriminant compared in several arms) survives un-propagated in the
-    // condition — leaving `1 === arg0` but `2 === tmp` inconsistent.
+    // condition, leaving `1 === arg0` but `2 === tmp` inconsistent.
     let new_terminator = {
         let block = match cfg.get_mut(block_id) {
             Some(b) => b,

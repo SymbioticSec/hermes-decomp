@@ -10,7 +10,9 @@ mod strip_this;
 
 pub use arguments::simplify_arguments_copy;
 pub use cleanup::cleanup_noise;
-pub use declarations::insert_declarations;
+pub use declarations::{
+    extra_writes_from_nested_bodies, insert_declarations, insert_declarations_with_extra_writes,
+};
 pub use folding::{fold_array_literals, fold_object_literals};
 pub use inline_named::inline_named_variables;
 pub use reserved_words::rename_reserved_words;
@@ -110,7 +112,7 @@ impl MutVisitor for ExpressionInliner {
                 } else if has_side_effects || stmt_redefines_source(&stmt, &expr) {
                     // Flush to output: either this statement has side effects
                     // (ordering must be preserved), or it redefines a register
-                    // that the pending value reads — inlining the value at a
+                    // that the pending value reads, inlining the value at a
                     // later use would then capture the NEW value, not the value
                     // at the copy site (`tmp = sum; sum = undefined; print(tmp)`).
                     result.push(s);
@@ -138,7 +140,7 @@ impl MutVisitor for ExpressionInliner {
                 // Only inline registers defined exactly once. A register with
                 // multiple defs is loop-carried or reassigned; inlining one of its
                 // definitions into a use elsewhere (e.g. across a loop back-edge)
-                // is unsound — this is what silently broke counting loops.
+                // is unsound, this is what silently broke counting loops.
                 if uses == 1 && defs == 1 {
                     // Candidate for pending (chaining)
                     pending.push((*r, stmt.clone(), value.clone()));
@@ -157,7 +159,7 @@ impl MutVisitor for ExpressionInliner {
 
     fn visit_statement(&mut self, stmt: &mut Statement) {
         // For a do-while, `walk_statement` visits the body before the condition,
-        // and processing the body clears `self.definitions` — so a definition
+        // and processing the body clears `self.definitions`, so a definition
         // activated for this statement (e.g. an inlined loop bound) would be lost
         // before the condition is reached. Inline the condition FIRST.
         if let Statement::DoWhile { body, condition } = stmt {

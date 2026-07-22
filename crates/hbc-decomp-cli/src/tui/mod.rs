@@ -18,6 +18,7 @@ pub mod diff;
 pub mod events;
 pub mod formatting;
 pub mod gitdiff;
+pub mod modules;
 pub mod ui;
 
 use app::App;
@@ -29,7 +30,7 @@ pub(crate) fn debug_log(message: &str) {
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
     let line = format!("[{ts:.3}] {message}");
-    // Only write to file — never to stderr/stdout, as that corrupts the TUI.
+    // Only write to file, never to stderr/stdout, as that corrupts the TUI.
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

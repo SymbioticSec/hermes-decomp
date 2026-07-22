@@ -1,7 +1,8 @@
 // Hermes Bytecode Decompiler Library
 //
-// This library provides tools for parsing, disassembling, and decompiling
-// Hermes bytecode files (`.hbc`) used by React Native applications.
+// This library provides tools for parsing, disassembling, decompiling, and
+// (in progress) assembling / patching Hermes bytecode files (`.hbc`) used by
+// React Native applications.
 //
 // # Architecture
 //
@@ -12,6 +13,10 @@
 // 3. **Analysis** (`analysis`): Analyze the IR (liveness, reaching defs, structure)
 // 4. **Transformation** (`transforms`): Optimize and simplify the IR
 // 5. **Code Generation** (`transforms::codegen`): Generate JavaScript-like output
+//
+// The **write path** is separate (`write`): encode instructions, assemble HASM,
+// patch existing bundles, serialize full `.hbc` images. It does *not* recompile
+// decompiled JavaScript. See repository `ROADMAP.md`.
 //
 // # Example
 //
@@ -34,7 +39,7 @@
 // Decompilation recurses deeply (CFG structure recovery, closure resolution)
 // and runs across Rayon workers. Rayon's default worker stack (~2 MB) overflows
 // and aborts the process on large real-world bundles (e.g. a Metro `global`
-// function). Call this once at program start — before any decompilation — so
+// function). Call this once at program start, before any decompilation, so
 // every worker gets enough stack. It is idempotent and best-effort: if the pool
 // is already initialized it does nothing.
 pub fn configure_thread_pool() {
@@ -58,9 +63,13 @@ pub mod util;
 
 pub mod analysis;
 pub mod constants;
+pub mod frida_hooks;
 pub mod inspect;
 pub mod ir;
+pub mod secrets;
 pub mod transforms;
+/// Bytecode assemble / patch / serialize (see `ROADMAP.md`). Independent of decomp.
+pub mod write;
 
 pub use disasm::{collect_label_offsets, disassemble_all, disassemble_function, DisasmOptions};
 pub use error::{Error, Result};
@@ -96,6 +105,21 @@ pub use pipeline::{
     analyze_module, build_closure_context_from_file as build_closure_context,
     decompile_all_v2_with_closures, decompile_all_v2_with_closures_cached, decompile_filtered_v2,
     decompile_filtered_v2_cached, decompile_function_v2, decompile_function_v2_with_context,
-    default_cache_path, generate_ir, DecompileOptionsV2, Decompiler, ModuleFilter, PipelineContext,
-    CACHE_VERSION,
+    default_cache_path, generate_ir, progress_enabled, set_progress_enabled, DecompileOptionsV2,
+    Decompiler, ModuleFilter, PipelineContext, CACHE_VERSION,
+};
+
+// Write-path surface.
+pub use write::{
+    assemble_function_hasm, assemble_module, create_minimal, emit_hasm_function,
+    encode_function_body, encode_instruction, inject_stub, parse_hasm, parse_hasm_with_context,
+    patch_function_body, patch_function_bytes, patch_string_by_id, patch_string_replace,
+    serialize_file, verify_footer, CreateOptions, HasmModule, InjectStubKind, PatchOptions,
+    SerializeOptions,
+};
+
+pub use secrets::{format_secrets_report, scan_secrets, scan_secrets_with_custom, SecretHit};
+pub use frida_hooks::{
+    build_metro_registry, generate_frida_for_file, generate_frida_hooks, list_modules_summary,
+    FridaBundle, FridaHookOptions,
 };

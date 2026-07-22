@@ -55,10 +55,15 @@ impl Codegen {
                 }
             }
             Expression::Conditional { condition, then_expr, else_expr } => {
-                format!("{} ? {} : {}",
-                    self.generate_expr(condition),
-                    self.generate_expr(then_expr),
-                    self.generate_expr(else_expr)
+                // Ternary precedence is low; parenthesize nested ternaries on the
+                // consequent, and arrows/functions/assignments in either branch
+                // (`a ? (x) => x : y` is a SyntaxError without parens).
+                const TERNARY_PREC: u8 = 2;
+                format!(
+                    "{} ? {} : {}",
+                    self.generate_expr_with_parens(condition, TERNARY_PREC + 1),
+                    self.generate_expr_with_parens(then_expr, TERNARY_PREC + 1),
+                    self.generate_expr_with_parens(else_expr, TERNARY_PREC)
                 )
             }
             Expression::Member { object, property, optional } => {
@@ -135,7 +140,13 @@ impl Codegen {
                 }
 
                 let mut comment = String::new();
-                let callee_str = self.generate_expr(callee);
+                // function F(){}(args) is a SyntaxError; must be (function F(){})(args)
+                let callee_str = match callee.as_ref() {
+                    Expression::Function { .. } => {
+                        format!("({})", self.generate_expr(callee))
+                    }
+                    _ => self.generate_expr(callee),
+                };
 
                 if callee_str == "require" {
                     if let Some(map) = &self.import_map {
@@ -179,7 +190,7 @@ impl Codegen {
                         if first == "\"\"" || first == "''" || first == "``" || first == "`\\``" {
                             1 // skip empty separator
                         } else {
-                            0 // non-empty prefix — include it
+                            0 // non-empty prefix, include it
                         }
                     } else {
                         0
@@ -305,13 +316,22 @@ impl Codegen {
                 }
             }
             Expression::Assignment { target, value } => {
-                format!("{} = {}", self.generate_expr(target), self.generate_expr(value))
+                // RHS may be an arrow/function that needs parens under assignment
+                // only when nested further; bare `x = (a) => a` is fine unparenthesized
+                // in JS, but we still parenthesize lower-precedence forms for safety.
+                format!(
+                    "{} = {}",
+                    self.generate_expr(target),
+                    self.generate_expr(value)
+                )
             }
             Expression::Spread(inner) => format!("...{}", self.generate_expr(inner)),
             Expression::TemplateLiteral { quasis, expressions } => {
                 let mut out = String::from("`");
                 for (i, quasi) in quasis.iter().enumerate() {
-                    out.push_str(quasi);
+                    // Escape raw backticks / ${ / backslashes so nested template
+                    // text doesn't terminate the outer literal early.
+                    out.push_str(&escape_template_quasi(quasi));
                     if let Some(e) = expressions.get(i) {
                         out.push_str(&format!("${{{}}}", self.generate_expr(e)));
                     }
@@ -375,8 +395,19 @@ impl Codegen {
     }
 
     pub(super) fn generate_expr_with_parens(&self, expr: &crate::ir::Expression, parent_prec: u8) -> String {
+        // Precedence (higher binds tighter). Forms with no rank are atomic (Value,
+        // Member, Call, …) and never need parens as operands of binary ops.
+        //
+        // Critical case: arrow/function expressions bind *looser* than every
+        // binary operator, so `x || (a) => {…}` is a SyntaxError, must emit
+        // `x || ((a) => {…})`.
         let needs_parens = match expr {
             crate::ir::Expression::Binary { op, .. } => op.precedence() < parent_prec,
+            crate::ir::Expression::Conditional { .. } => parent_prec > 2,
+            crate::ir::Expression::Assignment { .. } => parent_prec > 1,
+            crate::ir::Expression::Yield { .. } | crate::ir::Expression::Await(_) => parent_prec > 2,
+            crate::ir::Expression::Function { .. } => parent_prec > 0,
+            crate::ir::Expression::Unary { .. } => parent_prec > 15,
             _ => false,
         };
         let s = self.generate_expr(expr);
@@ -386,4 +417,29 @@ impl Codegen {
     pub(super) fn join_exprs(&self, exprs: &[crate::ir::Expression]) -> String {
         exprs.iter().map(|e| self.generate_expr(e)).collect::<Vec<_>>().join(", ")
     }
+}
+
+// Escape a template-literal quasi so embedded `` ` `` / `${` / `\` don't break
+// the surrounding backticks.
+fn escape_template_quasi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                out.push('\\');
+                out.push('\\');
+            }
+            '`' => {
+                out.push('\\');
+                out.push('`');
+            }
+            '$' if chars.peek() == Some(&'{') => {
+                out.push('\\');
+                out.push('$');
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }

@@ -26,7 +26,7 @@ pub fn analyze(cfg: &CFG) -> (Structure, Vec<LoopInfo>) {
     // Build a map: try_block_start → exception handler info.
     //
     // A single source-level `try` can compile to several handler ranges that all
-    // target the *same* catch block — the compiler splits the protected region
+    // target the *same* catch block, the compiler splits the protected region
     // around an inner branch (e.g. the `throw` arm gets its own range). Keying
     // naively by start would then emit one nested try/catch per range. Collapse
     // them: register a single try per catch block, at its earliest start, so the
@@ -97,7 +97,7 @@ pub(super) fn recover_structure(
         // Recover the try body (catch block excluded via visited set)
         let try_body = recover_structure_inner(ctx, block_id, loop_stack);
 
-        // Now recover the catch body — temporarily un-visit the catch block
+        // Now recover the catch body, temporarily un-visit the catch block
         if !catch_was_visited {
             ctx.visited.remove(&catch_block_id);
         }
@@ -176,7 +176,10 @@ pub(super) fn recover_structure_inner(
         }
         Terminator::Jump(target) => {
             let target = *target;
-            // Check for loop continue/break
+            // Check for loop continue/break, emit real Break/Continue statements
+            // (not Comment markers). Comment("break")/Comment("continue") previously
+            // leaked into codegen as `// break` / `// continue` instead of structured
+            // control flow (Discord HBC96: 1268 such comments).
             for (i, loop_info) in loop_stack.iter().enumerate().rev() {
                 if target == loop_info.header && ctx.visited.contains(&target) {
                     let label = if i < loop_stack.len() - 1 {
@@ -185,11 +188,7 @@ pub(super) fn recover_structure_inner(
                         None
                     };
                     let mut stmts = stmts;
-                    stmts.push(Statement::Comment(if let Some(l) = label {
-                        format!("continue {l}")
-                    } else {
-                        "continue".to_string()
-                    }));
+                    stmts.push(Statement::Continue(label));
                     return Structure::Block(block_id, stmts);
                 }
                 if loop_info.exit == Some(target) {
@@ -199,11 +198,7 @@ pub(super) fn recover_structure_inner(
                         None
                     };
                     let mut stmts = stmts;
-                    stmts.push(Statement::Comment(if let Some(l) = label {
-                        format!("break {l}")
-                    } else {
-                        "break".to_string()
-                    }));
+                    stmts.push(Statement::Break(label));
                     return Structure::Block(block_id, stmts);
                 }
             }

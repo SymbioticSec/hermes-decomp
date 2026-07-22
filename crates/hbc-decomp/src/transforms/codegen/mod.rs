@@ -66,7 +66,8 @@ pub(super) fn sanitize_import_name(mod_name: &str) -> String {
                 result.push(ch);
                 capitalize_next = false;
             }
-        } else if ch == '-' || ch == '.' {
+        } else if ch == '-' || ch == '.' || ch == ' ' {
+            // Spaces appear in Metro-inferred names like "get ActivityIndicator"
             capitalize_next = true;
         }
         // Skip other non-identifier chars
@@ -361,6 +362,51 @@ mod tests {
         };
         let result = codegen.generate_assign_target(&target);
         assert_eq!(result, "obj.prop");
+    }
+
+    #[test]
+    fn arrow_after_logical_or_is_parenthesized() {
+        // `x || (arg0) => {…}` is a SyntaxError; need `x || ((arg0) => …)`.
+        use crate::ir::{FunctionId, Value};
+        let codegen = Codegen::new(CodegenOptions::new());
+        let arrow = Expression::Function {
+            id: FunctionId(99),
+            name: None,
+            is_arrow: true,
+            is_async: false,
+            is_generator: false,
+        };
+        let expr = Expression::Binary {
+            op: crate::ir::BinaryOp::LogicalOr,
+            left: Box::new(Expression::Value(Value::Variable("x".into()))),
+            right: Box::new(arrow),
+        };
+        let out = codegen.generate_expr(&expr);
+        assert!(
+            out.contains("|| ((") || out.contains("|| (() =>"),
+            "arrow RHS of || must be parenthesized, got: {out}"
+        );
+        // Must not be the bare invalid form `x || () =>`
+        assert!(
+            !out.contains("|| () =>") && !out.contains("|| (arg"),
+            "unparenthesized arrow after || is invalid JS: {out}"
+        );
+    }
+
+    #[test]
+    fn template_quasi_escapes_inner_backticks() {
+        let codegen = Codegen::new(CodegenOptions::new());
+        let expr = Expression::TemplateLiteral {
+            quasis: vec!["warn: `nested` ".into(), "".into()],
+            expressions: vec![Expression::Value(crate::ir::Value::Variable("x".into()))],
+        };
+        let out = codegen.generate_expr(&expr);
+        assert!(
+            out.contains("\\`nested\\`"),
+            "inner backticks must be escaped, got: {out}"
+        );
+        assert!(out.starts_with('`') && out.ends_with('`'), "got: {out}");
+        assert!(out.contains("${x}"), "got: {out}");
     }
 
     #[test]

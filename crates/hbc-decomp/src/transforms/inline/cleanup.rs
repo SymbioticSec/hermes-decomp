@@ -12,7 +12,7 @@ fn is_self_assign_value(name: &str, value: &Expression) -> bool {
         Expression::Value(Value::Constant(crate::ir::Constant::Null)) => name == "null",
         Expression::Value(Value::Constant(crate::ir::Constant::Undefined)) => name == "undefined",
         Expression::Value(Value::Global) => name == "globalThis",
-        // `Error = globalThis.Error` — the Babel pattern that captures a global
+        // `Error = globalThis.Error`, the Babel pattern that captures a global
         // BUILTIN into a same-named local (redundant, since bare `Error` already
         // resolves to the global). Only safe for actual builtins: for a user-local
         // like `f`, `f = globalThis.f` reads the global property into the local and

@@ -20,6 +20,7 @@ pub mod logic_patterns;
 pub mod spread_rest;
 pub mod ssa;
 pub mod ternary_returns;
+mod var_kind;
 pub mod var_naming;
 pub mod worklet_source;
 
@@ -34,7 +35,12 @@ pub use generator::{
     cleanup_generator_comments, detect_generator_patterns, has_generator_patterns,
     reconstruct_generator_v98, simplify_state_machine,
 };
-pub use inline::{cleanup_noise, fold_array_literals, fold_object_literals, inline_expressions, inline_named_variables, insert_declarations, rename_reserved_words, simplify_arguments_copy, strip_hermes_this};
+pub use inline::{
+    cleanup_noise, extra_writes_from_nested_bodies, fold_array_literals, fold_object_literals,
+    inline_expressions, inline_named_variables, insert_declarations,
+    insert_declarations_with_extra_writes, rename_reserved_words, simplify_arguments_copy,
+    strip_hermes_this,
+};
 pub use logic_simplify::simplify_logic_advanced;
 pub use name_inference::infer_names;
 pub use objects::transform_object_literals;
@@ -46,5 +52,6 @@ pub use logic_patterns::transform_logic;
 pub use spread_rest::transform_spread_rest;
 pub use ssa::transform_to_ssa;
 pub use ternary_returns::optimize_ternary_returns;
+pub use var_kind::promote_const_bindings;
 pub use var_naming::{infer_variable_names, rename_closure_variables, rename_closure_variables_cross_function, rename_closures_from_definitions};
 pub use worklet_source::collect_worklet_sources;

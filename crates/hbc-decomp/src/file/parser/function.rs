@@ -35,7 +35,7 @@ pub fn parse_function_headers(
                 let mut bytes = [0u8; 16];
                 bytes.copy_from_slice(raw);
                 let raw = u128::from_le_bytes(bytes);
-                // Legacy16 bitfield map — (bit offset, width) within the 128-bit word:
+                // Legacy16 bitfield map, (bit offset, width) within the 128-bit word:
                 //   offset                    : ( 0, 25)
                 //   param_count               : (25,  7)
                 //   bytecode_size_in_bytes    : (32, 15)
@@ -91,7 +91,7 @@ pub fn parse_function_headers(
                 bytes[..12].copy_from_slice(raw);
                 let raw = u128::from_le_bytes(bytes);
 
-                // Modern12 bitfield map — (bit offset, width) within the 96-bit word:
+                // Modern12 bitfield map, (bit offset, width) within the 96-bit word:
                 //   offset                  : ( 0, 25)
                 //   param_count             : (25,  5)
                 //   loop_depth              : (30,  2)

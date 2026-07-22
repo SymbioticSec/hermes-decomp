@@ -62,12 +62,12 @@ impl Codegen {
         let args = Self::effective_args(arguments);
         let id_arg = args.first()?;
 
-        // Case 1: require(INTEGER_CONSTANT) — direct module ID
+        // Case 1: require(INTEGER_CONSTANT), direct module ID
         if let Expression::Value(Value::Constant(Constant::Integer(id))) = id_arg {
             return self.lookup_module_name(*id as u32, true);
         }
 
-        // Case 2: arg1(dependencyMap[N]) — array index into dependency map
+        // Case 2: arg1(dependencyMap[N]), array index into dependency map
         if let Some(idx) = Self::extract_array_index(id_arg) {
             return self.lookup_module_name(idx, false);
         }
@@ -152,7 +152,7 @@ impl Codegen {
         }
 
         // Pattern 3: Assignments like Object2 = globalThis.Object (shallow check only)
-        // Only check top-level variable/value — never recurse into function bodies
+        // Only check top-level variable/value, never recurse into function bodies
         if let Expression::Value(Value::Variable(name)) = expr {
             if name == "Object2" || name == "globalThisObject" {
                 return true;
@@ -204,8 +204,7 @@ impl Codegen {
         }
 
         // Pattern 2: const X = globalThis (direct Global value). Only redundant
-        // when X is a conventional global alias (window/self/global/globalThis) —
-        // those are interchangeable with `globalThis`. For any other name, dropping
+        // when X is a conventional global alias (window/self/global/globalThis),         // those are interchangeable with `globalThis`. For any other name, dropping
         // the binding is unsafe: the variable may be reused as a plain value (e.g.
         // `print = globalThis; print = print.print`), and removing its definition
         // leaves later uses referencing `undefined`.

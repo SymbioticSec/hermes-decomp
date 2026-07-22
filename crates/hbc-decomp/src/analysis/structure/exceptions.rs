@@ -20,18 +20,31 @@ pub(super) fn recover_catch_body(
 }
 
 // Extract catch parameter from the first statement of a catch block.
-// The Catch opcode generates: `reg = __exception`
+// The Catch opcode generates: `reg = __exception` (later named as a Variable).
 fn extract_catch_param(stmts: &[Statement]) -> Option<String> {
     for stmt in stmts {
-        if let Statement::Assign { target, value } = stmt {
-            if let crate::ir::Expression::Value(Value::Variable(name)) = value {
-                if name == "__exception" {
+        match stmt {
+            Statement::Assign { target, value } => {
+                if is_exception_value(value) {
                     return Some(target.to_string());
                 }
             }
+            Statement::Let { name, value, .. } => {
+                if is_exception_value(value) {
+                    return Some(name.clone());
+                }
+            }
+            _ => {}
         }
     }
     None
+}
+
+fn is_exception_value(value: &crate::ir::Expression) -> bool {
+    matches!(
+        value,
+        crate::ir::Expression::Value(Value::Variable(name)) if name == "__exception"
+    )
 }
 
 fn strip_exception_assign(structure: Structure) -> Structure {

@@ -224,7 +224,7 @@ impl<'a> ClassAnalyzer<'a> {
 
             // Pattern: <Class>.prototype["m"] = function() {...}  OR  alias["m"] = fn
             // (HBC >=97 DefineOwnByVal). Pulled INTO the class body ONLY when the
-            // method uses `super` — which is a syntax error outside a class method.
+            // method uses `super`, which is a syntax error outside a class method.
             // Other methods stay as external `prototype["m"] = fn` assignments
             // (already valid JS) so existing output is not disturbed.
             Statement::Assign { target: AssignTarget::Index { object, key }, value }
@@ -289,7 +289,7 @@ impl<'a> ClassAnalyzer<'a> {
                 }
             }
 
-            // Pattern: __hermes_class_extends__(Class, Super) — the synthetic marker
+            // Pattern: __hermes_class_extends__(Class, Super), the synthetic marker
             // emitted by CreateDerivedClass desugaring (HBC >=97 `class B extends A`).
             Statement::Expr(Expression::Call { callee, arguments })
                 if matches!(callee.as_ref(), Expression::Value(Value::Variable(n)) if n == crate::ir::EXTENDS_MARKER) =>

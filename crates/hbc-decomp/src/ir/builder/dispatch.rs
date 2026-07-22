@@ -1,8 +1,9 @@
 use super::opcodes_arith::*;
 use super::opcodes_call::*;
+use super::env_state::EnvRegMap;
 use super::opcodes_environment::{
-    handle_create_environment, handle_get_environment, handle_load_from_environment,
-    handle_store_np_to_environment, handle_store_to_environment,
+    handle_create_environment, handle_get_closure_environment, handle_get_environment,
+    handle_load_from_environment, handle_store_np_to_environment, handle_store_to_environment,
 };
 use super::opcodes_flow::{
     handle_catch, handle_debugger, handle_get_next_pname, handle_jmp, handle_jmp_builtin_is,
@@ -27,6 +28,7 @@ pub fn dispatch_instruction(
     resolve_strings: bool,
     func_bytecode_offset: u32,
     frame_size: u32,
+    env_map: &mut EnvRegMap,
 ) -> FlowResult {
     let def = match format.definitions.get(inst.opcode as usize) {
         Some(d) => d,
@@ -35,8 +37,12 @@ pub fn dispatch_instruction(
 
     let name = def.name.as_str();
 
+    // Environment first so Create/Get update env_map before any later use.
+    if let Some(result) = try_env_handlers(name, inst, env_map) {
+        return result;
+    }
     // Try each handler category
-    if let Some(result) = try_load_handlers(name, inst, file, resolve_strings) {
+    if let Some(result) = try_load_handlers(name, inst, file, resolve_strings, env_map) {
         return result;
     }
     if let Some(result) = try_arith_handlers(name, inst) {
@@ -61,12 +67,50 @@ pub fn dispatch_instruction(
     )))
 }
 
+fn try_env_handlers(
+    name: &str,
+    inst: &Instruction,
+    env_map: &mut EnvRegMap,
+) -> Option<FlowResult> {
+    match name {
+        "CreateEnvironment"
+        | "CreateFunctionEnvironment"
+        | "CreateTopLevelEnvironment"
+        | "CreateInnerEnvironment" => handle_create_environment(inst, env_map),
+        "GetEnvironment" | "GetParentEnvironment" => handle_get_environment(inst, env_map),
+        "GetClosureEnvironment" => handle_get_closure_environment(inst, env_map),
+        "LoadFromEnvironment" | "LoadFromEnvironmentL" => {
+            handle_load_from_environment(inst, env_map)
+        }
+        "StoreToEnvironment" | "StoreToEnvironmentL" => {
+            handle_store_to_environment(inst, env_map)
+        }
+        "StoreNPToEnvironment" | "StoreNPToEnvironmentL" => {
+            handle_store_np_to_environment(inst, env_map)
+        }
+        // Legacy aliases treated as GetEnvironment.
+        "LoadParentNoTraps" | "TypedLoadParent" => handle_get_environment(inst, env_map),
+        _ => None,
+    }
+}
+
 fn try_load_handlers(
     name: &str,
     inst: &Instruction,
     file: &BytecodeFile,
     resolve_strings: bool,
+    env_map: &mut EnvRegMap,
 ) -> Option<FlowResult> {
+    // Propagate env-level on register copies so Load/Store after Mov still resolve.
+    if matches!(name, "Mov" | "MovLong") {
+        if let (Some(dst), Some(src)) = (
+            super::opcodes_load::get_reg(&inst.operands, 0),
+            super::opcodes_load::get_reg(&inst.operands, 1),
+        ) {
+            env_map.copy_reg(dst, src);
+        }
+    }
+
     match name {
         "LoadConstUndefined"
         | "LoadConstNull"
@@ -338,18 +382,7 @@ fn try_flow_handlers(
         }
         "Ret" => handle_ret(inst),
         "Throw" | "ThrowIfEmpty" => handle_throw(inst),
-        "CreateEnvironment" | "CreateFunctionEnvironment" | "CreateTopLevelEnvironment" => {
-            handle_create_environment(inst)
-        }
-        "GetEnvironment" | "GetParentEnvironment" | "GetClosureEnvironment" => {
-            handle_get_environment(inst)
-        }
-        "LoadFromEnvironment" | "LoadFromEnvironmentL" => handle_load_from_environment(inst),
-        "StoreToEnvironment" | "StoreToEnvironmentL" => handle_store_to_environment(inst),
-        "StoreNPToEnvironment" | "StoreNPToEnvironmentL" => {
-            handle_store_np_to_environment(inst)
-        }
-        "LoadParentNoTraps" | "TypedLoadParent" => handle_get_environment(inst),
+        // Environment opcodes handled in try_env_handlers (need EnvRegMap).
         "SelectObject" => handle_select_object(inst),
         "Debugger" | "AsyncBreakCheck" => handle_debugger(),
         "Catch" => handle_catch(inst),

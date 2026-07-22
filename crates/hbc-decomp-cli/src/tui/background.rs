@@ -67,7 +67,9 @@ impl App {
             match rx.try_recv() {
                 Ok(ctx) => {
                     debug_log("[TUI] Pipeline context (file 1) received");
-                    self.pipeline_ctx = Some(Arc::new(ctx));
+                    let arc = Arc::new(ctx);
+                    self.modules.rebuild_from(&arc);
+                    self.pipeline_ctx = Some(arc);
                     self.pipeline_building = false;
                     self.pipeline_rx = None;
                     self.decompile_cache.clear();

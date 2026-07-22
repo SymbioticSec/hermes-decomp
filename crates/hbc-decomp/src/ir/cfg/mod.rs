@@ -127,7 +127,7 @@ impl CFG {
         // successor, so they (and their subgraphs) are unreachable from `entry`.
         // Seed the traversal from each catch block too, otherwise passes that walk
         // the reverse-postorder (e.g. SSA live-range splitting) skip catch bodies
-        // entirely — leaving registers reused inside `catch` un-split.
+        // entirely, leaving registers reused inside `catch` un-split.
         for handler in &self.exception_handlers {
             self.postorder_visit(handler.catch_block, &mut visited, &mut result);
         }

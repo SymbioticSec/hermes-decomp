@@ -123,9 +123,9 @@ pub(super) fn recover_loop(
                 // the header does NOT decide the loop exit: it is a conditional
                 // *within* the loop body (the exit test lives at a back-edge
                 // block). Structure the header's diamond the same way
-                // `recover_structure` does — recover each arm only up to the
+                // `recover_structure` does, recover each arm only up to the
                 // merge (post-dominator), emit the merge AFTER the `if`, so it
-                // isn't absorbed into one arm — then wrap the whole body in a
+                // isn't absorbed into one arm, then wrap the whole body in a
                 // loop so the exit `break` emitted deeper down is valid.
                 let header_block = Structure::Block(loop_info.header, header_stmts);
                 let body = if let Some(merge) = super::recovery::find_merge_point(

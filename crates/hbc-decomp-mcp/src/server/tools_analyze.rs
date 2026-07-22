@@ -1,220 +1,18 @@
-use rmcp::ErrorData as McpError;
-use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo},
-    schemars, tool, tool_handler, tool_router, ServerHandler,
-};
-use serde::Deserialize;
-use std::sync::Mutex;
+// Read and analysis MCP tools (decompile, disasm, xref, modules, dump, ...).
+
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, ContentBlock};
+use rmcp::{tool, tool_router, ErrorData as McpError};
 
 use hbc_decomp::opcode::BytecodeFormat;
 use hbc_decomp::{
     BytecodeFile, ClosureInfo, DecompileOptionsV2, DebugInfo, IRBuilder, IRBuilderOptions,
-    PipelineContext,
 };
 
-struct LoadedFile {
-    file: BytecodeFile,
-    format: BytecodeFormat,
-    path: String,
-    bytes: Vec<u8>,
-    pipeline_ctx: Option<PipelineContext>,
-}
+use super::params::*;
+use super::{HermesService, LoadedFile};
 
-pub struct HermesService {
-    loaded: Mutex<Option<LoadedFile>>,
-    tool_router: ToolRouter<Self>,
-}
-
-impl HermesService {
-    pub fn new() -> Self {
-        Self {
-            loaded: Mutex::new(None),
-            tool_router: Self::tool_router(),
-        }
-    }
-
-    fn with_file<F, T>(&self, f: F) -> Result<T, McpError>
-    where
-        F: FnOnce(&LoadedFile) -> Result<T, McpError>,
-    {
-        let guard = self
-            .loaded
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("lock: {e}"), None))?;
-        let loaded = guard.as_ref().ok_or_else(|| {
-            McpError::invalid_params("No file loaded. Use load_file first.", None)
-        })?;
-        f(loaded)
-    }
-
-    fn with_file_mut<F, T>(&self, f: F) -> Result<T, McpError>
-    where
-        F: FnOnce(&mut LoadedFile) -> Result<T, McpError>,
-    {
-        let mut guard = self
-            .loaded
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("lock: {e}"), None))?;
-        let loaded = guard.as_mut().ok_or_else(|| {
-            McpError::invalid_params("No file loaded. Use load_file first.", None)
-        })?;
-        f(loaded)
-    }
-}
-
-impl LoadedFile {
-    fn ensure_pipeline(&mut self) -> Result<(), McpError> {
-        if self.pipeline_ctx.is_none() {
-            // Reuse an on-disk analysis cache (`<file>.hdcache`) keyed by the
-            // bytecode, so repeated sessions on the same file don't re-analyze.
-            let cache_path = hbc_decomp::default_cache_path(std::path::Path::new(&self.path));
-            let ctx = PipelineContext::build_cached(
-                &self.file,
-                &self.format,
-                &DecompileOptionsV2::optimized(),
-                &self.bytes,
-                &cache_path,
-            )
-            .map_err(|e| McpError::internal_error(format!("Pipeline build error: {e}"), None))?;
-            self.pipeline_ctx = Some(ctx);
-        }
-        Ok(())
-    }
-}
-
-// --- Parameter types ---
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct LoadFileParams {
-    #[schemars(description = "Absolute path to the .hbc file")]
-    pub path: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct FunctionIdParams {
-    #[schemars(description = "Function ID (0-based index)")]
-    pub function_id: u32,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct DecompileFunctionParams {
-    #[schemars(description = "Function ID (0-based index)")]
-    pub function_id: u32,
-    #[schemars(description = "Include bytecode offsets as comments")]
-    #[serde(default)]
-    pub show_offsets: bool,
-    #[schemars(description = "Assembly mode: emit absolute file offsets (Binary Ninja style)")]
-    #[serde(default)]
-    pub assembly: bool,
-    #[schemars(description = "Apply constant/copy propagation (default: true)")]
-    #[serde(default = "default_true")]
-    pub propagate: bool,
-    #[schemars(description = "Apply expression simplification (default: true)")]
-    #[serde(default = "default_true")]
-    pub simplify: bool,
-    #[schemars(description = "Recover control flow structures: if/while/for (default: true)")]
-    #[serde(default = "default_true")]
-    pub recover_structures: bool,
-    #[schemars(description = "Use closure context for cross-function variable resolution")]
-    #[serde(default)]
-    pub resolve_closures: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct XrefParams {
-    #[schemars(description = "String to search for in the bytecode")]
-    pub query: String,
-    #[schemars(description = "Type of query: 'string' or 'function' (default: 'string')")]
-    #[serde(default = "default_string")]
-    pub kind: String,
-}
-
-fn default_string() -> String {
-    "string".to_string()
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ModuleDepsParams {
-    #[schemars(description = "Metro module ID")]
-    pub module_id: u32,
-    #[schemars(description = "Dependency tree depth (default: 2)")]
-    #[serde(default = "default_depth")]
-    pub depth: usize,
-}
-
-fn default_depth() -> usize {
-    2
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ListModulesParams {
-    #[schemars(description = "Maximum number of modules to return")]
-    pub limit: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct DumpParams {
-    #[schemars(description = "What to dump: 'strings', 'functions', 'identifiers', or 'all'")]
-    #[serde(default = "default_strings")]
-    pub kind: String,
-}
-
-fn default_strings() -> String {
-    "strings".to_string()
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct DisasmParams {
-    #[schemars(description = "Function ID (0-based index)")]
-    pub function_id: u32,
-    #[schemars(description = "Show bytecode offsets")]
-    #[serde(default)]
-    pub show_offsets: bool,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct DumpTableParams {
-    #[schemars(
-        description = "Table to dump: cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer"
-    )]
-    pub kind: String,
-    #[schemars(description = "Return the table as JSON instead of text (default: false)")]
-    #[serde(default)]
-    pub json: bool,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct CallgraphParams {
-    #[schemars(description = "Restrict to the subgraph reachable from this function ID")]
-    pub function_id: Option<u32>,
-    #[schemars(description = "Max hops from function_id (default: 3)")]
-    #[serde(default = "default_depth")]
-    pub depth: usize,
-    #[schemars(description = "Emit Graphviz DOT instead of a text edge listing (default: false)")]
-    #[serde(default)]
-    pub dot: bool,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct DecompileModuleParams {
-    #[schemars(description = "Metro module ID")]
-    pub module_id: u32,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ModuleExportsParams {
-    #[schemars(description = "Metro module ID")]
-    pub module_id: u32,
-}
-
-// --- Tool implementations ---
-
-#[tool_router(router = tool_router)]
+#[tool_router(router = analyze_router, vis = "pub(crate)")]
 impl HermesService {
     #[tool(
         description = "Load a Hermes bytecode (.hbc) file for analysis. Must be called before any other tool."
@@ -265,7 +63,7 @@ impl HermesService {
     }
 
     #[tool(
-        description = "Decompile a function to JavaScript (light mode: fast, single-function). For full quality with IPA naming, closures and ESM, use decompile_function_full."
+        description = "Decompile a function to JavaScript in light mode, fast and for one function. For full quality with IPA naming, closures and ESM, use decompile_function_full."
     )]
     fn decompile_function(
         &self,
@@ -381,7 +179,7 @@ impl HermesService {
         })
     }
 
-    #[tool(description = "Search for cross-references to a string or function ID in the bytecode.")]
+    #[tool(description = "Search for cross references to a string or function ID in the bytecode.")]
     fn xref_search(
         &self,
         Parameters(params): Parameters<XrefParams>,
@@ -538,7 +336,7 @@ impl HermesService {
         })
     }
 
-    #[tool(description = "List supported Hermes bytecode versions (HBC 40-99).")]
+    #[tool(description = "List supported Hermes bytecode versions (HBC 40 to 99).")]
     fn list_versions(&self) -> Result<CallToolResult, McpError> {
         let versions = hbc_decomp::opcode::available_versions();
         let list = versions
@@ -595,6 +393,7 @@ impl HermesService {
                         format!("Function(id={id}{name_str})")
                     }
                     hbc_decomp::ClosureSlotValue::Constant(s) => format!("Constant(\"{s}\")"),
+                    hbc_decomp::ClosureSlotValue::RegExp => "RegExp".to_string(),
                     hbc_decomp::ClosureSlotValue::Variable(s) => format!("Variable(\"{s}\")"),
                     hbc_decomp::ClosureSlotValue::Unknown => "Unknown".to_string(),
                 };
@@ -831,7 +630,7 @@ impl HermesService {
     }
 
     #[tool(
-        description = "Dump a structural table from the HBC file: cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer. Set json=true for machine-readable output."
+        description = "Dump a structural table from the HBC file. Table kinds are cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer. Set json=true for machine readable output."
     )]
     fn dump_table(
         &self,
@@ -859,7 +658,7 @@ impl HermesService {
     }
 
     #[tool(
-        description = "Build the bundle call graph (caller -> callee edges). Optionally restrict to the subgraph reachable from a function up to a depth, or emit Graphviz DOT."
+        description = "Build the bundle call graph as caller to callee edges. Optionally restrict to the subgraph reachable from a function up to a depth, or emit Graphviz DOT."
     )]
     fn callgraph(
         &self,
@@ -879,7 +678,7 @@ impl HermesService {
     }
 
     #[tool(
-        description = "Get a one-line metadata banner for a function: id, name, param count, frame size, register counts, bytecode size, offset, flags, exception-handler count."
+        description = "Get a one line metadata banner for a function. It reports id, name, param count, frame size, register counts, bytecode size, offset, flags and exception handler count."
     )]
     fn function_info(
         &self,
@@ -895,19 +694,5 @@ impl HermesService {
                 })?;
             Ok(CallToolResult::success(vec![ContentBlock::text(banner)]))
         })
-    }
-}
-
-#[tool_handler(router = self.tool_router)]
-impl ServerHandler for HermesService {
-    fn get_info(&self) -> ServerInfo {
-        // ServerInfo (InitializeResult) is #[non_exhaustive] in rmcp 2, so it
-        // cannot be built with a struct literal; set fields on a default value.
-        let mut info = ServerInfo::default();
-        info.instructions = Some(
-            "Hermes bytecode decompiler for React Native apps (HBC 40-99). Load a .hbc file with load_file, then use decompile/disassemble/xref/module tools to analyze. Use decompile_function for quick single-function output, or decompile_function_full/decompile_module for full-quality analysis with IPA naming and ESM imports/exports. Structural inspection: dump_table (cjs-modules, regexp, obj-shapes, function-sources, string-kinds, sections, big-int, array-buffer), callgraph (caller->callee edges, optional DOT), and function_info (per-function metadata banner).".into()
-        );
-        info.capabilities = ServerCapabilities::builder().enable_tools().build();
-        info
     }
 }

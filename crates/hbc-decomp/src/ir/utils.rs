@@ -268,7 +268,7 @@ pub fn property_keys_equal(a: &PropertyKey, b: &PropertyKey) -> bool {
 }
 
 // Check if a statement has side effects.
-// Canonical implementation — uses `Expression::has_side_effects()` for expression-level checks.
+// Canonical implementation, uses `Expression::has_side_effects()` for expression-level checks.
 pub fn stmt_has_side_effects(stmt: &Statement) -> bool {
     match stmt {
         Statement::Assign { value, .. } => value.has_side_effects(),

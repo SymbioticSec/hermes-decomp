@@ -83,8 +83,8 @@ fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
 
 // Try to match the iterator sequence at the start of `stmts`. Returns the number
 // of leading statements consumed and the statements to emit in their place
-// (any non-iterator statements that were interleaved — e.g. an `undefined` load
-// the trailing `return` still needs — are preserved, followed by the ForOf).
+// (any non-iterator statements that were interleaved, e.g. an `undefined` load
+// the trailing `return` still needs, are preserved, followed by the ForOf).
 fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
     // [0] iter = src[Symbol.iterator]()
     let (iter_reg, source) = match &stmts[0] {
@@ -95,7 +95,7 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
     };
 
     // Scan the iterator plumbing between IteratorBegin and the loop, in any order:
-    //   val = iter.next()         (the per-iteration value — capture it)
+    //   val = iter.next()         (the per-iteration value, capture it)
     //   copy = iter               (alias of the iterator/index register)
     //   x = undefined             (the done sentinel)
     // Stop at the `while` (the iterator loop).
@@ -122,7 +122,7 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
                 iter_aliases.push(*dst);
                 idx += 1;
             }
-            // x = undefined (the sentinel constant) — keep it, it may be read later.
+            // x = undefined (the sentinel constant), keep it, it may be read later.
             Statement::Assign {
                 target: AssignTarget::Register(_),
                 value: Expression::Value(Value::Constant(crate::ir::Constant::Undefined)),
@@ -132,7 +132,7 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
             }
             // An unrelated register copy in the plumbing. HBC ≥98 copies the
             // source into the index slot (`Mov idx, src`) BEFORE `IteratorNext`,
-            // which isn't an iterator alias — keep it and keep scanning so the
+            // which isn't an iterator alias, keep it and keep scanning so the
             // following `val = iter.next()` is still recognised.
             Statement::Assign {
                 target: AssignTarget::Register(_),
@@ -205,7 +205,7 @@ fn is_next_call(expr: &Expression, iter_reg: u32) -> bool {
     false
 }
 
-// `<iter-alias> !== <undefined>` — the iterator done-check. The right side may be
+// `<iter-alias> !== <undefined>`, the iterator done-check. The right side may be
 // a literal `undefined` or a register holding it; the iter side is one of the
 // tracked aliases. We only require a `!==` touching an iterator alias, since the
 // preceding `iter.next()` already established this is an iterator loop.

@@ -1,4 +1,4 @@
-// Definition-site closure naming — infers names from what value is assigned to closure_N.
+// Definition-site closure naming, infers names from what value is assigned to closure_N.
 
 use super::closure_usage::{ident_from_property, is_closure_name};
 use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Value};

@@ -29,7 +29,7 @@ impl Codegen {
                 // `else { if (...) { ... } }` -> `else if (...) { ... }`
                 let inner = self.generate_if(else_cond, else_then, else_else);
                 if inner.is_empty() {
-                    // Inner if was completely empty — just close the outer block
+                    // Inner if was completely empty, just close the outer block
                     out.push_str(&format!("{indent}}}\n"));
                 } else {
                     out.push_str(&format!("{indent}}} else "));

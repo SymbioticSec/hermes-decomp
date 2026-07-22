@@ -29,7 +29,7 @@ impl PipelineContext {
     }
 
     // The recovered worklet source for `func_id`, looked up by the function's
-    // bytecode name (the join key — both the name and the source come from the
+    // bytecode name (the join key, both the name and the source come from the
     // binary). Returns the source already shaped as a function expression.
     pub(super) fn worklet_source_for(&self, file: &BytecodeFile, func_id: u32) -> Option<String> {
         if self.worklet_sources.is_empty() {
@@ -53,18 +53,26 @@ impl PipelineContext {
             }
             let params: Vec<String> = if let Some(names) = self.global_analysis.param_names.get(&func_id) {
                 names.iter().enumerate()
-                    .map(|(idx, n)| n.clone().unwrap_or_else(|| format!("arg{idx}")))
+                    .map(|(idx, n)| {
+                        let raw = n.clone().unwrap_or_else(|| format!("arg{idx}"));
+                        crate::util::sanitize_identifier(&raw)
+                    })
                     .collect()
             } else {
                 get_function_params(file, func_id)
+                    .into_iter()
+                    .map(|p| crate::util::sanitize_identifier(&p))
+                    .collect()
             };
 
             let mut body_stmts = stmts.clone();
             if let Some(param_names) = self.global_analysis.param_names.get(&func_id) {
                 transforms::exports::rename_param_registers(&mut body_stmts, param_names);
-            }            body_stmts = transforms::cleanup_noise(body_stmts);
+            }
+            body_stmts = transforms::cleanup_noise(body_stmts);
             transforms::rename_reserved_words(&mut body_stmts);
-            transforms::insert_declarations(&mut body_stmts, &params);
+            let extra = self.extra_writes_for_function(func_id);
+            transforms::insert_declarations_with_extra_writes(&mut body_stmts, &params, &extra);
 
             prepared.insert(func_id, (params, body_stmts));
         }
