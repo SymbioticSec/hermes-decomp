@@ -144,7 +144,9 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.open_xref();
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            if app.view == ViewMode::Modules {
+            if app.view == ViewMode::Cfg {
+                app.cfg_move_block(-1);
+            } else if app.view == ViewMode::Modules {
                 app.modules.move_sel(-1, 20);
                 app.scroll = 0;
             } else if app.selected > 0 {
@@ -152,12 +154,17 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if app.view == ViewMode::Modules {
+            if app.view == ViewMode::Cfg {
+                app.cfg_move_block(1);
+            } else if app.view == ViewMode::Modules {
                 app.modules.move_sel(1, 20);
                 app.scroll = 0;
             } else if app.selected + 1 < app.function_names.len() {
                 app.set_selected(app.selected + 1);
             }
+        }
+        KeyCode::Enter if app.view == ViewMode::Cfg => {
+            app.set_view(ViewMode::Disasm);
         }
         KeyCode::PageUp => {
             app.scroll = app.scroll.saturating_sub(20);
@@ -171,6 +178,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('1') => app.set_view(ViewMode::Disasm),
         KeyCode::Char('2') => app.set_view(ViewMode::Decompile),
         KeyCode::Char('3') => app.set_view(ViewMode::Info),
+        KeyCode::Char('5') => app.set_view(ViewMode::Cfg),
         KeyCode::Char('4') => {
             if has_diff {
                 app.set_view(ViewMode::Diff)

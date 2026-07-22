@@ -30,21 +30,27 @@ pub fn handle_resume_generator(inst: &crate::Instruction) -> Option<FlowResult> 
 }
 
 // Handle CreateGenerator opcode.
-// CreateGenerator dst, env, funcIdx, creates a generator object wrapping the inner function.
+// CreateGenerator dst, env, funcIdx, creates a *generator object* (with `.next`)
+// from the inner function, not a generator *function*. In JS terms that is
+// `(function* () { ... })()`, invoke immediately so callers get an iterator.
 pub fn handle_create_generator(inst: &crate::Instruction) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
     // Third operand is the function index of the inner generator body
     let func_idx = inst.operands.get(2).and_then(|o| o.value.as_u32());
     if let Some(func_idx) = func_idx {
-        // Emit as a Function expression so the closure context can track the parent-child relationship
+        let gen_fn = Expression::Function {
+            id: crate::ir::FunctionId(func_idx),
+            name: None,
+            is_arrow: false,
+            is_async: false,
+            is_generator: true,
+        };
         Some(FlowResult::Statement(Statement::Assign {
             target: crate::ir::AssignTarget::Register(dst),
-            value: Expression::Function {
-                id: crate::ir::FunctionId(func_idx),
-                name: None,
-                is_arrow: false,
-                is_async: false,
-                is_generator: true,
+            // Instantiated generator object, not the bare function*.
+            value: Expression::Call {
+                callee: Box::new(gen_fn),
+                arguments: vec![],
             },
         }))
     } else {

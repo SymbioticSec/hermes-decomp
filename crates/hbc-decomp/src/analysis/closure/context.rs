@@ -290,26 +290,14 @@ impl ClosureContext {
     ) {
         match stmt {
             Statement::Assign { target, value } => {
+                self.track_nested_functions(parent_fn, value);
+
                 if let Expression::Function {
                     id,
                     name,
-                    is_async,
-                    is_generator,
                     ..
                 } = value
                 {
-                    self.add_child(parent_fn, id.0);
-                    if let Some(n) = name {
-                        self.add_function_name(id.0, n.clone());
-                    }
-
-                    if *is_async {
-                        self.mark_async(id.0);
-                    }
-                    if *is_generator {
-                        self.mark_generator(id.0);
-                    }
-
                     if let AssignTarget::Register(r) = target {
                         reg_values.insert(
                             *r,
@@ -334,6 +322,18 @@ impl ClosureContext {
                         }
                     }
                 }
+            }
+            Statement::Let { value, name, .. } => {
+                self.track_nested_functions(parent_fn, value);
+                if let Expression::Function { id, name: fn_name, .. } = value {
+                    // Prefer the binding name when the function expression is anonymous.
+                    if fn_name.is_none() {
+                        self.add_function_name(id.0, name.clone());
+                    }
+                }
+            }
+            Statement::Return(Some(value)) | Statement::Expr(value) | Statement::Throw(value) => {
+                self.track_nested_functions(parent_fn, value);
             }
             Statement::If {
                 then_body,
@@ -372,6 +372,82 @@ impl ClosureContext {
                 for s in finally_body {
                     self.analyze_stmt_context(parent_fn, s, info, reg_values);
                 }
+            }
+            _ => {}
+        }
+    }
+
+    // Track Function expressions nested in values: bare `function*`, or
+    // CreateGenerator's `(function*(){})()` call form.
+    fn track_nested_functions(&mut self, parent_fn: u32, expr: &Expression) {
+        match expr {
+            Expression::Function {
+                id,
+                name,
+                is_async,
+                is_generator,
+                ..
+            } => {
+                self.add_child(parent_fn, id.0);
+                if let Some(n) = name {
+                    self.add_function_name(id.0, n.clone());
+                }
+                if *is_async {
+                    self.mark_async(id.0);
+                }
+                if *is_generator {
+                    self.mark_generator(id.0);
+                }
+            }
+            Expression::Call { callee, arguments } => {
+                self.track_nested_functions(parent_fn, callee);
+                for arg in arguments {
+                    self.track_nested_functions(parent_fn, arg);
+                }
+            }
+            Expression::Member { object, .. } => {
+                self.track_nested_functions(parent_fn, object);
+            }
+            Expression::New { callee, arguments } => {
+                self.track_nested_functions(parent_fn, callee);
+                for arg in arguments {
+                    self.track_nested_functions(parent_fn, arg);
+                }
+            }
+            Expression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                self.track_nested_functions(parent_fn, condition);
+                self.track_nested_functions(parent_fn, then_expr);
+                self.track_nested_functions(parent_fn, else_expr);
+            }
+            Expression::Assignment { target, value } => {
+                self.track_nested_functions(parent_fn, target);
+                self.track_nested_functions(parent_fn, value);
+            }
+            Expression::Array { elements } => {
+                for e in elements.iter().flatten() {
+                    self.track_nested_functions(parent_fn, e);
+                }
+            }
+            Expression::Object { properties } => {
+                for p in properties {
+                    self.track_nested_functions(parent_fn, &p.value);
+                }
+            }
+            Expression::Unary { operand, .. }
+            | Expression::Spread(operand)
+            | Expression::Await(operand) => {
+                self.track_nested_functions(parent_fn, operand);
+            }
+            Expression::Binary { left, right, .. } => {
+                self.track_nested_functions(parent_fn, left);
+                self.track_nested_functions(parent_fn, right);
+            }
+            Expression::Yield { value, .. } => {
+                self.track_nested_functions(parent_fn, value);
             }
             _ => {}
         }

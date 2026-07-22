@@ -41,6 +41,7 @@ impl App {
                 }
                 (self.disasm_content(), None)
             }
+            ViewMode::Cfg => (Text::raw(self.cfg_content()), None),
             ViewMode::Decompile => {
                 if only_in_file2 {
                     let id2 = self.selected_function_id2().unwrap();

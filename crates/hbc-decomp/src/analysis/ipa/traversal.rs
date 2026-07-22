@@ -6,12 +6,19 @@ use crate::ir::{target_to_key, Expression, PropertyKey, Statement, Value};
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) enum Definition {
     Function(u32),
     Parameter(u32),
     Module(u32),
     RequireAlias,
+    // The register or variable holds the global object (`globalThis`, from
+    // GetGlobalObject). Used to recognise `r1 = globalThis.foo` below.
+    Global,
+    // The register or variable holds a property read off the global object, e.g.
+    // `r1 = globalThis.mid`. The string is the property name, later resolved to a
+    // function id through the name index so an indirect `r1(...)` call still links.
+    GlobalMember(String),
 }
 
 pub struct CollectContext<'a> {
@@ -95,20 +102,34 @@ fn collect_value_definition(key: &str, value: &Expression, defs: &mut HashMap<St
         defs.insert(key.to_string(), Definition::Module(mod_id));
     } else if let Expression::Value(Value::Parameter(idx)) = value {
         defs.insert(key.to_string(), Definition::Parameter(*idx));
+    } else if let Expression::Value(Value::Global) = value {
+        defs.insert(key.to_string(), Definition::Global);
     } else if let Expression::Member {
         object, property, ..
     } = value
     {
+        let prop_name = match property {
+            PropertyKey::String(p) | PropertyKey::Ident(p) => Some(p.as_str()),
+            _ => None,
+        };
         // Check for var x = y.default where y is a module
         if let Some(base) = get_base_name(object) {
             if let Some(Definition::Module(mod_id)) = defs.get(&base) {
-                let prop_name = match property {
-                    PropertyKey::String(p) | PropertyKey::Ident(p) => Some(p.as_str()),
-                    _ => None,
-                };
                 if prop_name == Some("default") {
                     defs.insert(key.to_string(), Definition::Module(*mod_id));
                 }
+            }
+        }
+        // Track `x = globalThis.foo` so an indirect `x(...)` call resolves through
+        // the function name index. The base is global either directly (Value::Global)
+        // or through a register that earlier held GetGlobalObject.
+        let base_is_global = matches!(object.as_ref(), Expression::Value(Value::Global))
+            || get_base_name(object)
+                .and_then(|b| defs.get(&b).cloned())
+                .is_some_and(|d| matches!(d, Definition::Global));
+        if base_is_global {
+            if let Some(prop) = prop_name {
+                defs.insert(key.to_string(), Definition::GlobalMember(prop.to_string()));
             }
         }
         // Also track if base is a parameter: x = arg0.value -> x comes from arg0

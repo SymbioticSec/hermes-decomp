@@ -68,9 +68,11 @@ impl PipelineContext {
             let mut body_stmts = stmts.clone();
             if let Some(param_names) = self.global_analysis.param_names.get(&func_id) {
                 transforms::exports::rename_param_registers(&mut body_stmts, param_names);
-            }            body_stmts = transforms::cleanup_noise(body_stmts);
+            }
+            body_stmts = transforms::cleanup_noise(body_stmts);
             transforms::rename_reserved_words(&mut body_stmts);
-            transforms::insert_declarations(&mut body_stmts, &params);
+            let extra = self.extra_writes_for_function(func_id);
+            transforms::insert_declarations_with_extra_writes(&mut body_stmts, &params, &extra);
 
             prepared.insert(func_id, (params, body_stmts));
         }

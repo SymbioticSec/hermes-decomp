@@ -43,6 +43,8 @@ pub enum ViewMode {
     Diff,
     /// Metro module browser (list + decompile factory as ESM module).
     Modules,
+    /// Interactive control-flow graph for the selected function.
+    Cfg,
 }
 
 use super::diff::{spawn_diff_status_worker, DiffMode, DiffProgressMsg, DiffStatus};
@@ -53,7 +55,8 @@ impl ViewMode {
             ViewMode::Disasm => ViewMode::Decompile,
             ViewMode::Decompile => ViewMode::Info,
             ViewMode::Info => ViewMode::Modules,
-            ViewMode::Modules => {
+            ViewMode::Modules => ViewMode::Cfg,
+            ViewMode::Cfg => {
                 if has_diff {
                     ViewMode::Diff
                 } else {
@@ -71,6 +74,7 @@ impl ViewMode {
             ViewMode::Info => "Info",
             ViewMode::Diff => "BinDiff (Split View)",
             ViewMode::Modules => "Modules",
+            ViewMode::Cfg => "CFG",
         }
     }
 }
@@ -190,6 +194,11 @@ pub struct App {
 
     // Metro module browser (ViewMode::Modules)
     pub modules: super::modules::ModulesState,
+
+    // CFG view: selected basic-block index within the current function's CFG.
+    pub cfg_block_idx: usize,
+    // Cache: function id → rendered CFG text lines (block list).
+    pub cfg_cache: HashMap<u32, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -335,6 +344,8 @@ impl App {
             xref_selected: 0,
             xref_scroll: 0,
             modules: super::modules::ModulesState::default(),
+            cfg_block_idx: 0,
+            cfg_cache: HashMap::new(),
         };
 
         let map1_start = Instant::now();
@@ -583,8 +594,69 @@ impl App {
             self.selected = index;
             self.list_state.select(Some(index));
             self.scroll = 0;
+            self.cfg_block_idx = 0;
             self.clear_selection();
         }
+    }
+
+    /// Textual CFG for the selected function (block list + edges + focus).
+    pub fn cfg_content(&mut self) -> String {
+        let Some(id) = self.selected_function_id() else {
+            return "No function selected.".into();
+        };
+        if !self.cfg_cache.contains_key(&id) {
+            let rendered = render_cfg_text(&self.file, &self.format, id);
+            self.cfg_cache.insert(id, rendered);
+        }
+        let base = self.cfg_cache.get(&id).cloned().unwrap_or_default();
+        // Annotate selected block
+        let mut lines: Vec<String> = base.lines().map(|s| s.to_string()).collect();
+        let block_lines: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.starts_with("B") && l.contains(':'))
+            .map(|(i, _)| i)
+            .collect();
+        if let Some(&line_idx) = block_lines.get(self.cfg_block_idx) {
+            if let Some(line) = lines.get_mut(line_idx) {
+                *line = format!("▶ {line}");
+            }
+        }
+        let mut out = String::new();
+        out.push_str(&format!(
+            "CFG function {id}, blocks: {}  selected: {}  (j/k blocks, Enter → Disasm)\n\n",
+            block_lines.len(),
+            self.cfg_block_idx
+        ));
+        out.push_str(&lines.join("\n"));
+        out
+    }
+
+    pub fn cfg_block_count(&mut self) -> usize {
+        let Some(id) = self.selected_function_id() else {
+            return 0;
+        };
+        if !self.cfg_cache.contains_key(&id) {
+            let rendered = render_cfg_text(&self.file, &self.format, id);
+            self.cfg_cache.insert(id, rendered);
+        }
+        self.cfg_cache
+            .get(&id)
+            .map(|s| {
+                s.lines()
+                    .filter(|l| l.starts_with('B') && l.contains(':'))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    pub fn cfg_move_block(&mut self, delta: i32) {
+        let n = self.cfg_block_count();
+        if n == 0 {
+            return;
+        }
+        let cur = self.cfg_block_idx as i32 + delta;
+        self.cfg_block_idx = cur.rem_euclid(n as i32) as usize;
     }
 
     pub fn set_view(&mut self, view: ViewMode) {
@@ -940,6 +1012,7 @@ impl App {
             ViewMode::Decompile => self.decompile_content(),
             ViewMode::Info => self.format_info_wrapper(),
             ViewMode::Modules => self.module_content(),
+            ViewMode::Cfg => self.cfg_content(),
             ViewMode::Diff => {
                 let (left, _) = self.content();
                 left.lines
@@ -990,4 +1063,88 @@ impl App {
             self.list_state.select(Some(0));
         }
     }
+}
+
+fn render_cfg_text(
+    file: &hbc_decomp::BytecodeFile,
+    format: &hbc_decomp::BytecodeFormat,
+    function_id: u32,
+) -> String {
+    use hbc_decomp::{IRBuilder, IRBuilderOptions, Terminator};
+
+    let mut builder = IRBuilder::new(
+        file,
+        format,
+        IRBuilderOptions {
+            resolve_strings: true,
+            include_offsets: false,
+            absolute_offsets: false,
+        },
+    );
+    let cfg = match builder.build_function(function_id) {
+        Ok(c) => c,
+        Err(e) => return format!("// CFG build failed: {e}\n"),
+    };
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "entry: B{}  blocks: {}\n",
+        cfg.entry.0,
+        cfg.blocks().count()
+    ));
+    if !cfg.exception_handlers.is_empty() {
+        out.push_str(&format!(
+            "exception handlers: {}\n",
+            cfg.exception_handlers.len()
+        ));
+        for (i, h) in cfg.exception_handlers.iter().enumerate() {
+            out.push_str(&format!(
+                "  try#{i}: try_start=B{} catch=B{}\n",
+                h.try_block_start.0, h.catch_block.0
+            ));
+        }
+    }
+    out.push('\n');
+
+    for block in cfg.blocks() {
+        let term = match &block.terminator {
+            Terminator::None => "none".into(),
+            Terminator::Return(_) => "return".into(),
+            Terminator::Throw(_) => "throw".into(),
+            Terminator::Jump(t) => format!("jump B{}", t.0),
+            Terminator::Branch {
+                true_target,
+                false_target,
+                ..
+            } => format!("branch B{}/B{}", true_target.0, false_target.0),
+            Terminator::Switch { cases, default, .. } => {
+                format!("switch cases={} default=B{}", cases.len(), default.0)
+            }
+        };
+        let succs: Vec<String> = block
+            .successors()
+            .iter()
+            .map(|b| format!("B{}", b.0))
+            .collect();
+        out.push_str(&format!(
+            "B{}: stmts={}  term={}  → [{}]\n",
+            block.id.0,
+            block.statements.len(),
+            term,
+            succs.join(", ")
+        ));
+        // Show up to 3 statement previews
+        for (i, stmt) in block.statements.iter().take(3).enumerate() {
+            let s = format!("{stmt}");
+            let preview: String = s.chars().take(80).collect();
+            out.push_str(&format!("    [{i}] {preview}\n"));
+        }
+        if block.statements.len() > 3 {
+            out.push_str(&format!(
+                "    … {} more\n",
+                block.statements.len() - 3
+            ));
+        }
+    }
+    out
 }

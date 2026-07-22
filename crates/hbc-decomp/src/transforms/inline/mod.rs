@@ -10,7 +10,9 @@ mod strip_this;
 
 pub use arguments::simplify_arguments_copy;
 pub use cleanup::cleanup_noise;
-pub use declarations::insert_declarations;
+pub use declarations::{
+    extra_writes_from_nested_bodies, insert_declarations, insert_declarations_with_extra_writes,
+};
 pub use folding::{fold_array_literals, fold_object_literals};
 pub use inline_named::inline_named_variables;
 pub use reserved_words::rename_reserved_words;

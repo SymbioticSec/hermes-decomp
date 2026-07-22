@@ -175,6 +175,7 @@ fn render_bundle(
     file: &BytecodeFile,
     filter: Option<&ModuleFilter>,
 ) -> String {
+    let phase = super::progress::Phase::start("codegen (render modules)");
     let active_filter = filter.filter(|f| !f.is_empty());
     let allowed: Option<HashSet<u32>> = active_filter.map(|f| f.resolve(&pipeline.registry));
 
@@ -264,6 +265,9 @@ fn render_bundle(
         }
     }
 
+    let n_lines = output.lines().count();
+    let n_mods = pipeline.registry.modules.len();
+    phase.finish_with(format!("{n_lines} lines, {n_mods} modules"));
     output
 }
 
@@ -289,7 +293,13 @@ pub fn analyze_module(
         }
     }
 
-    let options = DecompileOptionsV2::default();
+    // Resolve string operands so property reads carry their real names (a
+    // `globalThis.mid` call shows property "mid", not the placeholder "propN"),
+    // which the call graph and IPA need to link callers to callees by name.
+    let options = DecompileOptionsV2 {
+        resolve_strings: true,
+        ..DecompileOptionsV2::default()
+    };
     let mut all_ir = BTreeMap::new();
 
     for i in 0..file.header.function_count {

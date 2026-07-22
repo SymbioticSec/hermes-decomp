@@ -66,7 +66,15 @@ pub fn write_output(
     content: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = output {
-        fs::write(path, content)?;
+        fs::write(&path, content)?;
+        let lines = content.lines().count();
+        let kib = content.len() as f64 / 1024.0;
+        eprintln!(
+            "Wrote {} ({} lines, {:.1} KiB)",
+            path.display(),
+            lines,
+            kib
+        );
     } else {
         print!("{content}");
     }

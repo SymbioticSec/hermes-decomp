@@ -87,7 +87,20 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App) {
         draw_content_pane(frame, app, body[1], content, title);
     }
 
-    let footer_line = if app.file2.is_some() {
+    let footer_line = if app.view == ViewMode::Cfg {
+        Line::from(vec![
+            Span::styled("q", Style::default().fg(Color::White)),
+            Span::styled(" quit ", Style::default().fg(Color::DarkGray)),
+            Span::styled("j/k", Style::default().fg(Color::White)),
+            Span::styled(" block ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Enter", Style::default().fg(Color::White)),
+            Span::styled(" disasm ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Tab/5", Style::default().fg(Color::White)),
+            Span::styled(" views ", Style::default().fg(Color::DarkGray)),
+            Span::styled("PgUp/Dn", Style::default().fg(Color::White)),
+            Span::styled(" scroll", Style::default().fg(Color::DarkGray)),
+        ])
+    } else if app.file2.is_some() {
         Line::from(vec![
             Span::styled("q", Style::default().fg(Color::White)),
             Span::styled(" quit ", Style::default().fg(Color::DarkGray)),
@@ -772,10 +785,8 @@ fn draw_xref_popup(frame: &mut Frame, app: &App) {
 
     let callee_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Callee).count();
     let caller_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Caller).count();
-    let title = format!(
-        " Xrefs: {} callees, {} callers, Enter: jump  Esc: close ",
-        callee_count, caller_count
-    );
+    let title =
+        format!(" Xrefs: {callee_count} callees, {caller_count} callers, Enter: jump  Esc: close ");
 
     frame.render_widget(
         Paragraph::new(items).block(

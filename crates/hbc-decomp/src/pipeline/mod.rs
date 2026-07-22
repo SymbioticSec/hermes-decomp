@@ -3,6 +3,7 @@ mod cache;
 mod context;
 mod decompiler;
 mod ir_gen;
+mod progress;
 mod stages;
 
 pub use batch::{
@@ -13,6 +14,7 @@ pub use cache::{default_cache_path, CACHE_VERSION};
 pub use context::PipelineContext;
 pub use decompiler::Decompiler;
 pub use ir_gen::{build_closure_context_from_file, generate_ir};
+pub use progress::{is_enabled as progress_enabled, set_enabled as set_progress_enabled, status as progress_status};
 
 use std::collections::{HashMap};
 use crate::analysis::ClosureContext;

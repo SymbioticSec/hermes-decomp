@@ -16,18 +16,8 @@ pub(super) fn resolve_callee(
 ) -> Option<u32> {
     match callee {
         Expression::Value(Value::Variable(name)) => {
-            if let Some(def) = defs.get(name) {
-                match def {
-                    Definition::Function(fid) => return Some(*fid),
-                    Definition::Module(mod_id) => {
-                        if let Some(module) = metro_registry.get_module(*mod_id) {
-                            if let Some(fid) = module.exports.get("default") {
-                                return Some(*fid);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+            if let Some(fid) = resolve_named_definition(name, defs, metro_registry, func_name_index) {
+                return Some(fid);
             }
             // Fallback: check if variable name matches a known function name
             if let Some(fid) = resolve_unique_by_name(name, func_name_index) {
@@ -37,20 +27,7 @@ pub(super) fn resolve_callee(
         }
         Expression::Value(Value::Register(r)) => {
             let r_name = format!("r{r}");
-            if let Some(def) = defs.get(&r_name) {
-                match def {
-                    Definition::Function(fid) => return Some(*fid),
-                    Definition::Module(mod_id) => {
-                        if let Some(module) = metro_registry.get_module(*mod_id) {
-                            if let Some(fid) = module.exports.get("default") {
-                                return Some(*fid);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            None
+            resolve_named_definition(&r_name, defs, metro_registry, func_name_index)
         }
         Expression::Function { id, .. } => Some(id.0),
 
@@ -88,6 +65,26 @@ pub(super) fn resolve_callee(
             }
             None
         }
+        _ => None,
+    }
+}
+
+// Resolve a variable or register key through the tracked definitions: a direct
+// function id, a module default export, or a `globalThis.foo` property read whose
+// name is unique in the bundle.
+fn resolve_named_definition(
+    key: &str,
+    defs: &HashMap<String, Definition>,
+    metro_registry: &MetroRegistry,
+    func_name_index: &FunctionNameIndex,
+) -> Option<u32> {
+    match defs.get(key)? {
+        Definition::Function(fid) => Some(*fid),
+        Definition::Module(mod_id) => metro_registry
+            .get_module(*mod_id)
+            .and_then(|m| m.exports.get("default"))
+            .copied(),
+        Definition::GlobalMember(prop) => resolve_unique_by_name(prop, func_name_index),
         _ => None,
     }
 }
@@ -205,4 +202,87 @@ pub(super) fn extract_method_object_name(callee: &Expression) -> Option<String> 
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::MetroRegistry;
+    use crate::ir::{AssignTarget, PropertyKey, Statement};
+    use std::collections::BTreeMap;
+
+    // Top level functions call each other through the global object:
+    // `r1 = globalThis.mid; r1(undefined, arg)`. The register callee must still
+    // resolve to `mid` so the call graph links caller to callee.
+    #[test]
+    fn indirect_global_member_call_resolves() {
+        // Caller body: r1 = globalThis.mid; r2 = r1(undefined, r0)
+        let caller = vec![
+            Statement::Assign {
+                target: AssignTarget::Register(1),
+                value: Expression::Member {
+                    object: Box::new(Expression::Value(Value::Global)),
+                    property: PropertyKey::Ident("mid".into()),
+                    optional: false,
+                },
+            },
+            Statement::Assign {
+                target: AssignTarget::Register(2),
+                value: Expression::Call {
+                    callee: Box::new(Expression::Value(Value::Register(1))),
+                    arguments: vec![
+                        Expression::Value(Value::Constant(crate::ir::Constant::Undefined)),
+                        Expression::Value(Value::Register(0)),
+                    ],
+                },
+            },
+        ];
+
+        let mut functions: BTreeMap<u32, Vec<Statement>> = BTreeMap::new();
+        functions.insert(0, caller);
+        functions.insert(7, Vec::new()); // the callee `mid` has function id 7
+
+        let mut name_index: FunctionNameIndex = HashMap::new();
+        name_index.insert("mid".into(), vec![7]);
+
+        let analysis = crate::analysis::run_ipa(&functions, &MetroRegistry::new(), &name_index);
+        let callees = analysis.graph.calls.get(&0).cloned().unwrap_or_default();
+        assert!(
+            callees.contains(&7),
+            "expected caller 0 to link to callee 7, got {callees:?}"
+        );
+    }
+
+    // A property name that is not a unique function must not invent an edge.
+    #[test]
+    fn indirect_global_member_ambiguous_name_does_not_resolve() {
+        let caller = vec![
+            Statement::Assign {
+                target: AssignTarget::Register(1),
+                value: Expression::Member {
+                    object: Box::new(Expression::Value(Value::Global)),
+                    property: PropertyKey::Ident("run".into()),
+                    optional: false,
+                },
+            },
+            Statement::Assign {
+                target: AssignTarget::Register(2),
+                value: Expression::Call {
+                    callee: Box::new(Expression::Value(Value::Register(1))),
+                    arguments: vec![],
+                },
+            },
+        ];
+        let mut functions: BTreeMap<u32, Vec<Statement>> = BTreeMap::new();
+        functions.insert(0, caller);
+
+        let mut name_index: FunctionNameIndex = HashMap::new();
+        name_index.insert("run".into(), vec![3, 4]); // two candidates, ambiguous
+
+        let analysis = crate::analysis::run_ipa(&functions, &MetroRegistry::new(), &name_index);
+        assert!(
+            analysis.graph.calls.get(&0).is_none_or(|c| !c.contains(&3) && !c.contains(&4)),
+            "ambiguous name must not create a call edge"
+        );
+    }
 }

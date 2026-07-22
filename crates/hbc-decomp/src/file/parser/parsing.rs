@@ -338,6 +338,7 @@ fn parse_trailing_and_build(
         debug_info,
         exception_handlers,
         sections,
+        raw_bytes: Some(bytes.to_vec()),
     })
 }
 

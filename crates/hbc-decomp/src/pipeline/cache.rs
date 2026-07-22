@@ -131,17 +131,27 @@ impl PipelineContext {
 
         if let Some(ctx) = try_load(cache_path, &header) {
             log::debug!("[cache] hit: {}", cache_path.display());
+            super::progress::status(format!(
+                "cache hit: {} (skipping analysis)",
+                cache_path.display()
+            ));
             return Ok(ctx);
         }
 
+        super::progress::status(format!(
+            "cache miss: building analysis ({})",
+            cache_path.display()
+        ));
         let t = std::time::Instant::now();
         let ctx = Self::build_with_options(file, format, options)?;
         log::debug!("[cache] miss: built in {:.2?}", t.elapsed());
 
         if let Err(e) = try_save(cache_path, &header, &ctx) {
             log::debug!("[cache] save failed ({}): {e}", cache_path.display());
+            super::progress::status(format!("cache save failed: {e}"));
         } else {
             log::debug!("[cache] wrote: {}", cache_path.display());
+            super::progress::status(format!("cache written: {}", cache_path.display()));
         }
 
         Ok(ctx)

@@ -1,25 +1,31 @@
 use super::{Codegen, DescriptorInfo, is_exports_like};
+use crate::util::{escape_js_string_bare, is_valid_identifier, sanitize_identifier};
 
 impl Codegen {
     // Try to extract an import statement from a value expression.
     // Returns `Some("import x from \"ModName\"")` if the pattern matches.
+    //
+    // Local bindings are always sanitized to valid JS identifiers (e.g.
+    // Metro names like `get ActivityIndicator` → `get_ActivityIndicator`) so
+    // they match `Value::Variable` Display / body codegen.
     pub(super) fn try_import_from_expr(&self, var_name: &str, value: &crate::ir::Expression) -> Option<String> {
         use crate::ir::Expression;
 
+        let local = sanitize_identifier(var_name);
+        if local.is_empty() {
+            return None;
+        }
+
         // Pattern 1: require(N) or arg1(dependencyMap[N]) -> import var from "ModName"
         if let Some(mod_name) = self.resolve_require_module(value) {
-            return Some(format!("import {var_name} from \"{mod_name}\";"));
+            return Some(format!("import {local} from \"{mod_name}\";"));
         }
 
         // Pattern 2: require(N).prop or arg1(dependencyMap[N]).prop -> import { prop as var } from "ModName"
         if let Expression::Member { object, property, .. } = value {
             if let Some(mod_name) = self.resolve_require_module(object) {
                 let prop = crate::ir::expr::display::format_key(property);
-                if prop == var_name {
-                    return Some(format!("import {{ {prop} }} from \"{mod_name}\";"));
-                } else {
-                    return Some(format!("import {{ {prop} as {var_name} }} from \"{mod_name}\";"));
-                }
+                return Some(format_named_import(&prop, &local, &mod_name));
             }
         }
 
@@ -28,7 +34,7 @@ impl Codegen {
         if let Expression::Call { arguments, .. } = value {
             for arg in Self::effective_args(arguments) {
                 if let Some(mod_name) = self.resolve_require_module(arg) {
-                    return Some(format!("import {var_name} from \"{mod_name}\";"));
+                    return Some(format!("import {local} from \"{mod_name}\";"));
                 }
             }
         }
@@ -39,11 +45,7 @@ impl Codegen {
                 for arg in Self::effective_args(arguments) {
                     if let Some(mod_name) = self.resolve_require_module(arg) {
                         let prop = crate::ir::expr::display::format_key(property);
-                        if prop == var_name {
-                            return Some(format!("import {{ {prop} }} from \"{mod_name}\";"));
-                        } else {
-                            return Some(format!("import {{ {prop} as {var_name} }} from \"{mod_name}\";"));
-                        }
+                        return Some(format_named_import(&prop, &local, &mod_name));
                     }
                 }
             }
@@ -148,5 +150,49 @@ impl Codegen {
         } else {
             Some(format!("export const {prop_name} = undefined;"))
         }
+    }
+}
+
+// Emit a named import, keeping the module specifier as-is (quoted) while
+// ensuring the local binding is a valid identifier. Invalid export names
+// (spaces, etc.) use a string-named import when possible.
+fn format_named_import(prop: &str, local: &str, mod_name: &str) -> String {
+    if is_valid_identifier(prop) {
+        if prop == local {
+            format!("import {{ {prop} }} from \"{mod_name}\";")
+        } else {
+            format!("import {{ {prop} as {local} }} from \"{mod_name}\";")
+        }
+    } else {
+        // ES2022 string export names: import { "get Foo" as get_Foo } from "…"
+        let escaped = escape_js_string_bare(prop);
+        format!("import {{ \"{escaped}\" as {local} }} from \"{mod_name}\";")
+    }
+}
+
+#[cfg(test)]
+mod import_sanitize_tests {
+    use super::format_named_import;
+    use crate::util::sanitize_identifier;
+
+    #[test]
+    fn spaced_default_binding_sanitizes() {
+        let local = sanitize_identifier("get ActivityIndicator");
+        assert_eq!(local, "get_ActivityIndicator");
+        let s = format!("import {local} from \"get ActivityIndicator\";");
+        assert!(s.contains("import get_ActivityIndicator from"));
+        assert!(!s.contains("import get ActivityIndicator from"));
+    }
+
+    #[test]
+    fn spaced_named_export_uses_string_name() {
+        let s = format_named_import("get Foo", "get_Foo", "mod");
+        assert_eq!(s, "import { \"get Foo\" as get_Foo } from \"mod\";");
+    }
+
+    #[test]
+    fn valid_named_shorthand() {
+        let s = format_named_import("AppRegistry", "AppRegistry", "react-native");
+        assert_eq!(s, "import { AppRegistry } from \"react-native\";");
     }
 }

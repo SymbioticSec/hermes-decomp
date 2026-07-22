@@ -292,12 +292,15 @@ fn is_strong_slot_hint(hint: &str) -> bool {
 }
 
 fn is_usable_slot_hint(hint: &str) -> bool {
+    // A leading 'c' followed only by digits is a raw closure slot like "c12".
+    let is_closure_number =
+        hint.starts_with('c') && hint[1..].chars().all(|c| c.is_ascii_digit());
     hint.len() > 1
         && !hint.starts_with("closure_")
         && !hint.starts_with('f')
         && !hint.starts_with("arg")
         && !hint.starts_with('r')
-        && !(hint.starts_with('c') && hint[1..].chars().all(|c| c.is_ascii_digit()))
+        && !is_closure_number
 }
 
 // Extract a common domain name from setter/getter methods.

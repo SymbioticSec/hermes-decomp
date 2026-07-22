@@ -33,6 +33,11 @@ examples/
 IMPROVEMENTS_PLAN.md
 PLAN*.md
 ROADMAP.md
+DISCORD.md
+DISOCRD.md
+TESTING_DEVICE.md
+TESTING*.md
+device_test.sh
 
 # Environment
 .env
