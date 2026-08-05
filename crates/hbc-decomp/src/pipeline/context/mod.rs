@@ -106,6 +106,18 @@ impl PipelineContext {
             }
         }
 
+        // STAGE W16e: Hoist eager inline module loads (importDefault(N)/require(N)
+        // repeated at every use site) into one module-level binding, which the ESM
+        // classifier then lifts into an import. Runs before inline body rendering so
+        // the rewritten descendant bodies are the ones rendered.
+        {
+            let phase = super::progress::Phase::start("import hoisting");
+            let t = std::time::Instant::now();
+            transforms::hoist_module_loaders(&mut all_ir, &registry, &child_functions);
+            log::debug!("[pipeline] import hoisting: {:.2?}", t.elapsed());
+            phase.finish();
+        }
+
         // STAGE W17: Inline body rendering
         let mut ctx = PipelineContext {
             all_ir,

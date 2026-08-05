@@ -10,6 +10,7 @@ pub mod exports;
 mod generator;
 mod inline;
 pub mod logic_simplify;
+mod module_hoist;
 mod name_inference;
 pub mod objects;
 mod optimize;
@@ -42,6 +43,7 @@ pub use inline::{
     strip_hermes_this,
 };
 pub use logic_simplify::simplify_logic_advanced;
+pub use module_hoist::hoist_module_loaders;
 pub use name_inference::infer_names;
 pub use objects::transform_object_literals;
 pub use optimize::optimize_statements;
