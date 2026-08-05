@@ -1,4 +1,5 @@
 use super::{Codegen, DescriptorInfo, EsmClassification, sanitize_import_name, replace_whole_word};
+use super::esm_imports::consolidate_imports;
 use crate::ir::Statement;
 
 impl Codegen {
@@ -260,6 +261,12 @@ impl Codegen {
                 }
             }
         }
+
+        // Consolidate imports: drop the repeated identical lines a module emits when
+        // it requires the same dependency from many functions (e.g. `import _curry2
+        // from "_curry2";` x65), and merge distinct named imports of the same module
+        // into one `import { a, b } from "M";`.
+        let imports = consolidate_imports(imports);
 
         // Deduplicate exports (e.g. multiple export * from same module)
         {

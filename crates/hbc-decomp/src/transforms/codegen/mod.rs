@@ -1,4 +1,5 @@
 mod esm_gen;
+mod esm_imports;
 mod esm_classify;
 mod esm_patterns;
 mod esm_descriptors;
@@ -9,7 +10,7 @@ mod stmt_gen;
 mod control_flow;
 
 use crate::ir::Statement;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 pub(super) fn is_effectively_empty(stmts: &[Statement]) -> bool {
@@ -197,6 +198,13 @@ pub struct Codegen {
     pub(super) esm_mode: bool,
     // Module dependency index -> name map (used in ESM mode to resolve require IDs).
     pub(super) dep_names: Option<BTreeMap<u32, String>>,
+    // Module dependency index -> absolute module id (used to annotate imports with
+    // the stable module id `/* N */` when the resolved require is `dependencyMap[idx]`).
+    pub(super) dep_ids: Option<BTreeMap<u32, u32>>,
+    // Absolute module id -> its exported member names, used to gate the inline
+    // `importDefault(N).member` hoisting: a member becomes a named import only when
+    // it is a confirmed export of module N.
+    pub(super) module_exports: Option<BTreeMap<u32, BTreeSet<String>>>,
     // Pre-rendered inline function bodies (function_id -> complete function expression string).
     pub(super) inline_bodies: Arc<BTreeMap<u32, String>>,
 }
@@ -209,6 +217,8 @@ impl Codegen {
             import_map: None,
             esm_mode: false,
             dep_names: None,
+            dep_ids: None,
+            module_exports: None,
             inline_bodies: Arc::new(BTreeMap::new()),
         }
     }
@@ -221,6 +231,19 @@ impl Codegen {
     pub fn with_esm_mode(mut self, dep_names: BTreeMap<u32, String>) -> Self {
         self.esm_mode = true;
         self.dep_names = Some(dep_names);
+        self
+    }
+
+    // Provide the dependency-index -> absolute-module-id map and the per-module
+    // export tables, so imports can be annotated with the stable module id and the
+    // inline `importDefault(N).member` hoisting can be gated on real exports.
+    pub fn with_esm_module_meta(
+        mut self,
+        dep_ids: BTreeMap<u32, u32>,
+        module_exports: BTreeMap<u32, BTreeSet<String>>,
+    ) -> Self {
+        self.dep_ids = Some(dep_ids);
+        self.module_exports = Some(module_exports);
         self
     }
 

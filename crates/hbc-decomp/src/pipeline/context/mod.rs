@@ -628,16 +628,24 @@ impl PipelineContext {
                 }
             };
             let mut dep_names = BTreeMap::new();
+            let mut dep_ids = BTreeMap::new();
+            let mut module_exports: BTreeMap<u32, std::collections::BTreeSet<String>> = BTreeMap::new();
             for (idx, &dep_id) in module.dependencies.iter().enumerate() {
+                dep_ids.insert(idx as u32, dep_id);
                 if let Some(dep_mod) = self.registry.modules.get(&dep_id) {
                     if let Some(name) = &dep_mod.name {
                         dep_names.insert(idx as u32, name.clone());
                     } else {
                         dep_names.insert(idx as u32, format!("module_{dep_id}"));
                     }
+                    if !dep_mod.exports.is_empty() {
+                        module_exports.insert(dep_id, dep_mod.exports.keys().cloned().collect());
+                    }
                 }
             }
-            codegen = codegen.with_esm_mode(dep_names);
+            codegen = codegen
+                .with_esm_mode(dep_names)
+                .with_esm_module_meta(dep_ids, module_exports);
             let extra = self.extra_writes_for_function(function_id);
             transforms::insert_declarations_with_extra_writes(&mut statements, &params, &extra);
             codegen.generate_esm_module(
