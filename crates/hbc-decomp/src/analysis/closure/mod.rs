@@ -1,5 +1,9 @@
 pub mod context;
 pub mod info;
+
+#[cfg(test)]
+mod inheritance_tests;
+
 use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
 
 pub use context::ClosureContext;
@@ -141,7 +145,8 @@ fn resolve_target(target: AssignTarget, info: &ClosureInfo) -> AssignTarget {
             } else if level == 0 {
                 info.get_slot_name(slot)
             } else {
-                format!("outer{level}_{slot}")
+                // Unresolved parent-env capture: same family as local `closure_N`.
+                crate::ir::Value::closure_var_name(level, slot)
             };
             AssignTarget::Variable(name)
         }
@@ -218,7 +223,8 @@ fn resolve_expr(expr: Expression, info: &ClosureInfo) -> Expression {
             } else if level == 0 {
                 info.get_slot_name(slot)
             } else {
-                format!("outer{level}_{slot}")
+                // Unresolved parent-env capture: same family as local `closure_N`.
+                crate::ir::Value::closure_var_name(level, slot)
             };
             Expression::Value(Value::Variable(name))
         }

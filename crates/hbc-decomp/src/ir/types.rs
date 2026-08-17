@@ -65,6 +65,22 @@ pub enum Value {
     Super,
 }
 
+impl Value {
+    /// Stable JS identifier for an unresolved env-slot capture.
+    ///
+    /// Level 0 (current function env) → `closure_{slot}`.
+    /// Parent envs (level ≥ 1) → `closure_{level}_{slot}` so nested captures stay
+    /// in the same family as local ones (replaces the old `outerN_M` form, which
+    /// looked like real source identifiers but never was).
+    pub fn closure_var_name(level: u32, slot: u32) -> String {
+        if level == 0 {
+            format!("closure_{slot}")
+        } else {
+            format!("closure_{level}_{slot}")
+        }
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -79,11 +95,7 @@ impl fmt::Display for Value {
             Value::Global => write!(f, "globalThis"),
             Value::Parameter(i) => write!(f, "arg{i}"),
             Value::ClosureVar { level, slot } => {
-                if *level == 0 {
-                    write!(f, "closure_{slot}")
-                } else {
-                    write!(f, "outer{level}_{slot}")
-                }
+                write!(f, "{}", Self::closure_var_name(*level, *slot))
             }
             Value::Arguments => write!(f, "arguments"),
             Value::NewTarget => write!(f, "new.target"),
