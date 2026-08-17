@@ -146,10 +146,21 @@ pub fn rename_closure_variables_cross_function(
 }
 
 // Parse a closure variable name into its slot number.
-// "closure_5" → Some(5), "closure_16777221" → Some(16777221), "c3" → Some(3)
+// "closure_5" → Some(5), "closure_1_5" → Some(5) (level 1 parent slot 5),
+// "closure_16777221" → Some(16777221), "c3" → Some(3)
 fn parse_closure_slot(name: &str) -> Option<u32> {
-    if let Some(n) = name.strip_prefix("closure_") {
-        return n.parse::<u32>().ok();
+    if let Some(rest) = name.strip_prefix("closure_") {
+        // Parent-env form: closure_{level}_{slot}
+        if let Some((level, slot)) = rest.split_once('_') {
+            if !level.is_empty()
+                && level.chars().all(|c| c.is_ascii_digit())
+                && !slot.is_empty()
+                && slot.chars().all(|c| c.is_ascii_digit())
+            {
+                return slot.parse::<u32>().ok();
+            }
+        }
+        return rest.parse::<u32>().ok();
     }
     if let Some(n) = name.strip_prefix('c') {
         if !n.is_empty() && n.len() <= 6 && n.chars().all(|c| c.is_ascii_digit()) {

@@ -17,15 +17,15 @@ impl Codegen {
         }
 
         // Pattern 1: require(N) or arg1(dependencyMap[N]) -> import var from "ModName"
-        if let Some(mod_name) = self.resolve_require_module(value) {
-            return Some(format!("import {local} from \"{mod_name}\";"));
+        if let Some((mod_name, id)) = self.resolve_require_module_id(value) {
+            return Some(format!("import {local} from \"{mod_name}\"{};", id_comment(id)));
         }
 
         // Pattern 2: require(N).prop or arg1(dependencyMap[N]).prop -> import { prop as var } from "ModName"
         if let Expression::Member { object, property, .. } = value {
-            if let Some(mod_name) = self.resolve_require_module(object) {
+            if let Some((mod_name, id)) = self.resolve_require_module_id(object) {
                 let prop = crate::ir::expr::display::format_key(property);
-                return Some(format_named_import(&prop, &local, &mod_name));
+                return Some(format_named_import(&prop, &local, &mod_name, Some(id)));
             }
         }
 
@@ -33,8 +33,8 @@ impl Codegen {
         // Handles _interopDefault, _interopRequireDefault, or any wrapper function around require
         if let Expression::Call { arguments, .. } = value {
             for arg in Self::effective_args(arguments) {
-                if let Some(mod_name) = self.resolve_require_module(arg) {
-                    return Some(format!("import {local} from \"{mod_name}\";"));
+                if let Some((mod_name, id)) = self.resolve_require_module_id(arg) {
+                    return Some(format!("import {local} from \"{mod_name}\"{};", id_comment(id)));
                 }
             }
         }
@@ -43,9 +43,9 @@ impl Codegen {
         if let Expression::Member { object, property, .. } = value {
             if let Expression::Call { arguments, .. } = object.as_ref() {
                 for arg in Self::effective_args(arguments) {
-                    if let Some(mod_name) = self.resolve_require_module(arg) {
+                    if let Some((mod_name, id)) = self.resolve_require_module_id(arg) {
                         let prop = crate::ir::expr::display::format_key(property);
-                        return Some(format_named_import(&prop, &local, &mod_name));
+                        return Some(format_named_import(&prop, &local, &mod_name, Some(id)));
                     }
                 }
             }
@@ -153,20 +153,29 @@ impl Codegen {
     }
 }
 
+// Format the stable module-id annotation appended to an import, e.g. ` /* 530 */`.
+// The user re-maps modules to real file paths by this id (Metro strips paths), so
+// it is the reliable key kept alongside the readable inferred name.
+pub(super) fn id_comment(id: u32) -> String {
+    format!(" /* {id} */")
+}
+
 // Emit a named import, keeping the module specifier as-is (quoted) while
 // ensuring the local binding is a valid identifier. Invalid export names
-// (spaces, etc.) use a string-named import when possible.
-fn format_named_import(prop: &str, local: &str, mod_name: &str) -> String {
+// (spaces, etc.) use a string-named import when possible. An optional module id
+// is appended as a `/* id */` comment for path re-mapping.
+pub(super) fn format_named_import(prop: &str, local: &str, mod_name: &str, id: Option<u32>) -> String {
+    let comment = id.map(id_comment).unwrap_or_default();
     if is_valid_identifier(prop) {
         if prop == local {
-            format!("import {{ {prop} }} from \"{mod_name}\";")
+            format!("import {{ {prop} }} from \"{mod_name}\"{comment};")
         } else {
-            format!("import {{ {prop} as {local} }} from \"{mod_name}\";")
+            format!("import {{ {prop} as {local} }} from \"{mod_name}\"{comment};")
         }
     } else {
         // ES2022 string export names: import { "get Foo" as get_Foo } from "…"
         let escaped = escape_js_string_bare(prop);
-        format!("import {{ \"{escaped}\" as {local} }} from \"{mod_name}\";")
+        format!("import {{ \"{escaped}\" as {local} }} from \"{mod_name}\"{comment};")
     }
 }
 
@@ -186,13 +195,19 @@ mod import_sanitize_tests {
 
     #[test]
     fn spaced_named_export_uses_string_name() {
-        let s = format_named_import("get Foo", "get_Foo", "mod");
+        let s = format_named_import("get Foo", "get_Foo", "mod", None);
         assert_eq!(s, "import { \"get Foo\" as get_Foo } from \"mod\";");
     }
 
     #[test]
     fn valid_named_shorthand() {
-        let s = format_named_import("AppRegistry", "AppRegistry", "react-native");
+        let s = format_named_import("AppRegistry", "AppRegistry", "react-native", None);
         assert_eq!(s, "import { AppRegistry } from \"react-native\";");
+    }
+
+    #[test]
+    fn named_import_carries_id_comment() {
+        let s = format_named_import("sendRequest", "sendRequest", "HTTPUtils", Some(530));
+        assert_eq!(s, "import { sendRequest } from \"HTTPUtils\" /* 530 */;");
     }
 }

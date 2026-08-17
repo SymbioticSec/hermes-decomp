@@ -12,6 +12,7 @@ pub use arguments::simplify_arguments_copy;
 pub use cleanup::cleanup_noise;
 pub use declarations::{
     extra_writes_from_nested_bodies, insert_declarations, insert_declarations_with_extra_writes,
+    insert_declarations_with_outer,
 };
 pub use folding::{fold_array_literals, fold_object_literals};
 pub use inline_named::inline_named_variables;

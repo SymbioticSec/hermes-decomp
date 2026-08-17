@@ -155,11 +155,7 @@ impl fmt::Display for AssignTarget {
             }
             AssignTarget::Index { object, key } => write!(f, "{object}[{key}]"),
             AssignTarget::ClosureVar { level, slot } => {
-                if *level == 0 {
-                    write!(f, "closure_{slot}")
-                } else {
-                    write!(f, "outer{level}_{slot}")
-                }
+                write!(f, "{}", crate::ir::Value::closure_var_name(*level, *slot))
             }
             AssignTarget::DestructuringArray(targets) => {
                 write!(f, "[")?;

@@ -1,4 +1,5 @@
 mod esm_gen;
+mod esm_imports;
 mod esm_classify;
 mod esm_patterns;
 mod esm_descriptors;
@@ -197,6 +198,9 @@ pub struct Codegen {
     pub(super) esm_mode: bool,
     // Module dependency index -> name map (used in ESM mode to resolve require IDs).
     pub(super) dep_names: Option<BTreeMap<u32, String>>,
+    // Module dependency index -> absolute module id (used to annotate imports with
+    // the stable module id `/* N */` when the resolved require is `dependencyMap[idx]`).
+    pub(super) dep_ids: Option<BTreeMap<u32, u32>>,
     // Pre-rendered inline function bodies (function_id -> complete function expression string).
     pub(super) inline_bodies: Arc<BTreeMap<u32, String>>,
 }
@@ -209,6 +213,7 @@ impl Codegen {
             import_map: None,
             esm_mode: false,
             dep_names: None,
+            dep_ids: None,
             inline_bodies: Arc::new(BTreeMap::new()),
         }
     }
@@ -221,6 +226,13 @@ impl Codegen {
     pub fn with_esm_mode(mut self, dep_names: BTreeMap<u32, String>) -> Self {
         self.esm_mode = true;
         self.dep_names = Some(dep_names);
+        self
+    }
+
+    // Provide the dependency-index -> absolute-module-id map so imports can be
+    // annotated with the stable module id `/* N */`.
+    pub fn with_esm_module_meta(mut self, dep_ids: BTreeMap<u32, u32>) -> Self {
+        self.dep_ids = Some(dep_ids);
         self
     }
 
@@ -423,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_esm_import_from_require() {
-        // let x = require(0) should become `import x from "react"`
+        // let x = require(0) with absolute module id 0 → import from import_map name
         let stmts = vec![Statement::let_stmt(
             "React",
             Expression::call(
@@ -435,10 +447,15 @@ mod tests {
             ),
         )];
 
+        let mut import_map = BTreeMap::new();
+        import_map.insert(0u32, "react".to_string());
+        // dep_names alone must not rename absolute ids (indices ≠ module ids).
         let mut dep_names = BTreeMap::new();
-        dep_names.insert(0u32, "react".to_string());
+        dep_names.insert(0u32, "wrong-if-used".to_string());
 
-        let mut codegen = Codegen::new(CodegenOptions::new()).with_esm_mode(dep_names);
+        let mut codegen = Codegen::new(CodegenOptions::new())
+            .with_imports(import_map)
+            .with_esm_mode(dep_names);
         let output = codegen.generate_esm_module(&stmts, 42, Some("my-module"));
         assert!(output.contains("import React from \"react\""), "Expected import, got: {}", output);
         assert!(output.contains("// Module 42 (my-module)"), "Expected header, got: {}", output);

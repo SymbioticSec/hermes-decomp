@@ -78,14 +78,10 @@ impl Codegen {
                 let k = self.generate_expr(key);
                 format!("{obj}[{k}]")
             }
-            // Must match the `Value::ClosureVar` rendering (ir/types.rs) so a load
-            // and a store of the same captured slot use the same identifier,             // otherwise `c += 1` reads `closure_0` but writes `closure_var_0_0`.
+            // Must match `Value::closure_var_name` so load/store of the same
+            // captured slot use the same identifier.
             AssignTarget::ClosureVar { level, slot } => {
-                if *level == 0 {
-                    format!("closure_{slot}")
-                } else {
-                    format!("outer{level}_{slot}")
-                }
+                crate::ir::Value::closure_var_name(*level, *slot)
             }
             AssignTarget::DestructuringArray(elements) => {
                 let elems: Vec<String> = elements.iter()

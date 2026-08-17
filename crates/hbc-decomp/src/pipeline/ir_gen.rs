@@ -219,6 +219,10 @@ pub fn generate_ir(
         // STAGE F24: Semantic Variable Naming
         let mut statements = transforms::infer_variable_names(statements);
 
+        // Shape-table slot fills (`obj[N] = val`) only fold while the object is
+        // still a Register. After naming they are Variable/Let — fold again.
+        transforms::fold_slot_index_fills(&mut statements);
+
         // STAGE F25: Final Simplification
         crate::transforms::simplify_statements(&mut statements);
 

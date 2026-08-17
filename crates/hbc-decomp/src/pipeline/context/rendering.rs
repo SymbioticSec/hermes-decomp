@@ -4,7 +4,7 @@
 // Handles deep nesting chains; 5 passes covers most real-world depths.
 const MAX_INLINE_BODY_PASSES: usize = 5;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 use rayon::prelude::*;
 use crate::file::BytecodeFile;
@@ -95,6 +95,9 @@ impl PipelineContext {
     // non-factory functions. Each function is prepared independently from read only
     // shared state, so fan the work out across cores.
     fn prepare_render_bodies(&self, file: &BytecodeFile) -> BTreeMap<u32, (Vec<String>, Vec<Statement>)> {
+        // Env-slot names only (not every ancestor local), precomputed once on the
+        // context so each function is O(slots), not O(ancestor-body-size).
+        let ancestor_env = &self.ancestor_env_slots;
         self.all_ir
             .par_iter()
             .filter(|(func_id, _)| !self.registry.function_to_module.contains_key(func_id))
@@ -120,7 +123,15 @@ impl PipelineContext {
                 body_stmts = transforms::cleanup_noise(body_stmts);
                 transforms::rename_reserved_words(&mut body_stmts);
                 let extra = self.extra_writes_for_function(func_id);
-                transforms::insert_declarations_with_extra_writes(&mut body_stmts, &params, &extra);
+                let empty = HashSet::new();
+                let outer = ancestor_env.get(&func_id).unwrap_or(&empty);
+                transforms::insert_declarations_with_outer(
+                    &mut body_stmts,
+                    &params,
+                    &extra,
+                    outer,
+                    true,
+                );
 
                 (func_id, (params, body_stmts))
             })
@@ -238,6 +249,63 @@ impl PipelineContext {
             rendered
         }
     }
+
+    // Env-slot names owned by ancestors of `func_id`. Generic ancestor locals
+    // (`obj`, `_Error`) are excluded so children still get their own `let`. Reads the
+    // map precomputed once on the context rather than rebuilding it per call.
+    pub(super) fn ancestor_env_slot_names(&self, func_id: u32) -> HashSet<String> {
+        self.ancestor_env_slots.get(&func_id).cloned().unwrap_or_default()
+    }
+
+    // Top-down: names(fn) = names(parent) ∪ slot names of parent. One pass, O(n).
+    pub(in crate::pipeline) fn precompute_ancestor_env_slot_names(&self) -> BTreeMap<u32, HashSet<String>> {
+        let Some(ctx) = self.closure_ctx.as_ref() else {
+            return BTreeMap::new();
+        };
+
+        let mut own: BTreeMap<u32, HashSet<String>> = BTreeMap::new();
+        for (&fid, info) in &ctx.function_closures {
+            let mut names = HashSet::new();
+            for &key in info.slots.keys() {
+                names.insert(info.get_slot_name(key));
+            }
+            own.insert(fid, names);
+        }
+
+        let mut memo: BTreeMap<u32, HashSet<String>> = BTreeMap::new();
+        let mut visiting = HashSet::new();
+        for &id in self.all_ir.keys() {
+            fill_ancestor_env_slots(id, &ctx.parent_function, &own, &mut memo, &mut visiting);
+        }
+        memo
+    }
+}
+
+fn fill_ancestor_env_slots(
+    id: u32,
+    parent_of: &BTreeMap<u32, u32>,
+    own: &BTreeMap<u32, HashSet<String>>,
+    memo: &mut BTreeMap<u32, HashSet<String>>,
+    visiting: &mut HashSet<u32>,
+) {
+    if memo.contains_key(&id) {
+        return;
+    }
+    if !visiting.insert(id) {
+        memo.insert(id, HashSet::new());
+        return;
+    }
+    if let Some(&parent) = parent_of.get(&id) {
+        fill_ancestor_env_slots(parent, parent_of, own, memo, visiting);
+        let mut set = memo.get(&parent).cloned().unwrap_or_default();
+        if let Some(parent_own) = own.get(&parent) {
+            set.extend(parent_own.iter().cloned());
+        }
+        memo.insert(id, set);
+    } else {
+        memo.insert(id, HashSet::new());
+    }
+    visiting.remove(&id);
 }
 
 // Collect the ids of every function referenced by id (`Expression::Function { id }`)

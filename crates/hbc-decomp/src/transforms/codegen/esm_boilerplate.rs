@@ -75,6 +75,46 @@ impl Codegen {
         None
     }
 
+    // Like `resolve_require_module`, but also returns the absolute module id, so an
+    // emitted import can carry a stable `/* id */` annotation. For an integer require
+    // the argument is the absolute id; for `dependencyMap[idx]` the id comes from the
+    // factory's dependency array (`dep_ids`), falling back to the raw index.
+    pub(super) fn resolve_require_module_id(&self, expr: &crate::ir::Expression) -> Option<(String, u32)> {
+        use crate::ir::{Expression, Value, Constant};
+
+        let (callee, arguments) = match expr {
+            Expression::Call { callee, arguments } => (callee, arguments),
+            _ => return None,
+        };
+
+        if !self.esm_mode {
+            let callee_str = self.generate_expr(callee);
+            let roles = crate::analysis::metro::registry::FactoryRoles::standard();
+            if !roles.is_require_param(&callee_str) {
+                return None;
+            }
+        }
+
+        let args = Self::effective_args(arguments);
+        let id_arg = args.first()?;
+
+        if let Expression::Value(Value::Constant(Constant::Integer(id))) = id_arg {
+            let id = *id as u32;
+            return self.lookup_module_name(id, true).map(|name| (name, id));
+        }
+
+        if let Some(idx) = Self::extract_array_index(id_arg) {
+            let abs_id = self
+                .dep_ids
+                .as_ref()
+                .and_then(|m| m.get(&idx).copied())
+                .unwrap_or(idx);
+            return self.lookup_module_name(idx, false).map(|name| (name, abs_id));
+        }
+
+        None
+    }
+
     // Extract the integer index from a member expression like `dependencyMap[0]`.
     // Handles both PropertyKey::Index(i64) and PropertyKey::Computed(Integer(N)).
     pub(super) fn extract_array_index(expr: &crate::ir::Expression) -> Option<u32> {
@@ -108,15 +148,10 @@ impl Codegen {
             return None;
         }
 
-        // Absolute module ID lookup
-        // Try dep_names first (index-based, for ESM mode)
-        if let Some(ref dep_map) = self.dep_names {
-            if let Some(name) = dep_map.get(&id) {
-                return Some(name.clone());
-            }
-        }
-
-        // Fallback to import_map (module_id based)
+        // Absolute module ID lookup. Must NOT consult `dep_names` (those keys are
+        // dependency *indices* within a factory, not absolute Metro module ids).
+        // Hoisted loads inject `loader(absId)`; probing dep_names would mis-name
+        // any absId that collides with a small dep index.
         if let Some(ref imp_map) = self.import_map {
             if let Some(name) = imp_map.get(&id) {
                 return Some(name.clone());
