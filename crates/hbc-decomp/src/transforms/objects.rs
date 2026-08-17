@@ -85,35 +85,23 @@ pub fn transform_object_literals(statements: &mut Vec<Statement>) {
 // fill from PutOwnBySlotIdx) into the literal's Nth property. Only replaces a
 // placeholder value (null/undefined/empty), which is what the shape-table form
 // leaves for non-serializable property values, so a genuine numeric-key write
-// is never absorbed.
-fn fold_slot_index_fills(statements: &mut Vec<Statement>) {
+// is never absorbed. Matches both still-register objects and named
+// Variable/Let objects (after register naming).
+pub fn fold_slot_index_fills(statements: &mut Vec<Statement>) {
     // Mark consumed fills and drop them all in one pass. Removing each fill inside
     // the loop shifts the tail on every fill, which is O(n^2) on a large function.
     let mut consumed = vec![false; statements.len()];
     let mut i = 0;
     while i < statements.len() {
-        let prop_count = match &statements[i] {
-            Statement::Assign {
-                target: AssignTarget::Register(_),
-                value: Expression::Object { properties },
-            } if !properties.is_empty() => properties.len(),
-            _ => {
-                i += 1;
-                continue;
-            }
-        };
-        let obj_reg = match &statements[i] {
-            Statement::Assign { target: AssignTarget::Register(r), .. } => *r,
-            _ => unreachable!(),
+        let Some((obj, prop_count)) = object_literal_def(&statements[i]) else {
+            i += 1;
+            continue;
         };
 
         let mut j = i + 1;
         while j < statements.len() {
-            if let Some((slot, val)) = slot_index_fill(&statements[j], obj_reg, prop_count) {
-                // Replace the placeholder at `slot` in the literal at `i`.
-                if let Statement::Assign { value: Expression::Object { properties }, .. } =
-                    &mut statements[i]
-                {
+            if let Some((slot, val)) = slot_index_fill(&statements[j], &obj, prop_count) {
+                if let Some(properties) = object_properties_mut(&mut statements[i]) {
                     if is_placeholder(&properties[slot].value) {
                         properties[slot].value = val;
                         consumed[j] = true;
@@ -122,8 +110,8 @@ fn fold_slot_index_fills(statements: &mut Vec<Statement>) {
                     }
                 }
                 break;
-            } else if is_reg_used(&statements[j], obj_reg)
-                || is_reg_assigned(&statements[j], obj_reg)
+            } else if obj_reassigned(&statements[j], &obj)
+                || obj_used(&statements[j], &obj)
                 || stmt_has_side_effects(&statements[j])
             {
                 break;
@@ -142,27 +130,147 @@ fn fold_slot_index_fills(statements: &mut Vec<Statement>) {
     }
 }
 
+enum ObjRef {
+    Register(u32),
+    Name(String),
+}
+
+fn object_literal_def(stmt: &Statement) -> Option<(ObjRef, usize)> {
+    match stmt {
+        Statement::Assign {
+            target: AssignTarget::Register(r),
+            value: Expression::Object { properties },
+        } if !properties.is_empty() => Some((ObjRef::Register(*r), properties.len())),
+        Statement::Assign {
+            target: AssignTarget::Variable(name),
+            value: Expression::Object { properties },
+        } if !properties.is_empty() => Some((ObjRef::Name(name.clone()), properties.len())),
+        Statement::Let {
+            name,
+            value: Expression::Object { properties },
+            ..
+        } if !properties.is_empty() => Some((ObjRef::Name(name.clone()), properties.len())),
+        _ => None,
+    }
+}
+
+fn object_properties_mut(stmt: &mut Statement) -> Option<&mut Vec<ObjectProperty>> {
+    match stmt {
+        Statement::Assign {
+            value: Expression::Object { properties },
+            ..
+        }
+        | Statement::Let {
+            value: Expression::Object { properties },
+            ..
+        } => Some(properties),
+        _ => None,
+    }
+}
+
 // `obj[N] = val` with a constant N < prop_count → (N, val).
-fn slot_index_fill(stmt: &Statement, obj_reg: u32, prop_count: usize) -> Option<(usize, Expression)> {
-    if let Statement::Assign {
-        target: AssignTarget::Index { object: Expression::Value(Value::Register(r)), key },
+fn slot_index_fill(stmt: &Statement, obj: &ObjRef, prop_count: usize) -> Option<(usize, Expression)> {
+    let Statement::Assign {
+        target: AssignTarget::Index { object, key },
         value,
     } = stmt
-    {
-        if *r != obj_reg {
-            return None;
+    else {
+        return None;
+    };
+    let matches_obj = match (obj, object) {
+        (ObjRef::Register(r), Expression::Value(Value::Register(r2))) => r == r2,
+        (ObjRef::Name(n), Expression::Value(Value::Variable(n2))) => n == n2,
+        _ => false,
+    };
+    if !matches_obj {
+        return None;
+    }
+    let n = match key {
+        Expression::Value(Value::Constant(crate::ir::Constant::Integer(n))) if *n >= 0 => {
+            *n as usize
         }
-        let n = match key {
-            Expression::Value(Value::Constant(crate::ir::Constant::Integer(n))) if *n >= 0 => {
-                *n as usize
+        _ => return None,
+    };
+    if n < prop_count {
+        Some((n, value.clone()))
+    } else {
+        None
+    }
+}
+
+fn obj_reassigned(stmt: &Statement, obj: &ObjRef) -> bool {
+    match (obj, stmt) {
+        (
+            ObjRef::Register(r),
+            Statement::Assign {
+                target: AssignTarget::Register(r2),
+                ..
+            },
+        ) => r == r2,
+        (
+            ObjRef::Name(n),
+            Statement::Assign {
+                target: AssignTarget::Variable(n2),
+                ..
+            },
+        ) => n == n2,
+        (ObjRef::Name(n), Statement::Let { name, .. }) => name == n,
+        _ => false,
+    }
+}
+
+fn obj_used(stmt: &Statement, obj: &ObjRef) -> bool {
+    match obj {
+        ObjRef::Register(r) => is_reg_used(stmt, *r),
+        ObjRef::Name(n) => stmt_uses_var(stmt, n),
+    }
+}
+
+fn stmt_uses_var(stmt: &Statement, name: &str) -> bool {
+    match stmt {
+        Statement::Assign { target, value } => {
+            target_uses_var(target, name) || expr_uses_var(value, name)
+        }
+        Statement::Let { value, .. } => expr_uses_var(value, name),
+        Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(e) => {
+            expr_uses_var(e, name)
+        }
+        Statement::If { condition, .. }
+        | Statement::While { condition, .. }
+        | Statement::DoWhile { condition, .. } => expr_uses_var(condition, name),
+        _ => false,
+    }
+}
+
+fn target_uses_var(target: &AssignTarget, name: &str) -> bool {
+    match target {
+        AssignTarget::Member { object, .. } => expr_uses_var(object, name),
+        AssignTarget::Index { object, key } => {
+            expr_uses_var(object, name) || expr_uses_var(key, name)
+        }
+        _ => false,
+    }
+}
+
+fn expr_uses_var(expr: &Expression, name: &str) -> bool {
+    use crate::ir::Visitor;
+    struct C<'a>(&'a str, bool);
+    impl Visitor<'_> for C<'_> {
+        fn visit_expression(&mut self, e: &Expression) {
+            if let Expression::Value(Value::Variable(n)) = e {
+                if n == self.0 {
+                    self.1 = true;
+                    return;
+                }
             }
-            _ => return None,
-        };
-        if n < prop_count {
-            return Some((n, value.clone()));
+            if !self.1 {
+                self.walk_expression(e);
+            }
         }
     }
-    None
+    let mut c = C(name, false);
+    c.visit_expression(expr);
+    c.1
 }
 
 fn is_placeholder(expr: &Expression) -> bool {
@@ -504,5 +612,88 @@ fn count_register_assigns(stmts: &[Statement], counts: &mut std::collections::Ha
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{Constant, VarKind};
+
+    fn null() -> Expression {
+        Expression::Value(Value::Constant(Constant::Null))
+    }
+
+    fn themes(prop: &str) -> Expression {
+        Expression::Member {
+            object: Box::new(Expression::Value(Value::Variable("Themes".into()))),
+            property: PropertyKey::Ident(prop.into()),
+            optional: false,
+        }
+    }
+
+    fn index_assign(name: &str, slot: i32, value: Expression) -> Statement {
+        Statement::Assign {
+            target: AssignTarget::Index {
+                object: Expression::Value(Value::Variable(name.into())),
+                key: Expression::Value(Value::Constant(Constant::Integer(slot))),
+            },
+            value,
+        }
+    }
+
+    #[test]
+    fn folds_named_let_slot_fills() {
+        let mut stmts = vec![
+            Statement::Let {
+                name: "obj".into(),
+                value: Expression::Object {
+                    properties: vec![
+                        ObjectProperty {
+                            key: PropertyKey::Ident("default".into()),
+                            value: null(),
+                        },
+                        ObjectProperty {
+                            key: PropertyKey::Ident("active".into()),
+                            value: null(),
+                        },
+                    ],
+                },
+                kind: VarKind::Let,
+            },
+            index_assign("obj", 0, themes("DEFAULT")),
+            index_assign("obj", 1, themes("ACTIVE")),
+        ];
+        fold_slot_index_fills(&mut stmts);
+        assert_eq!(stmts.len(), 1, "fills should be consumed: {stmts:?}");
+        match &stmts[0] {
+            Statement::Let {
+                value: Expression::Object { properties },
+                ..
+            } => {
+                assert!(matches!(&properties[0].value, Expression::Member { .. }));
+                assert!(matches!(&properties[1].value, Expression::Member { .. }));
+            }
+            other => panic!("expected folded Let object, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn does_not_fold_non_placeholder_numeric_key() {
+        let mut stmts = vec![
+            Statement::Let {
+                name: "obj".into(),
+                value: Expression::Object {
+                    properties: vec![ObjectProperty {
+                        key: PropertyKey::Ident("a".into()),
+                        value: Expression::Value(Value::Constant(Constant::Integer(1))),
+                    }],
+                },
+                kind: VarKind::Let,
+            },
+            index_assign("obj", 0, themes("DEFAULT")),
+        ];
+        fold_slot_index_fills(&mut stmts);
+        assert_eq!(stmts.len(), 2, "non-placeholder must stay: {stmts:?}");
     }
 }

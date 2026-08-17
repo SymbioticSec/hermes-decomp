@@ -39,13 +39,14 @@ pub use generator::{
 pub use inline::{
     cleanup_noise, extra_writes_from_nested_bodies, fold_array_literals, fold_object_literals,
     inline_expressions, inline_named_variables, insert_declarations,
-    insert_declarations_with_extra_writes, rename_reserved_words, simplify_arguments_copy,
+    insert_declarations_with_extra_writes, insert_declarations_with_outer,
+    rename_reserved_words, simplify_arguments_copy,
     strip_hermes_this,
 };
 pub use logic_simplify::simplify_logic_advanced;
 pub use module_hoist::hoist_module_loaders;
 pub use name_inference::infer_names;
-pub use objects::transform_object_literals;
+pub use objects::{fold_slot_index_fills, transform_object_literals};
 pub use optimize::optimize_statements;
 pub use patterns::{convert_while_true_loops, detect_for_in_loops, detect_for_of_loops, detect_legacy_for_of, detect_patterns, fold_guarded_loops, reconstruct_jsx};
 pub use propagate::{propagate, propagate_copies, resolve_global_reads, PropagationConfig};
