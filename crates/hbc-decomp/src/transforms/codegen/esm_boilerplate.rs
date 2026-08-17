@@ -148,15 +148,10 @@ impl Codegen {
             return None;
         }
 
-        // Absolute module ID lookup
-        // Try dep_names first (index-based, for ESM mode)
-        if let Some(ref dep_map) = self.dep_names {
-            if let Some(name) = dep_map.get(&id) {
-                return Some(name.clone());
-            }
-        }
-
-        // Fallback to import_map (module_id based)
+        // Absolute module ID lookup. Must NOT consult `dep_names` (those keys are
+        // dependency *indices* within a factory, not absolute Metro module ids).
+        // Hoisted loads inject `loader(absId)`; probing dep_names would mis-name
+        // any absId that collides with a small dep index.
         if let Some(ref imp_map) = self.import_map {
             if let Some(name) = imp_map.get(&id) {
                 return Some(name.clone());

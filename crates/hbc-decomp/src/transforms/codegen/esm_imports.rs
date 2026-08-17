@@ -99,15 +99,48 @@ fn parse_named_import(line: &str) -> Option<(Vec<String>, String)> {
     // Skip the ` } ` separator; tail is `from "src" ...;`, re-joined as
     // `import { specs } from ...`.
     let tail = &rest[boundary + 3..];
-    let specs: Vec<String> = inner
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let specs = split_import_specs(inner);
     if specs.is_empty() {
         return None;
     }
     Some((specs, tail.to_string()))
+}
+
+// Split named-import specifiers on commas that are outside quotes so
+// `import { "foo, bar" as x } from "M"` stays one specifier.
+fn split_import_specs(inner: &str) -> Vec<String> {
+    let mut specs = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut escape = false;
+    for c in inner.chars() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if escape {
+                escape = false;
+            } else if c == '\\' {
+                escape = true;
+            } else if c == q {
+                quote = None;
+            }
+        } else if c == '"' || c == '\'' {
+            quote = Some(c);
+            cur.push(c);
+        } else if c == ',' {
+            let t = cur.trim();
+            if !t.is_empty() {
+                specs.push(t.to_string());
+            }
+            cur.clear();
+        } else {
+            cur.push(c);
+        }
+    }
+    let t = cur.trim();
+    if !t.is_empty() {
+        specs.push(t.to_string());
+    }
+    specs
 }
 
 #[cfg(test)]
@@ -197,6 +230,18 @@ mod tests {
                 "import a from \"M\" /* 1 */;".to_string(),
                 "import b from \"M\" /* 1 */;".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn keeps_comma_inside_string_export_name() {
+        let input = vec![
+            "import { \"foo, bar\" as x } from \"M\" /* 1 */;".to_string(),
+            "import { y } from \"M\" /* 1 */;".to_string(),
+        ];
+        assert_eq!(
+            consolidate_imports(input),
+            vec!["import { \"foo, bar\" as x, y } from \"M\" /* 1 */;".to_string()]
         );
     }
 }
