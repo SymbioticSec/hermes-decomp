@@ -1,5 +1,5 @@
 use crate::ir::{AssignTarget, Expression, Statement, Value, VarKind};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 // Insert `const`/`let` declarations for first-assignments of variables.
 // Converts `x = expr;` into `const x = expr;` (if never reassigned) or `let x = expr;`.
@@ -16,6 +16,20 @@ pub fn insert_declarations_with_extra_writes(
     stmts: &mut Vec<Statement>,
     params: &[String],
     extra_writes: &BTreeMap<String, usize>,
+) {
+    insert_declarations_with_outer(stmts, params, extra_writes, &HashSet::new(), false);
+}
+
+// Like `insert_declarations_with_extra_writes`, but:
+// - `outer_names` are ancestor *env-slot* captures and must stay Assign
+//   (not every ancestor local — that dropped `let obj` / `let _Error` in children)
+// - `skip_env_slots` leaves `closure_*` / `cN` as Assign (nested handlers)
+pub fn insert_declarations_with_outer(
+    stmts: &mut Vec<Statement>,
+    params: &[String],
+    extra_writes: &BTreeMap<String, usize>,
+    outer_names: &HashSet<String>,
+    skip_env_slots: bool,
 ) {
     // Phase 1: Count total writes per variable across the entire function body
     let mut write_count: BTreeMap<String, usize> = BTreeMap::new();
@@ -45,13 +59,18 @@ pub fn insert_declarations_with_extra_writes(
     let mut ref_out_loop = std::collections::HashSet::new();
     collect_scope_info(stmts, false, &mut assigned_in_loop, &mut assigned_out_loop, &mut ref_out_loop);
 
+    let skip_decl = |v: &str| -> bool {
+        param_set.contains(v)
+            || let_declared.contains(v)
+            || outer_names.contains(v)
+            || (skip_env_slots && is_env_slot_name(v))
+    };
     let mut hoist: Vec<String> = assigned_in_loop
         .iter()
         .filter(|v| {
             !assigned_out_loop.contains(*v)
                 && ref_out_loop.contains(*v)
-                && !param_set.contains(v.as_str())
-                && !let_declared.contains(*v)
+                && !skip_decl(v)
                 && is_valid_js_identifier(v)
         })
         .cloned()
@@ -63,7 +82,7 @@ pub fn insert_declarations_with_extra_writes(
     let mut pattern_names: Vec<String> = Vec::new();
     collect_pattern_names(stmts, &mut pattern_names);
     for name in pattern_names {
-        if !param_set.contains(name.as_str()) && is_valid_js_identifier(&name) {
+        if !skip_decl(&name) && is_valid_js_identifier(&name) {
             hoist.push(name);
         }
     }
@@ -87,14 +106,32 @@ pub fn insert_declarations_with_extra_writes(
     }
 
     // Phase 2: Walk statements, converting first assignment to declaration
-    insert_decls_in_block(stmts, &write_count, &let_declared, &param_set, &free_closures, &mut declared);
+    insert_decls_in_block(
+        stmts,
+        &write_count,
+        &let_declared,
+        &param_set,
+        &free_closures,
+        &mut DeclSkip {
+            outer_names,
+            skip_env_slots,
+            declared: &mut declared,
+        },
+    );
+}
+
+struct DeclSkip<'a> {
+    outer_names: &'a HashSet<String>,
+    skip_env_slots: bool,
+    declared: &'a mut HashSet<String>,
 }
 
 fn is_env_slot_name(name: &str) -> bool {
-    // closure_0, c0, c12, typical Hermes env / counter bindings
-    if name.strip_prefix("closure_").is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
-    {
-        return true;
+    // closure_0, closure_1_2, c0, c12 — Hermes env / counter bindings
+    if let Some(rest) = name.strip_prefix("closure_") {
+        return !rest.is_empty()
+            && rest.chars().all(|c| c.is_ascii_digit() || c == '_')
+            && rest.chars().any(|c| c.is_ascii_digit());
     }
     name.len() >= 2
         && name.starts_with('c')
@@ -470,10 +507,10 @@ fn count_writes_stmt(
 fn insert_decls_in_block(
     stmts: &mut [Statement],
     write_count: &BTreeMap<String, usize>,
-    let_declared: &std::collections::HashSet<String>,
-    params: &std::collections::HashSet<&str>,
-    free_closures: &std::collections::HashSet<String>,
-    declared: &mut std::collections::HashSet<String>,
+    let_declared: &HashSet<String>,
+    params: &HashSet<&str>,
+    free_closures: &HashSet<String>,
+    skip: &mut DeclSkip<'_>,
 ) {
     for stmt in stmts.iter_mut() {
         match stmt {
@@ -482,11 +519,13 @@ fn insert_decls_in_block(
                 if is_valid_js_identifier(name)
                     && !params.contains(name.as_str())
                     && !let_declared.contains(name)
-                    && !declared.contains(name)
+                    && !skip.declared.contains(name)
                     && !free_closures.contains(name)
+                    && !skip.outer_names.contains(name)
+                    && !(skip.skip_env_slots && is_env_slot_name(name))
                     && !is_self_assignment_var(name, value)
                 {
-                    declared.insert(name.clone());
+                    skip.declared.insert(name.clone());
                     let writes = write_count.get(name).copied().unwrap_or(1);
                     // Prefer `let` when mutated more than once, or when the name
                     // looks like a Hermes env slot (`c0`, `closure_N`), those
@@ -508,9 +547,9 @@ fn insert_decls_in_block(
                 let name = format!("r{r}");
                 if !params.contains(name.as_str())
                     && !let_declared.contains(&name)
-                    && !declared.contains(&name)
+                    && !skip.declared.contains(&name)
                 {
-                    declared.insert(name.clone());
+                    skip.declared.insert(name.clone());
                     let writes = write_count.get(&name).copied().unwrap_or(1);
                     let kind = if writes <= 1 { VarKind::Const } else { VarKind::Let };
                     *stmt = Statement::Let {
@@ -521,28 +560,28 @@ fn insert_decls_in_block(
                 }
             }
             Statement::If { then_body, else_body, .. } => {
-                insert_decls_in_block(then_body, write_count, let_declared, params, free_closures, declared);
-                insert_decls_in_block(else_body, write_count, let_declared, params, free_closures, declared);
+                insert_decls_in_block(then_body, write_count, let_declared, params, free_closures, skip);
+                insert_decls_in_block(else_body, write_count, let_declared, params, free_closures, skip);
             }
             Statement::While { body, .. } | Statement::DoWhile { body, .. }
             | Statement::For { body, .. } | Statement::ForIn { body, .. }
             | Statement::ForOf { body, .. } => {
-                insert_decls_in_block(body, write_count, let_declared, params, free_closures, declared);
+                insert_decls_in_block(body, write_count, let_declared, params, free_closures, skip);
             }
             Statement::Block(inner) => {
-                insert_decls_in_block(inner, write_count, let_declared, params, free_closures, declared);
+                insert_decls_in_block(inner, write_count, let_declared, params, free_closures, skip);
             }
             Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
-                insert_decls_in_block(try_body, write_count, let_declared, params, free_closures, declared);
-                insert_decls_in_block(catch_body, write_count, let_declared, params, free_closures, declared);
-                insert_decls_in_block(finally_body, write_count, let_declared, params, free_closures, declared);
+                insert_decls_in_block(try_body, write_count, let_declared, params, free_closures, skip);
+                insert_decls_in_block(catch_body, write_count, let_declared, params, free_closures, skip);
+                insert_decls_in_block(finally_body, write_count, let_declared, params, free_closures, skip);
             }
             Statement::Switch { cases, default, .. } => {
                 for (_, body) in cases.iter_mut() {
-                    insert_decls_in_block(body, write_count, let_declared, params, free_closures, declared);
+                    insert_decls_in_block(body, write_count, let_declared, params, free_closures, skip);
                 }
                 if let Some(d) = default {
-                    insert_decls_in_block(d, write_count, let_declared, params, free_closures, declared);
+                    insert_decls_in_block(d, write_count, let_declared, params, free_closures, skip);
                 }
             }
             _ => {}
@@ -711,6 +750,67 @@ mod nested_const_tests {
         match &parent[0] {
             Statement::Let { kind, .. } => assert_eq!(*kind, VarKind::Const),
             other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_env_slot_write_stays_assign() {
+        let mut child = vec![Statement::Assign {
+            target: AssignTarget::Variable("closure_1".into()),
+            value: Expression::Value(Value::Variable("payload".into())),
+        }];
+        let mut outer = HashSet::new();
+        outer.insert("closure_1".into());
+        insert_declarations_with_outer(&mut child, &[], &BTreeMap::new(), &outer, true);
+        match &child[0] {
+            Statement::Assign {
+                target: AssignTarget::Variable(n),
+                ..
+            } => assert_eq!(n, "closure_1"),
+            other => panic!("expected Assign, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_env_slot_skipped_by_flag_without_outer() {
+        let mut child = vec![Statement::Assign {
+            target: AssignTarget::Variable("closure_1_2".into()),
+            value: Expression::Array { elements: vec![] },
+        }];
+        insert_declarations_with_outer(&mut child, &[], &BTreeMap::new(), &HashSet::new(), true);
+        assert!(
+            matches!(&child[0], Statement::Assign { .. }),
+            "env slot must stay assign when skip_env_slots, got {:?}",
+            child[0]
+        );
+    }
+
+    #[test]
+    fn factory_env_slot_still_declared() {
+        let mut parent = vec![Statement::Assign {
+            target: AssignTarget::Variable("closure_1".into()),
+            value: Expression::Array { elements: vec![] },
+        }];
+        insert_declarations_with_extra_writes(&mut parent, &[], &BTreeMap::new());
+        match &parent[0] {
+            Statement::Let { name, .. } => assert_eq!(name, "closure_1"),
+            other => panic!("factory must still declare env slot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn generic_local_declared_when_outer_is_only_env_slots() {
+        // Ancestor locals like `obj` must not suppress the child's own `let obj`.
+        let mut child = vec![Statement::Assign {
+            target: AssignTarget::Variable("obj".into()),
+            value: Expression::Object { properties: vec![] },
+        }];
+        let mut outer = HashSet::new();
+        outer.insert("closure_1".into());
+        insert_declarations_with_outer(&mut child, &[], &BTreeMap::new(), &outer, true);
+        match &child[0] {
+            Statement::Let { name, .. } => assert_eq!(name, "obj"),
+            other => panic!("expected Let obj, got {other:?}"),
         }
     }
 }

@@ -158,15 +158,19 @@ impl PipelineContext {
                 child_functions.entry(parent).or_default().push(child);
             }
         }
-        PipelineContext {
+        let mut ctx = PipelineContext {
             all_ir: snap.all_ir,
             registry: snap.registry,
             closure_ctx: snap.closure_ctx,
             global_analysis: snap.global_analysis,
             inline_bodies: Arc::new(snap.inline_bodies),
             child_functions,
+            ancestor_env_slots: BTreeMap::new(),
             worklet_sources: snap.worklet_sources,
-        }
+        };
+        // Also derived from closure_ctx; recompute rather than serialize.
+        ctx.ancestor_env_slots = ctx.precompute_ancestor_env_slot_names();
+        ctx
     }
 
     fn to_snapshot(&self) -> PipelineSnapshot {
@@ -228,6 +232,7 @@ mod tests {
             global_analysis: GlobalAnalysis::new(),
             inline_bodies: Arc::new(BTreeMap::from([(42u32, "body".to_string())])),
             child_functions: BTreeMap::new(),
+            ancestor_env_slots: BTreeMap::new(),
             worklet_sources: BTreeMap::new(),
         };
 
