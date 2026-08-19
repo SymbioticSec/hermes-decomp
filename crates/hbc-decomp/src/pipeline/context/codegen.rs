@@ -92,6 +92,16 @@ impl PipelineContext {
 
         // Lightweight cleanup after IPA renames (self-assignments, reserved words)
         statements = transforms::cleanup_noise(statements);
+        // Drop dead stores of a reused slot (the entry function's
+        // `nativePerformanceNowResult = __d(...)` repeated per Metro module): keep
+        // the side-effecting call, discard the useless assignment target.
+        statements = transforms::eliminate_dead_stores(statements);
+        // Drop dead argument-setup copies (`let tmp19 = tmp12; ...` left over when a
+        // call was rebuilt from its source registers) and other unread pure temps.
+        statements = transforms::remove_dead_temp_bindings(statements);
+        // Fold the long `__d(factory, id, deps)` registration run (the modules it
+        // wires are already rendered above) into a single marker comment.
+        statements = transforms::collapse_metro_registry(statements);
         transforms::rename_reserved_words(&mut statements);
 
         // Get function name

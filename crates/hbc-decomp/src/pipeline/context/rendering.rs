@@ -121,6 +121,13 @@ impl PipelineContext {
                     transforms::exports::rename_param_registers(&mut body_stmts, param_names);
                 }
                 body_stmts = transforms::cleanup_noise(body_stmts);
+                // Drop dead stores of a reused slot (`nativePerformanceNowResult =
+                // __d(...)` repeated for every Metro module): keep the side-effecting
+                // call, discard the useless assignment target. Runs here, on the
+                // final named form, where these stores are consecutive.
+                body_stmts = transforms::eliminate_dead_stores(body_stmts);
+                // Drop dead argument-setup copies and other unread pure temps.
+                body_stmts = transforms::remove_dead_temp_bindings(body_stmts);
                 transforms::rename_reserved_words(&mut body_stmts);
                 let extra = self.extra_writes_for_function(func_id);
                 let empty = HashSet::new();
