@@ -17,13 +17,32 @@ pub fn infer_param_names_from_body(stmts: &[crate::ir::Statement]) -> Vec<(u32, 
     collect_param_property_accesses(stmts, &mut prop_accesses);
     for (idx, props) in &prop_accesses {
         if props.len() >= 2 && !hints.contains_key(idx) {
-            hints.entry(*idx).or_default().push("self".to_string());
+            // The set of properties read on a parameter is ground truth: a param
+            // read as `.email` and `.password` is a credentials object. When the
+            // signature is recognized (email+password -> "user", latitude+longitude
+            // -> "location", ...), use that concrete name; otherwise fall back to
+            // the generic method-receiver name "self".
+            let name = crate::analysis::naming::infer_type_from_properties(props)
+                .map(str::to_string)
+                .unwrap_or_else(|| "self".to_string());
+            hints.entry(*idx).or_default().push(name);
         }
     }
 
     hints
         .into_iter()
-        .filter_map(|(idx, names)| names.into_iter().next().map(|n| (idx, n)))
+        .filter_map(|(idx, names)| {
+            // Prefer a semantic name (a property/error-derived identifier) over a
+            // generic type name (`fn`/`arr`/`str`/...). Type names are only a
+            // last resort, so `arg0.type` beats `arg0.map(...)` regardless of the
+            // order they appear in the body.
+            let chosen = names
+                .iter()
+                .find(|n| !super::is_type_fallback_name(n.as_str()))
+                .or_else(|| names.first())
+                .cloned();
+            chosen.map(|n| (idx, n))
+        })
         .collect()
 }
 
@@ -118,6 +137,11 @@ fn collect_body_param_hints_target(
 fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Vec<String>>) {
     match expr {
         Expression::Call { callee, arguments } => {
+            // A parameter invoked directly (`arg0(...)`) is unambiguously a function,
+            // so fall back to the "fn" type name when nothing better is inferred.
+            if let Expression::Value(Value::Parameter(idx)) = &**callee {
+                hints.entry(*idx).or_default().push("fn".to_string());
+            }
             if let Expression::Member { object, property: PropertyKey::Ident(method), .. } = &**callee {
                 if let Expression::Value(Value::Parameter(idx)) = &**object {
                     if let Some(type_name) = param_name_from_method(method) {
@@ -182,5 +206,47 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
         Expression::Spread(inner) | Expression::Await(inner) => collect_body_param_hints_expr(inner, hints),
         Expression::Yield { value, .. } => collect_body_param_hints_expr(value, hints),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{PropertyKey, Statement};
+
+    fn member(idx: u32, prop: &str) -> Expression {
+        Expression::Member {
+            object: Box::new(Expression::Value(Value::Parameter(idx))),
+            property: PropertyKey::Ident(prop.to_string()),
+            optional: false,
+        }
+    }
+
+    // A semantic property name must win over a generic type name derived from a
+    // method call, regardless of the order they appear in the body.
+    #[test]
+    fn semantic_property_beats_type_name() {
+        // arg0.map(...) appears before arg0.type
+        let stmts = vec![
+            Statement::Expr(Expression::Call {
+                callee: Box::new(member(0, "map")),
+                arguments: vec![],
+            }),
+            Statement::Return(Some(member(0, "type"))),
+        ];
+        let hints = infer_param_names_from_body(&stmts);
+        assert_eq!(hints, vec![(0, "type".to_string())]);
+    }
+
+    // A parameter invoked directly is named with the "fn" type fallback when no
+    // better name is available.
+    #[test]
+    fn called_parameter_named_fn() {
+        let stmts = vec![Statement::Expr(Expression::Call {
+            callee: Box::new(Expression::Value(Value::Parameter(0))),
+            arguments: vec![Expression::Value(Value::Parameter(1))],
+        })];
+        let hints = infer_param_names_from_body(&stmts);
+        assert!(hints.contains(&(0, "fn".to_string())));
     }
 }

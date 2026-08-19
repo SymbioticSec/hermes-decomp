@@ -153,6 +153,14 @@ impl FactoryRoles {
             if name == lit {
                 return true;
             }
+            // Reserved-word / builtin collision escaped form: register naming
+            // prefixes a `_` when a factory role name collides (`require` ->
+            // `_require`, `exports` -> `_exports`, ...). Still the same role, so
+            // require/exports resolution must recognize it, otherwise a captured
+            // `_require(id)` is never resolved to its module.
+            if name.strip_prefix('_') == Some(lit) {
+                return true;
+            }
         }
         // Numeric parameter name matching (arg0, arg1, p0, p1, etc.)
         if let Some(p_idx) = Self::extract_param_index(name) {

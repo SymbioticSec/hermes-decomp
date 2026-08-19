@@ -19,7 +19,8 @@ use std::collections::HashMap;
 use std::collections::BTreeMap;
 
 use inference::infer_module_name_from_stmts;
-use phases::{propagate_module_names_to_closures, propagate_reexport_names, reverse_require_naming};
+use phases::{propagate_reexport_names, reverse_require_naming};
+pub(crate) use phases::propagate_module_names_to_closures;
 use require_resolution::resolve_require_module;
 
 // Maximum iterations for dependency-chain module naming.
@@ -156,6 +157,32 @@ pub fn propagate_module_names(
     let named_total = registry.modules.values().filter(|m| m.name.is_some()).count();
     let total = registry.modules.len();
     log::debug!("[pipeline] module naming: {named_total}/{total} named ({inferred_count} inferred, {reexport_count} re-export)");
+
+    // Per-module trace: for each module, its resolved name (or UNNAMED) plus the
+    // signals available to name it (dependencies, export keys). This makes it clear
+    // WHY a given id stayed `module_N` (no meaningful export, anonymous factory,
+    // deps all unnamed, ...). Enable with `--log modname=trace`.
+    if log::log_enabled!(target: "modname", log::Level::Trace) {
+        let mut ids: Vec<_> = registry.modules.keys().copied().collect();
+        ids.sort();
+        for id in ids {
+            let m = &registry.modules[&id];
+            let mut exports: Vec<&String> = m.exports.keys().collect();
+            exports.sort();
+            match &m.name {
+                Some(name) => log::trace!(
+                    target: "modname",
+                    "module {id}: NAMED {name:?} (fn {}, {} deps, exports {:?})",
+                    m.function_id, m.dependencies.len(), exports
+                ),
+                None => log::trace!(
+                    target: "modname",
+                    "module {id}: UNNAMED (fn {}, deps {:?}, exports {:?})",
+                    m.function_id, m.dependencies, exports
+                ),
+            }
+        }
+    }
 
     // PHASE 1: Detect closure_N = require(id) and propagate module names to closure slots
     propagate_module_names_to_closures(functions, registry, closure_ctx);

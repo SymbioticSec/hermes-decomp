@@ -5,6 +5,14 @@ use std::path::PathBuf;
 #[command(name = "hermes-dec")]
 #[command(about = "Hermes bytecode disassembler/decompiler (HBC versions 40-99)", long_about = None)]
 pub struct Cli {
+    /// Enable log tracing. Accepts an env_logger filter spec, e.g. `--log debug`,
+    /// `--log trace`, or per-target `--log modname=trace,require=trace,closure=debug`.
+    /// Overrides the RUST_LOG environment variable when set. Useful targets:
+    /// `modname` (module naming decisions), `require` (require call resolution),
+    /// `closure` (closure slot naming), and `pipeline` (stage timings).
+    #[arg(long, global = true)]
+    pub log: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -119,6 +127,14 @@ pub enum Command {
         /// Resolve closure variables across functions (slower, more readable).
         #[arg(long)]
         resolve_closures: bool,
+        /// Deep naming: iterate naming to a fixed point and ground names in the
+        /// bytecode data flow. Slower; recovers more real names and cuts noise.
+        #[arg(long)]
+        deep: bool,
+        /// Stable output for build to build diffing: drop the volatile module id
+        /// comments (the Metro id shifts between builds and churns every import).
+        #[arg(long)]
+        stable: bool,
         /// Output the IR as JSON instead of JavaScript.
         #[arg(long)]
         json: bool,

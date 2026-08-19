@@ -161,6 +161,17 @@ pub fn is_generic_name(name: &str) -> bool {
         return true;
     }
 
+    // Positional-index guesses (`arr[0]` -> "first"). Fine as a local variable
+    // name, but a positional guess must never seed or propagate a parameter name
+    // across functions: `first.join("")` fed to a callee is the joined value, not
+    // the array, so the callee's parameter is not "first". Treat these as generic
+    // so cross-function param inference rejects them (an honest argN beats a wrong
+    // "first").
+    let positional = ["first", "second", "third", "fourth", "last"];
+    if positional.contains(&name) {
+        return true;
+    }
+
     // Check for JS reserved keywords
     let reserved = [
         "default",

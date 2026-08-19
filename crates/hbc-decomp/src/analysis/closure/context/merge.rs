@@ -131,10 +131,13 @@ impl ClosureContext {
     ///
     /// Must not be applied to arbitrary functions: their `argN` are normal
     /// parameters, not Metro roles (see Babel helpers mislabeled as `require`).
-    pub fn apply_metro_factory_param_roles(&mut self, is_factory: impl Fn(u32) -> bool) {
+    pub fn apply_metro_factory_param_roles(
+        &mut self,
+        roles_for: impl Fn(u32) -> Option<crate::analysis::metro::FactoryRoles>,
+    ) {
         for (&func_id, info) in self.function_closures.iter_mut() {
-            if is_factory(func_id) {
-                info.apply_metro_param_roles();
+            if let Some(roles) = roles_for(func_id) {
+                info.apply_metro_param_roles(&roles);
             }
         }
     }
