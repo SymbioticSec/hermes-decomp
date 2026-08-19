@@ -1,4 +1,5 @@
 mod analysis;
+mod ancestor_inherit;
 mod closure_def_naming;
 mod closure_definitions;
 mod closure_inference;
@@ -10,6 +11,7 @@ mod suggestions;
 use crate::ir::Statement;
 use state::VariableNamer;
 
+pub use ancestor_inherit::inherit_ancestor_closure_names;
 pub use closure_definitions::{rename_closure_variables, rename_closure_variables_cross_function};
 pub use closure_def_naming::rename_closures_from_definitions;
 use analysis::analyze_stmt;

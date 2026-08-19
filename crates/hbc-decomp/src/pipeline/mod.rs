@@ -32,6 +32,13 @@ pub struct DecompileOptionsV2 {
     pub simplify: bool,
     pub recover_structures: bool,
     pub assembly_mode: bool,
+    /// Deep naming: iterate the naming stages to a fixed point and ground names in
+    /// the bytecode data flow. Slower; recovers more real names and cuts noise.
+    pub deep: bool,
+    /// Stable output for build to build diffing: name otherwise-unnamed modules from
+    /// a hash of their stable content instead of the volatile Metro id, so the same
+    /// module keeps the same name across builds.
+    pub stable: bool,
 }
 
 impl DecompileOptionsV2 {
@@ -43,6 +50,8 @@ impl DecompileOptionsV2 {
             simplify: true,
             recover_structures: true,
             assembly_mode: false,
+            deep: false,
+            stable: false,
         }
     }
 
@@ -54,6 +63,8 @@ impl DecompileOptionsV2 {
             simplify: false,
             recover_structures: true,
             assembly_mode: false,
+            deep: false,
+            stable: false,
         }
     }
 }

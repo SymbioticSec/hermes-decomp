@@ -48,6 +48,7 @@ pub(crate) fn is_obviously_generic(name: &str) -> bool {
 pub use detection::MetroDetector;
 pub use graph::{DependencyGraph, DependencyTree};
 pub use propagation::{propagate_module_names, rewrite_dependency_maps_late};
+pub(crate) use propagation::propagate_module_names_to_closures;
 pub use registry::{FactoryRoles, MetroModule, MetroRegistry};
 
 // Helper to expose analyze as a static method on MetroRegistry for compatibility

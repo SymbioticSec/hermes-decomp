@@ -106,7 +106,19 @@ pub(super) fn reverse_require_naming(
                 if let Some(dep_id) = mod_id {
                     if let Some(ref name) = var_name {
                         if is_meaningful_require_name(name) {
+                            log::trace!(
+                                target: "require",
+                                "reverse-name: module {dep_id} <- var {name:?} (from factory fn {fid})"
+                            );
                             *votes.entry(dep_id).or_default().entry(name.clone()).or_insert(0) += 1;
+                        } else {
+                            // The capturing variable is generic (`_require`, `tmp`, `rN`, ...),
+                            // so it cannot name the dependency. This is the common reason a
+                            // required module stays unnamed even though it is clearly used.
+                            log::trace!(
+                                target: "require",
+                                "reverse-name: module {dep_id} required as {name:?} in fn {fid} but name is generic, no vote"
+                            );
                         }
                     }
                 }
@@ -317,7 +329,7 @@ pub(super) fn propagate_reexport_names(
 }
 
 // PHASE 1: Detect closure_N = require(id) and propagate module names to closure slots.
-pub(super) fn propagate_module_names_to_closures(
+pub(crate) fn propagate_module_names_to_closures(
     functions: &mut BTreeMap<u32, Vec<Statement>>,
     registry: &MetroRegistry,
     closure_ctx: &mut Option<ClosureContext>,

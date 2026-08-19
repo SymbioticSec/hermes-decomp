@@ -98,14 +98,23 @@ fn collect_from_throw_expr(expr: &Expression, out: &mut BTreeMap<u32, Vec<String
     let mut params = Vec::new();
     let mut words = Vec::new();
     collect_params_and_strings(expr, &mut params, &mut words);
-    if params.is_empty() || words.is_empty() {
-        // Still try: error message alone, single param in enclosing... skip if no param in tree
+    // Deduplicate the parameters referenced in this throw tree: `throw Error(msg,
+    // arg0, arg0)` is still a single parameter.
+    params.sort_unstable();
+    params.dedup();
+    if words.is_empty() {
         return;
     }
+    // Only a throw that references exactly ONE parameter yields a reliable hint:
+    // the message word belongs to that parameter. When several parameters appear
+    // in the same message (`"bad email or password", email, pass`), pairing a word
+    // to a parameter by position is a guess, so no name is emitted and the slots
+    // stay argN rather than getting a cross assigned wrong name.
+    let [p] = params[..] else {
+        return;
+    };
     for word in words {
-        for &p in &params {
-            out.entry(p).or_default().push(word.clone());
-        }
+        out.entry(p).or_default().push(word);
     }
 }
 
@@ -221,5 +230,24 @@ mod tests {
         });
         let hints = hints_from_error_strings(&[throw, throw2]);
         assert!(hints.get(&0).is_some_and(|v| v.iter().any(|s| s == "email")));
+    }
+
+    #[test]
+    fn multiple_params_in_one_message_yield_no_hint() {
+        // `throw new Error("bad email or password", arg0, arg1)`: pairing "email"
+        // or "password" to arg0 vs arg1 by position would be a guess, so neither
+        // parameter is named and both stay argN.
+        let throw = Statement::Throw(Expression::New {
+            callee: Box::new(Expression::Value(Value::Variable("Error".into()))),
+            arguments: vec![
+                Expression::Value(Value::Constant(Constant::String(
+                    "bad email or password".into(),
+                ))),
+                Expression::Value(Value::Parameter(0)),
+                Expression::Value(Value::Parameter(1)),
+            ],
+        });
+        let hints = hints_from_error_strings(&[throw]);
+        assert!(hints.is_empty());
     }
 }
