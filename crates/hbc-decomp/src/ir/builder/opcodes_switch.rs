@@ -5,6 +5,15 @@ use super::opcodes_load::reg_expr;
 use crate::ir::{Expression, Statement};
 use crate::BytecodeFile;
 
+// Hermes stores a switch jump table immediately after the function's bytecode,
+// aligned to 4 bytes relative to the function start. The interpreter reads it at
+// `align4((ip - functionStart) + jmpTableOffset)`, so the raw `inst.offset +
+// jmpTableIdx` must be rounded up to the next multiple of 4 before use; skipping
+// this reads the table 1-3 bytes early and yields garbage targets.
+fn align4(x: usize) -> usize {
+    (x + 3) & !3
+}
+
 // Handle SwitchImm opcode.
 pub fn handle_switch_imm(
     inst: &crate::Instruction,
@@ -21,8 +30,10 @@ pub fn handle_switch_imm(
 
     let default_target = (inst.offset as i32).wrapping_add(default_offset) as u32;
 
-    let table_start_local = (inst.offset as usize).saturating_add(jmp_table_idx as usize);
-    let table_start_global = table_start_local.saturating_add(func_bytecode_offset as usize);
+    let table_start_unaligned = (inst.offset as usize)
+        .saturating_add(jmp_table_idx as usize)
+        .saturating_add(func_bytecode_offset as usize);
+    let table_start_global = align4(table_start_unaligned);
 
     // Malformed bytecode can have maxVal < minVal; a plain `max_val - min_val`
     // underflows (panics in debug, wraps to ~4 billion in release and then
@@ -84,8 +95,10 @@ pub fn handle_string_switch_imm(
 
     let default_target = (inst.offset as i32).wrapping_add(default_offset) as u32;
 
-    let table_start_local = (inst.offset as usize).saturating_add(jmp_table_idx as usize);
-    let table_start_global = table_start_local.saturating_add(func_bytecode_offset as usize);
+    let table_start_unaligned = (inst.offset as usize)
+        .saturating_add(jmp_table_idx as usize)
+        .saturating_add(func_bytecode_offset as usize);
+    let table_start_global = align4(table_start_unaligned);
 
     let count = num_cases as usize;
 

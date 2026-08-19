@@ -73,8 +73,10 @@ pub fn find_block_starts_with_handlers(
                     targets.insert(default_target);
 
                     // Read jump table: jmpTableIdx is a byte offset from the SwitchImm instruction
-                    let table_start_local = (inst.offset as usize).saturating_add(jmp_table_idx as usize);
-                    let table_start_global = table_start_local.saturating_add(func_bytecode_offset as usize);
+                    // Jump table is 4-byte aligned relative to the function start
+                    // (`align4(ipLocalOffset + jmpTableIdx)`); without the round-up
+                    // the table is read a few bytes early and yields garbage targets.
+                    let table_start_global = ((inst.offset as usize).saturating_add(jmp_table_idx as usize).saturating_add(func_bytecode_offset as usize) + 3) & !3;
                     // Guard against maxVal < minVal (would underflow) in malformed bytecode.
                     let count = max_val.checked_sub(min_val).map_or(0, |span| span as usize + 1);
 
@@ -111,8 +113,10 @@ pub fn find_block_starts_with_handlers(
                     let default_target = (inst.offset as i32).wrapping_add(default_offset) as u32;
                     targets.insert(default_target);
 
-                    let table_start_local = (inst.offset as usize).saturating_add(jmp_table_idx as usize);
-                    let table_start_global = table_start_local.saturating_add(func_bytecode_offset as usize);
+                    // Jump table is 4-byte aligned relative to the function start
+                    // (`align4(ipLocalOffset + jmpTableIdx)`); without the round-up
+                    // the table is read a few bytes early and yields garbage targets.
+                    let table_start_global = ((inst.offset as usize).saturating_add(jmp_table_idx as usize).saturating_add(func_bytecode_offset as usize) + 3) & !3;
                     let count = num_cases as usize;
 
                     if table_start_global + count * 4 <= file.instructions.len() {
