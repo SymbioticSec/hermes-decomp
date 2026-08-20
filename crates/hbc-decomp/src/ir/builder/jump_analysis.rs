@@ -97,32 +97,37 @@ pub fn find_block_starts_with_handlers(
             }
         }
 
-        // Handle StringSwitchImm (different operand layout: numCases instead of min/max)
+        // Handle StringSwitchImm (string-switch variant, see handle_string_switch_imm).
+        // Operands: Reg8 val, UInt32 <unused>, UInt32 jmpTableOffset, Addr32 defaultAddr, UInt32 numCases.
+        // The table holds numCases 8-byte entries: (u32 string id, i32 offset).
         if name == "StringSwitchImm" {
-            // Operands: Reg8 val, UInt32 jmpTableIdx, UInt32 numCases, Addr32 defaultAddr, UInt32 stringTableOffset
-            if let (Some(jmp_table_op), Some(num_cases_op), Some(default_op)) = (
-                inst.operands.get(1),
+            if let (Some(jmp_table_op), Some(default_op), Some(num_cases_op)) = (
                 inst.operands.get(2),
                 inst.operands.get(3),
+                inst.operands.get(4),
             ) {
-                if let (Some(jmp_table_idx), Some(num_cases), Some(default_offset)) = (
+                if let (Some(jmp_table_idx), Some(default_offset), Some(num_cases)) = (
                     jmp_table_op.value.as_u32(),
-                    num_cases_op.value.as_u32(),
                     default_op.value.as_i32(),
+                    num_cases_op.value.as_u32(),
                 ) {
                     let default_target = (inst.offset as i32).wrapping_add(default_offset) as u32;
                     targets.insert(default_target);
 
                     // Jump table is 4-byte aligned relative to the function start
-                    // (`align4(ipLocalOffset + jmpTableIdx)`); without the round-up
+                    // (`align4(ipLocalOffset + jmpTableOffset)`); without the round-up
                     // the table is read a few bytes early and yields garbage targets.
                     let table_start_global = ((inst.offset as usize).saturating_add(jmp_table_idx as usize).saturating_add(func_bytecode_offset as usize) + 3) & !3;
                     let count = num_cases as usize;
 
-                    if table_start_global + count * 4 <= file.instructions.len() {
+                    if table_start_global + count * 8 <= file.instructions.len() {
                         use crate::io::ByteReader;
                         let mut reader = ByteReader::new(&file.instructions[table_start_global..]);
                         for _ in 0..count {
+                            // Skip the u32 string id, keep the i32 offset.
+                            if reader.read_u32().is_err() {
+                                break;
+                            }
                             if let Ok(rel_offset) = reader.read_i32() {
                                 let target = (inst.offset as i32).wrapping_add(rel_offset) as u32;
                                 targets.insert(target);
