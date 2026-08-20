@@ -22,11 +22,28 @@ pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut result = Vec::with_capacity(n);
     for (i, stmt) in stmts.into_iter().enumerate() {
         if dead[i] {
-            let Statement::Assign { value, .. } = stmt else { unreachable!() };
-            if value.has_side_effects() {
-                result.push(Statement::Expr(value));
+            let Statement::Assign { target, value } = stmt else { unreachable!() };
+            if is_trivial_value(&value) {
+                // A pure copy or scalar constant carries no data, so a dead store of
+                // it is pure noise and is dropped.
+                continue;
             }
-            // Pure dead store: drop entirely.
+            // A literal object/array/string carries data a reader wants to see, so
+            // the whole assignment is kept even when the store is dead. Register
+            // reuse collapses several distinct literals onto one variable (`obj =
+            // {A}; obj = {B}; exports = {a: obj, b: obj}`), and dropping the
+            // overwritten ones would delete the A and B objects entirely. This holds
+            // even when the literal reports side effects: an object whose method body
+            // calls `require` (`{ inlineRequire() { return require(N) } }`) is side
+            // effecting by that measure, but defining it runs nothing, so it must be
+            // kept as an assignment rather than turned into a no-op object statement.
+            if is_literal_data(&value) || !value.has_side_effects() {
+                result.push(Statement::Assign { target, value });
+                continue;
+            }
+            // A dead store of a bare side-effecting call keeps the call, drops the
+            // target (`nativePerformanceNowResult = __d(...)` becomes `__d(...)`).
+            result.push(Statement::Expr(value));
             continue;
         }
         let optimized = match stmt {
@@ -46,6 +63,36 @@ pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     }
 
     result
+}
+
+// A value that carries no data worth preserving: a copy of another binding or a
+// scalar constant. An object/array literal, a string, or any computed expression
+// is NOT trivial (it holds data), so a dead store of it is kept.
+fn is_trivial_value(e: &Expression) -> bool {
+    use crate::ir::Constant;
+    match e {
+        Expression::Value(Value::Variable(_))
+        | Expression::Value(Value::Register(_))
+        | Expression::Value(Value::Parameter(_))
+        | Expression::Value(Value::This) => true,
+        Expression::Value(Value::Constant(c)) => !matches!(c, Constant::String(_) | Constant::BigInt(_)),
+        // `x.y` / `a[0]` on a trivial base is a copy, not new data.
+        Expression::Member { object, .. } => is_trivial_value(object),
+        _ => false,
+    }
+}
+
+// A literal that holds data: an object or array literal, or a string/bigint
+// constant. Kept as an assignment even when dead, and even when it reports side
+// effects (a method body inside the object may reference a call).
+fn is_literal_data(e: &Expression) -> bool {
+    use crate::ir::Constant;
+    matches!(
+        e,
+        Expression::Object { .. }
+            | Expression::Array { .. }
+            | Expression::Value(Value::Constant(Constant::String(_) | Constant::BigInt(_)))
+    )
 }
 
 // Scan forward from `start` in a flat statement run: return true if `key` is

@@ -60,6 +60,26 @@ fn is_dead_binding(name: &str, value: &Expression, reads: &HashMap<String, u32>)
     is_generic_temp(name)
         && reads.get(name).copied().unwrap_or(0) == 0
         && !value.has_side_effects()
+        // Only a trivial copy (`let tmp19 = tmp12`) is dropped. A data-carrying value
+        // (an object or array literal, a string) is kept even when unread, so no
+        // strings or structure are deleted from the output.
+        && is_trivial_value(value)
+}
+
+// A value that carries no data worth preserving: a copy of another binding or a
+// scalar constant. Object/array literals, strings, and computed expressions hold
+// data and are kept.
+fn is_trivial_value(e: &Expression) -> bool {
+    use crate::ir::Constant;
+    match e {
+        Expression::Value(Value::Variable(_))
+        | Expression::Value(Value::Register(_))
+        | Expression::Value(Value::Parameter(_))
+        | Expression::Value(Value::This) => true,
+        Expression::Value(Value::Constant(c)) => !matches!(c, Constant::String(_) | Constant::BigInt(_)),
+        Expression::Member { object, .. } => is_trivial_value(object),
+        _ => false,
+    }
 }
 
 fn recurse(stmt: Statement, reads: &HashMap<String, u32>) -> Statement {
