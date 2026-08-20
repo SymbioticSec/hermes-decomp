@@ -179,24 +179,26 @@ fn collect_value_definition(key: &str, value: &Expression, defs: &mut HashMap<St
 // Extract the required module ID from a `require` call.
 fn extract_require_call(expr: &Expression, defs: &HashMap<String, Definition>) -> Option<u32> {
     if let Expression::Call { callee, arguments } = expr {
-        if arguments.len() == 1 {
-            if let Expression::Value(Value::Constant(crate::ir::Constant::Integer(n))) =
-                arguments[0]
-            {
-                match callee.as_ref() {
-                    Expression::Value(Value::Variable(name))
-                        if is_known_require_name(name)
-                            || matches!(defs.get(name), Some(Definition::RequireAlias)) =>
-                    {
-                        return Some(n as u32)
-                    }
-                    Expression::Value(Value::Register(r))
-                        if matches!(defs.get(&format!("r{r}")), Some(Definition::RequireAlias)) =>
-                    {
-                        return Some(n as u32)
-                    }
-                    _ => {}
+        // Hermes prepends `this` (often undefined) so require(id) is Call2.
+        let id_arg = match arguments.len() {
+            1 => arguments.first()?,
+            2 => arguments.get(1)?,
+            _ => return None,
+        };
+        if let Expression::Value(Value::Constant(crate::ir::Constant::Integer(n))) = id_arg {
+            match callee.as_ref() {
+                Expression::Value(Value::Variable(name))
+                    if is_known_require_name(name)
+                        || matches!(defs.get(name), Some(Definition::RequireAlias)) =>
+                {
+                    return Some(*n as u32)
                 }
+                Expression::Value(Value::Register(r))
+                    if matches!(defs.get(&format!("r{r}")), Some(Definition::RequireAlias)) =>
+                {
+                    return Some(*n as u32)
+                }
+                _ => {}
             }
         }
     }
@@ -204,7 +206,7 @@ fn extract_require_call(expr: &Expression, defs: &HashMap<String, Definition>) -
 }
 
 fn is_known_require_name(name: &str) -> bool {
-    crate::analysis::metro::registry::FactoryRoles::standard().is_require_param(name)
+    crate::analysis::metro::registry::FactoryRoles::matches_require_loader_name(name)
 }
 
 // A short readable label for a call's callee, for `--log ipa=trace`. Renders the

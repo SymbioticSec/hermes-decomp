@@ -52,8 +52,7 @@ impl Codegen {
         // (factory params may not be renamed from arg1/arg2/etc.)
         if !self.esm_mode {
             let callee_str = self.generate_expr(callee);
-            let roles = crate::analysis::metro::registry::FactoryRoles::standard();
-            if !roles.is_require_param(&callee_str) {
+            if !crate::analysis::metro::registry::FactoryRoles::matches_require_loader_name(&callee_str) {
                 return None;
             }
         }
@@ -89,8 +88,7 @@ impl Codegen {
 
         if !self.esm_mode {
             let callee_str = self.generate_expr(callee);
-            let roles = crate::analysis::metro::registry::FactoryRoles::standard();
-            if !roles.is_require_param(&callee_str) {
+            if !crate::analysis::metro::registry::FactoryRoles::matches_require_loader_name(&callee_str) {
                 return None;
             }
         }

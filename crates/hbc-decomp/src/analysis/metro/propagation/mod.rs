@@ -33,22 +33,10 @@ const MAX_PARENT_CHAIN_DEPTH: usize = 10;
 pub(super) fn is_dep_array_name(name: &str, roles: &FactoryRoles) -> bool {
     roles.is_deps_param(name)
         || name == "dependencyMap"
+        || name == "_dependencyMap"
         || name == "deps"
-        || name.starts_with("dep")
-}
-
-pub(super) fn is_dep_array_param_idx(p_idx: u32, roles: &FactoryRoles) -> bool {
-    if let Some(deps_idx) = roles.deps_idx {
-        p_idx == deps_idx
-    } else {
-        // Fallback: anything above exports (index 3) is likely deps
-        p_idx > roles.exports_idx
-    }
-}
-
-// Default factory roles (used when we don't have a specific module context).
-pub(super) fn default_roles() -> FactoryRoles {
-    FactoryRoles::standard()
+        || (name.starts_with("dependencyMap") && name["dependencyMap".len()..].chars().all(|c| c.is_ascii_digit()))
+        || (name.starts_with("deps") && name[4..].chars().all(|c| c.is_ascii_digit()))
 }
 
 pub(super) fn is_meaningful_require_name(name: &str) -> bool {

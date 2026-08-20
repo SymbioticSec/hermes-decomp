@@ -254,11 +254,11 @@ fn is_exports_object(expr: &Expression) -> bool {
 }
 
 fn is_exports_name(name: &str) -> bool {
-    super::registry::FactoryRoles::standard().is_exports_param(name)
+    super::registry::FactoryRoles::matches_exports_name(name)
 }
 
 fn is_module_name(name: &str) -> bool {
-    super::registry::FactoryRoles::standard().is_module_param(name)
+    super::registry::FactoryRoles::matches_module_name(name)
 }
 
 fn get_base_and_prop(target: &AssignTarget) -> Option<(String, String)> {
