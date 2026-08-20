@@ -2,7 +2,7 @@
 // Convergence typically occurs in 2-3 iterations; 20 guarantees termination.
 const MAX_REEXPORT_ITERATIONS: usize = 20;
 
-use super::{default_roles, is_meaningful_require_name};
+use super::is_meaningful_require_name;
 use super::require_resolution::{extract_require_module_id, resolve_require_module};
 use crate::analysis::metro::detection::is_meaningful_name;
 use crate::analysis::metro::registry::{FactoryRoles, MetroRegistry};
@@ -209,16 +209,16 @@ pub(super) fn propagate_reexport_names(
             for stmt in stmts {
                 if let Statement::Assign { target, value } = stmt {
                     let is_export = match target {
-                        crate::ir::AssignTarget::Variable(n) => default_roles().is_exports_param(n),
+                        crate::ir::AssignTarget::Variable(n) => FactoryRoles::matches_exports_name(n),
                         crate::ir::AssignTarget::Member { object, .. } => {
                             
                             match object {
                                 Expression::Value(Value::Variable(n)) => {
-                                    default_roles().is_module_param(n) || default_roles().is_exports_param(n)
+                                    FactoryRoles::matches_module_name(n) || FactoryRoles::matches_exports_name(n)
                                 }
                                 Expression::Value(Value::Parameter(idx))
-                                    if *idx == default_roles().module_idx
-                                        || *idx == default_roles().exports_idx => true,
+                                    if FactoryRoles::is_module_idx(*idx)
+                                        || FactoryRoles::is_exports_idx(*idx) => true,
                                 _ => false,
                             }
                         }

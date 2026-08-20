@@ -1,6 +1,6 @@
 // Require call resolution, resolves require() calls to module IDs.
 
-use super::{default_roles, is_dep_array_name, is_dep_array_param_idx};
+use super::is_dep_array_name;
 use crate::analysis::metro::registry::{FactoryRoles, MetroRegistry};
 use crate::ir::{Expression, PropertyKey, Value};
 use std::collections::HashMap;
@@ -14,8 +14,8 @@ pub(super) fn resolve_require_module(
 ) -> Option<u32> {
     if let Expression::Call { callee, arguments } = expr {
         let is_require = match &**callee {
-            Expression::Value(Value::Variable(name)) => default_roles().is_require_param(name),
-            Expression::Value(Value::Parameter(idx)) if *idx == default_roles().require_idx => true,
+            Expression::Value(Value::Variable(name)) => FactoryRoles::matches_require_loader_name(name),
+            Expression::Value(Value::Parameter(idx)) if *idx == 1 => true,
             _ => false,
         };
 
@@ -46,25 +46,19 @@ pub(super) fn resolve_require_module(
                     // Trace r to find the source property access
                     if let Some((base, idx)) = reg_props.get(&r) {
                         // Check if base is a parameter (argN) or named dependency array
-                        let is_dep = is_dep_array_name(base, &default_roles());
-                        let param_idx = if is_dep {
-                            Some(4u32)
-                        } else {
-                            reg_params.get(base).copied().or_else(|| {
-                                FactoryRoles::extract_param_index(base)
-                            })
-                        };
+                        let is_dep = is_dep_array_name(base, &FactoryRoles::from_param_count(7))
+                            || is_dep_array_name(base, &FactoryRoles::from_param_count(5));
+                        let param_idx = reg_params.get(base).copied().or_else(|| {
+                            FactoryRoles::extract_param_index(base)
+                        });
 
-                        // Only resolve if this comes from the dependency array parameter (>= 4)
-                        if let Some(p_idx) = param_idx {
-                            if is_dep_array_param_idx(p_idx, &default_roles()) {
+                        if is_dep || param_idx.is_some_and(FactoryRoles::is_deps_idx) {
                                 if let Some(module) = registry.get_module_for_function(func_id) {
                                     if (*idx as usize) < module.dependencies.len() {
                                         let mod_id = module.dependencies[*idx as usize];
                                         return Some(mod_id);
                                     }
                                 }
-                            }
                         }
                     }
                 }
@@ -83,21 +77,16 @@ pub(super) fn resolve_require_module(
                         _ => None,
                     };
                     if let Some(base) = base_name {
-                        let is_dep_array = is_dep_array_name(&base, &default_roles());
-                        let param_idx = if is_dep_array {
-                            Some(4u32) // treat as dependency array param
-                        } else {
-                            FactoryRoles::extract_param_index(&base)
-                                .or_else(|| reg_params.get(&base).copied())
-                        };
-                        if let Some(p_idx) = param_idx {
-                            if is_dep_array_param_idx(p_idx, &default_roles()) {
+                        let is_dep_array = is_dep_array_name(&base, &FactoryRoles::from_param_count(7))
+                            || is_dep_array_name(&base, &FactoryRoles::from_param_count(5));
+                        let param_idx = FactoryRoles::extract_param_index(&base)
+                            .or_else(|| reg_params.get(&base).copied());
+                        if is_dep_array || param_idx.is_some_and(FactoryRoles::is_deps_idx) {
                                 if let Some(module) = registry.get_module_for_function(func_id) {
                                     if (*idx as usize) < module.dependencies.len() {
                                         return Some(module.dependencies[*idx as usize]);
                                     }
                                 }
-                            }
                         }
                     }
                 }
@@ -141,9 +130,9 @@ pub(super) fn extract_require_module_id(expr: &Expression) -> Option<u32> {
 fn is_require_callee(callee: &Expression) -> bool {
     match callee {
         Expression::Value(Value::Variable(name)) => {
-            default_roles().is_require_param(name) || name.starts_with("require_")
+            FactoryRoles::matches_require_loader_name(name) || name.starts_with("require_")
         }
-        Expression::Value(Value::Parameter(idx)) => *idx == default_roles().require_idx,
+        Expression::Value(Value::Parameter(idx)) => *idx == 1,
         _ => false,
     }
 }
@@ -168,7 +157,9 @@ fn extract_module_id_from_arg(arg: &Expression) -> Option<u32> {
             object, property, ..
         } => {
             if let Expression::Value(Value::Variable(name)) = object.as_ref() {
-                if is_dep_array_name(name, &default_roles()) {
+                if is_dep_array_name(name, &FactoryRoles::from_param_count(7))
+                    || is_dep_array_name(name, &FactoryRoles::from_param_count(5))
+                {
                     if let crate::ir::PropertyKey::Index(_idx) = property {
                         return None;
                     }

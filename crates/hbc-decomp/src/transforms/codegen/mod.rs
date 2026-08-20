@@ -25,11 +25,11 @@ pub(super) fn is_effectively_empty(stmts: &[Statement]) -> bool {
 }
 
 pub(super) fn is_exports_like(name: &str) -> bool {
-    crate::analysis::metro::registry::FactoryRoles::standard().is_exports_param(name)
+    crate::analysis::metro::registry::FactoryRoles::matches_exports_name(name)
 }
 
 pub(super) fn is_module_like(name: &str) -> bool {
-    crate::analysis::metro::registry::FactoryRoles::standard().is_module_param(name)
+    crate::analysis::metro::registry::FactoryRoles::matches_module_name(name)
 }
 
 pub(super) fn indent_multiline(s: &str, prefix: &str) -> String {
