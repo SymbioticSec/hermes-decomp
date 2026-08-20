@@ -42,6 +42,32 @@ pub(crate) fn is_obviously_generic(name: &str) -> bool {
     if GENERIC_NAME_PREFIXES.iter().any(|p| name.starts_with(p)) { return true; }
     // Reject decompiler-generated *Result names (fnResult, fn2Result, definePropertyResult, etc.)
     if name.ends_with("Result") { return true; }
+    // Reject register or type role names with an optional numeric suffix, for any
+    // number of digits: obj, obj2, obj129, arr5, items9, set7, fn3, num2, str1.
+    // The suffix count is unbounded since same-role registers are numbered without
+    // a cap, so a fixed length check (obj up to obj99) let obj129 slip through and
+    // leak as a module name. A real word keeps its non-digit tail (object, arrow,
+    // items list keys, settings) and is not rejected.
+    if is_role_name_with_digits(name) { return true; }
+    false
+}
+
+// True when `name` is a register/type role base followed by nothing or only
+// digits (`obj`, `arr129`), the shape the register namer produces for anonymous
+// values. A base followed by letters (`object`, `arrow`, `settings`) is a real
+// name and returns false.
+fn is_role_name_with_digits(name: &str) -> bool {
+    const ROLE_BASES: &[&str] = &[
+        "obj", "arr", "items", "item", "set", "list", "map",
+        "fn", "num", "str", "val", "bool", "res", "el",
+    ];
+    for base in ROLE_BASES {
+        if let Some(rest) = name.strip_prefix(base) {
+            if rest.is_empty() || rest.bytes().all(|b| b.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
     false
 }
 
@@ -81,5 +107,22 @@ impl MetroRegistry {
 impl MetroRegistry {
     pub fn get_dependency_tree(&self, module_id: u32, max_depth: usize) -> DependencyTree {
         DependencyGraph::get_dependency_tree(self, module_id, max_depth)
+    }
+}
+
+#[cfg(test)]
+mod generic_name_tests {
+    use super::is_obviously_generic;
+    #[test]
+    fn rejects_role_names_with_any_digit_count() {
+        for n in ["obj", "obj2", "obj129", "items9", "set7", "arr12", "fn3", "num2", "str1", "val0", "map", "list5", "res4"] {
+            assert!(is_obviously_generic(n), "{n} should be generic");
+        }
+    }
+    #[test]
+    fn keeps_real_words() {
+        for n in ["object", "objectPool", "arrow", "settings", "mapper", "result", "response", "listener", "items_list", "numbers", "string2Value"] {
+            assert!(!is_obviously_generic(n), "{n} should be kept");
+        }
     }
 }

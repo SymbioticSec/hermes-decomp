@@ -127,7 +127,16 @@ pub fn run_ipa(
             .entry(func_id)
             .or_insert_with(|| vec![None; structural.len()]);
         for (i, name) in structural.into_iter().enumerate() {
-            if i < existing.len() && existing[i].is_none() {
+            if i >= existing.len() {
+                continue;
+            }
+            // A body-derived name fills an empty slot, and also overrides a callback
+            // role guess (item, result, ...) from the call sites when the body found
+            // a real name: the parameter's own usage is a better source than the
+            // method that received it.
+            let override_role = matches!(&name, Some(n) if !inference::is_callback_role_name(n))
+                && matches!(&existing[i], Some(e) if inference::is_callback_role_name(e));
+            if existing[i].is_none() || override_role {
                 existing[i] = name;
             }
         }
