@@ -398,11 +398,39 @@ fn stmt_has_yield_deep(s: &Statement) -> bool {
 
 // --- locating the label dispatch ---
 
-// Find the TryCatch try-body (search through the status-guard if/else nest) then
-// the label-dispatch `if` inside it.
+// Find the label-dispatch `if`. Hermes wraps the dispatch in a try/catch only
+// when the source function has one of its own, so an async function without a
+// user try still has a dispatch, just one statement level higher. Looking only
+// inside a try meant every such function bailed before anything was examined.
+// The try body is searched first when there is one, then the status-guard
+// if/else nest, then the body itself.
 fn find_label_dispatch(body: &[Statement]) -> Option<&Statement> {
-    let try_body = find_generator_try(body)?;
-    try_body.iter().find(|s| is_label_dispatch_if(s))
+    if let Some(try_body) = find_generator_try(body) {
+        if let Some(found) = try_body.iter().find(|s| is_label_dispatch_if(s)) {
+            return Some(found);
+        }
+    }
+    find_dispatch_anywhere(body)
+}
+
+// The dispatch `if`, searched through the status-guard if/else nest that Hermes
+// emits around it. Only guard nests are traversed, not arbitrary bodies, so an
+// unrelated `if` deeper in the function is never mistaken for the dispatch.
+fn find_dispatch_anywhere(body: &[Statement]) -> Option<&Statement> {
+    if let Some(found) = body.iter().find(|s| is_label_dispatch_if(s)) {
+        return Some(found);
+    }
+    for s in body {
+        if let Statement::If { then_body, else_body, .. } = s {
+            if let Some(found) = find_dispatch_anywhere(then_body) {
+                return Some(found);
+            }
+            if let Some(found) = find_dispatch_anywhere(else_body) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn find_generator_try(body: &[Statement]) -> Option<&Vec<Statement>> {
