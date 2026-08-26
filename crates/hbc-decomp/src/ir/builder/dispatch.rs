@@ -6,9 +6,10 @@ use super::opcodes_environment::{
     handle_load_from_environment, handle_store_np_to_environment, handle_store_to_environment,
 };
 use super::opcodes_flow::{
-    handle_catch, handle_debugger, handle_get_next_pname, handle_jmp, handle_jmp_builtin_is,
-    handle_jmp_comparison, handle_jmp_cond, handle_jmp_typeof_is, handle_jmp_undefined, handle_ret,
-    handle_select_object, handle_throw, FlowResult,
+    handle_catch, handle_debugger, handle_get_next_pname, handle_ignored_guard, handle_jmp,
+    handle_jmp_builtin_is, handle_jmp_comparison, handle_jmp_cond, handle_jmp_typeof_is,
+    handle_jmp_undefined, handle_ret, handle_select_object, handle_throw,
+    handle_throw_if_undefined, FlowResult,
 };
 use super::opcodes_generator::{
     handle_complete_generator, handle_create_generator, handle_resume_generator,
@@ -181,6 +182,13 @@ fn try_prop_handlers(
             handle_put_by_id(inst, file, resolve_strings).map(FlowResult::Statement)
         }
         "GetByVal" => handle_get_by_val(inst).map(FlowResult::Statement),
+        "ToPropertyKey" => handle_to_property_key(inst).map(FlowResult::Statement),
+        "GetByValWithReceiver" => {
+            handle_get_by_val_with_receiver(inst).map(FlowResult::Statement)
+        }
+        "PutByValWithReceiver" => {
+            handle_put_by_val_with_receiver(inst).map(FlowResult::Statement)
+        }
         "PutByVal" | "PutByValLoose" | "PutByValStrict" => {
             handle_put_by_val(inst).map(FlowResult::Statement)
         }
@@ -238,7 +246,8 @@ fn try_call_handlers(
         "CallBuiltin" | "CallBuiltinLong" => {
             handle_call_builtin(inst, frame_size, version).map(FlowResult::Statement)
         }
-        "GetBuiltinClosure" => handle_get_builtin_closure(inst).map(FlowResult::Statement),
+        "GetBuiltinClosure" => handle_get_builtin_closure(inst, version).map(FlowResult::Statement),
+        "DirectEval" => handle_direct_eval(inst).map(FlowResult::Statement),
         "CallRequire" => handle_call_require(inst).map(FlowResult::Statement),
         _ => None,
     }
@@ -289,6 +298,7 @@ fn try_obj_handlers(
             handle_fast_array_store(inst).map(FlowResult::Statement)
         }
         "FastArrayPush" => handle_fast_array_push(inst).map(FlowResult::Statement),
+        "FastArrayAppend" => handle_fast_array_append(inst).map(FlowResult::Statement),
         "FastArrayLength" => handle_fast_array_length(inst).map(FlowResult::Statement),
         "CreateRegExp" => {
             handle_create_regexp(inst, file, resolve_strings).map(FlowResult::Statement)
@@ -381,6 +391,8 @@ fn try_flow_handlers(
         }
         "Ret" => handle_ret(inst),
         "Throw" | "ThrowIfEmpty" => handle_throw(inst),
+        "ThrowIfThisInitialized" | "ProfilePoint" | "Unreachable" => handle_ignored_guard(),
+        "ThrowIfUndefined" => handle_throw_if_undefined(inst),
         // Environment opcodes handled in try_env_handlers (need EnvRegMap).
         "SelectObject" => handle_select_object(inst),
         "Debugger" | "AsyncBreakCheck" => handle_debugger(),
