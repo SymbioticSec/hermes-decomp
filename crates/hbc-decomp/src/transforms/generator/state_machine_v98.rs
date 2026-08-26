@@ -38,6 +38,14 @@ pub fn reconstruct_generator_v98(body: Vec<Statement>) -> Vec<Statement> {
     try_reconstruct(&body).unwrap_or(body)
 }
 
+// Same reconstruction, reporting whether it actually happened. A caller that
+// follows up with cleanup passes needs to know: those passes assume a flat body
+// whose data flow they can read, and on a machine that did not lift they delete
+// code they cannot see through.
+pub fn try_reconstruct_generator_v98(body: &[Statement]) -> Option<Vec<Statement>> {
+    try_reconstruct(body)
+}
+
 // A parsed state-machine case: the value the case resumes with (`x = <resume>`),
 // the real code before the suspend point, the yielded/returned value and whether
 // this is the terminal (done) case.
@@ -50,10 +58,17 @@ struct ParsedCase {
 }
 
 fn try_reconstruct(body: &[Statement]) -> Option<Vec<Statement>> {
-    let dispatch = find_label_dispatch(body)?;
-    let cases = collect_label_cases(dispatch)?;
+    let Some(dispatch) = find_label_dispatch(body) else {
+        log::trace!(target: "genlift", "bail: no label dispatch");
+        return None;
+    };
+    let Some(cases) = collect_label_cases(dispatch) else {
+        log::trace!(target: "genlift", "bail: no label cases");
+        return None;
+    };
     // A real state machine has at least one yield label plus the terminal case.
     if cases.len() < 2 {
+        log::trace!(target: "genlift", "bail: only {} case", cases.len());
         return None;
     }
 
@@ -88,35 +103,52 @@ fn try_reconstruct(body: &[Statement]) -> Option<Vec<Statement>> {
         match p {
             Some(c) if !c.done => suspends.push(c),
             Some(c) => terminal = Some(c),
-            None if body_has_throw(raw) => {}
-            None => return None,
+            None if is_catch_label(raw) => {}
+            None => {
+                log::trace!(target: "genlift", "bail: unparsable case with no throw");
+                return None;
+            }
         }
     }
-    emit_yield_chain(&suspends, terminal.as_ref()?)
+    let Some(t) = terminal.as_ref() else {
+        log::trace!(target: "genlift", "bail: no terminal case ({} suspends)", suspends.len());
+        return None;
+    };
+    let out = emit_yield_chain(&suspends, t);
+    if out.is_none() {
+        log::trace!(target: "genlift", "bail: emit_yield_chain ({} suspends)", suspends.len());
+    }
+    out
 }
 
-fn body_has_throw(stmts: &[Statement]) -> bool {
-    use crate::ir::Visitor;
-    struct C(bool);
-    impl<'a> Visitor<'a> for C {
-        fn visit_statement(&mut self, s: &'a Statement) {
-            if matches!(s, Statement::Throw(_)) {
-                self.0 = true;
-            }
-            if !self.0 {
-                self.walk_statement(s);
-            }
-        }
-    }
-    let mut c = C(false);
-    for s in stmts {
-        c.visit_statement(s);
-        if c.0 {
-            return true;
-        }
-    }
-    false
+// A case the parser did not understand may be skipped only when it is a catch
+// label: once the resume protocol prologue is stripped, nothing remains but a
+// throw. The previous test looked at the raw body, which always contains the
+// `if (arg0 === 1) throw arg1` prologue that Hermes emits in EVERY case, so any
+// case the parser could not read was dropped silently and its real code went
+// with it. `piloteAuthHeaders` lost its entire header build, `Bearer ` and
+// `x-refresh-token` included, exactly this way. Anything else now bails, which
+// leaves the raw machine in place: unreadable, but complete.
+fn is_catch_label(body: &[Statement]) -> bool {
+    let real = strip_arg_protocol(body);
+    !real.is_empty() && real.iter().all(only_exits)
 }
+
+// Whether a statement can only leave the case, by throwing or returning, with no
+// work of its own. Branches are allowed as long as every leaf is an exit: an
+// error label may well be `if (isPhone) { return ... } else { throw err }`. An
+// assignment or a call means the case carries real code and must not be dropped.
+fn only_exits(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Throw(_) | Statement::Return(_) | Statement::Comment(_) => true,
+        Statement::If { then_body, else_body, .. } => {
+            then_body.iter().all(only_exits) && else_body.iter().all(only_exits)
+        }
+        Statement::Block(inner) => inner.iter().all(only_exits),
+        _ => false,
+    }
+}
+
 
 // `suspends` are the yield cases in source order; `terminal` is the done case
 // (resume after the last yield). Thread `yield value` into each next binding.
