@@ -283,3 +283,89 @@ pub fn handle_put_by_val_with_receiver(inst: &Instruction) -> Option<Statement> 
         value,
     })
 }
+
+// CreatePrivateName rDst, strIdx: mint the symbol backing one `#field` of a class.
+// The string operand is the field name as written, `#` included, so the register
+// simply carries that name. Hermes then parks it in an environment slot, which
+// makes the existing closure slot naming carry it into every method that reads
+// the field.
+pub fn handle_create_private_name(
+    inst: &Instruction,
+    file: &BytecodeFile,
+    resolve_strings: bool,
+) -> Option<Statement> {
+    let dst = get_reg(&inst.operands, 0)?;
+    let name_idx = inst.operands.get(1)?.value.as_u32()?;
+
+    let name = if resolve_strings {
+        file.string_at(name_idx)
+            .map(|e| e.value.clone())
+            .unwrap_or_else(|| format!("#private{name_idx}"))
+    } else {
+        format!("#private{name_idx}")
+    };
+
+    Some(Statement::Assign {
+        target: AssignTarget::Register(dst),
+        value: Expression::Value(crate::ir::Value::Variable(name)),
+    })
+}
+
+// GetOwnPrivateBySym rDst, rObj, cacheIdx, rSym: `dst = obj.#field`. The field is
+// identified by the symbol register rather than a string index, so the key stays
+// computed here; it prints as `obj.#field` once the register resolves to the name.
+pub fn handle_get_own_private_by_sym(inst: &Instruction) -> Option<Statement> {
+    let dst = get_reg(&inst.operands, 0)?;
+    let obj = reg_expr(&inst.operands, 1)?;
+    let sym = reg_expr(&inst.operands, 3)?;
+
+    Some(Statement::Assign {
+        target: AssignTarget::Register(dst),
+        value: Expression::Member {
+            object: Box::new(obj),
+            property: PropertyKey::Computed(Box::new(sym)),
+            optional: false,
+        },
+    })
+}
+
+// PutOwnPrivateBySym rObj, rValue, cacheIdx, rSym: `obj.#field = value`.
+pub fn handle_put_own_private_by_sym(inst: &Instruction) -> Option<Statement> {
+    let obj = reg_expr(&inst.operands, 0)?;
+    let value = reg_expr(&inst.operands, 1)?;
+    let sym = reg_expr(&inst.operands, 3)?;
+
+    Some(Statement::Assign {
+        target: AssignTarget::Index { object: obj, key: sym },
+        value,
+    })
+}
+
+// AddOwnPrivateBySym rObj, rSym, rValue: the same store, for the declaration that
+// first installs the field on the instance. Operand order differs from the Put form.
+pub fn handle_add_own_private_by_sym(inst: &Instruction) -> Option<Statement> {
+    let obj = reg_expr(&inst.operands, 0)?;
+    let sym = reg_expr(&inst.operands, 1)?;
+    let value = reg_expr(&inst.operands, 2)?;
+
+    Some(Statement::Assign {
+        target: AssignTarget::Index { object: obj, key: sym },
+        value,
+    })
+}
+
+// PrivateIsIn rDst, rSym, rObj, cacheIdx: the `#field in obj` brand check.
+pub fn handle_private_is_in(inst: &Instruction) -> Option<Statement> {
+    let dst = get_reg(&inst.operands, 0)?;
+    let sym = reg_expr(&inst.operands, 1)?;
+    let obj = reg_expr(&inst.operands, 2)?;
+
+    Some(Statement::Assign {
+        target: AssignTarget::Register(dst),
+        value: Expression::Binary {
+            op: crate::ir::BinaryOp::In,
+            left: Box::new(sym),
+            right: Box::new(obj),
+        },
+    })
+}

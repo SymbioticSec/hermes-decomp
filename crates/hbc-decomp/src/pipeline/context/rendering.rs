@@ -103,11 +103,9 @@ impl PipelineContext {
             .filter(|(func_id, _)| !self.registry.function_to_module.contains_key(func_id))
             .map(|(&func_id, stmts)| {
                 let params: Vec<String> = if let Some(names) = self.global_analysis.param_names.get(&func_id) {
-                    names.iter().enumerate()
-                        .map(|(idx, n)| {
-                            let raw = n.clone().unwrap_or_else(|| format!("arg{idx}"));
-                            crate::util::sanitize_identifier(&raw)
-                        })
+                    crate::pipeline::params_from_names(file, func_id, names, stmts)
+                        .iter()
+                        .map(|p| crate::util::sanitize_identifier(p))
                         .collect()
                 } else {
                     get_function_params(file, func_id)
@@ -189,10 +187,7 @@ impl PipelineContext {
             // Render the body with existing inline bodies for nested functions
             let mut inner_codegen = Codegen::new(CodegenOptions::default())
                 .with_inline_bodies(Arc::clone(existing_inline));
-            let module = self.resolve_module_for_function(func_id);
-            if let Some(m) = module {
-                inner_codegen = inner_codegen.with_imports(self.build_import_map(m));
-            }
+            inner_codegen = self.with_module_esm(inner_codegen, func_id);
             let body = inner_codegen.generate_statements(body_stmts);
             // Indent body by one level (2 spaces) for proper nesting inside function { }
             let body_trimmed: String = body

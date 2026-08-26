@@ -183,6 +183,19 @@ fn try_prop_handlers(
         }
         "GetByVal" => handle_get_by_val(inst).map(FlowResult::Statement),
         "ToPropertyKey" => handle_to_property_key(inst).map(FlowResult::Statement),
+        "CreatePrivateName" => {
+            handle_create_private_name(inst, file, resolve_strings).map(FlowResult::Statement)
+        }
+        "GetOwnPrivateBySym" => {
+            handle_get_own_private_by_sym(inst).map(FlowResult::Statement)
+        }
+        "PutOwnPrivateBySym" => {
+            handle_put_own_private_by_sym(inst).map(FlowResult::Statement)
+        }
+        "AddOwnPrivateBySym" => {
+            handle_add_own_private_by_sym(inst).map(FlowResult::Statement)
+        }
+        "PrivateIsIn" => handle_private_is_in(inst).map(FlowResult::Statement),
         "GetByValWithReceiver" => {
             handle_get_by_val_with_receiver(inst).map(FlowResult::Statement)
         }

@@ -197,7 +197,17 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
             for e in elements.iter().flatten() { collect_body_param_hints_expr(e, hints); }
         }
         Expression::Object { properties } => {
-            for p in properties { collect_body_param_hints_expr(&p.value, hints); }
+            for p in properties {
+                // `{ login: arg0 }` — the property key is ground truth for the value.
+                if let PropertyKey::Ident(key) | PropertyKey::String(key) = &p.key {
+                    if !is_generic_property(key) {
+                        if let Expression::Value(Value::Parameter(idx)) = &p.value {
+                            hints.entry(*idx).or_default().push(key.clone());
+                        }
+                    }
+                }
+                collect_body_param_hints_expr(&p.value, hints);
+            }
         }
         Expression::Assignment { target, value } => {
             collect_body_param_hints_expr(target, hints);
@@ -248,5 +258,18 @@ mod tests {
         })];
         let hints = infer_param_names_from_body(&stmts);
         assert!(hints.contains(&(0, "fn".to_string())));
+    }
+
+    #[test]
+    fn object_key_names_parameter() {
+        // `{ login: arg0 }` names arg0 "login".
+        let stmts = vec![Statement::Return(Some(Expression::Object {
+            properties: vec![crate::ir::ObjectProperty {
+                key: PropertyKey::Ident("login".to_string()),
+                value: Expression::Value(Value::Parameter(0)),
+            }],
+        }))];
+        let hints = infer_param_names_from_body(&stmts);
+        assert_eq!(hints, vec![(0, "login".to_string())]);
     }
 }

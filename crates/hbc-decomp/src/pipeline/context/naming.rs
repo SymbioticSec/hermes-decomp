@@ -1,7 +1,7 @@
 // Phase 3: module naming, closure resolution, export analysis, IPA.
 use std::collections::BTreeMap;
 use crate::file::BytecodeFile;
-use crate::ir::Statement;
+use crate::ir::{Constant, Expression, PropertyKey, Statement, Value, Visitor};
 use crate::transforms;
 use super::super::build_function_name_index;
 use super::PipelineContext;
@@ -15,12 +15,27 @@ impl PipelineContext {
         deep: bool,
         stable: bool,
     ) -> crate::analysis::GlobalAnalysis {
+        // STAGE W4a: name modules from `fileFinishedImporting("…/Foo.tsx")`.
+        // Discord (and some other apps) record the source path as a string
+        // literal in the factory. That path is ground truth and overwrites a
+        // heuristic factory/export name such as `clear`.
+        let mut gt_named = std::collections::HashSet::new();
+        let mut gt_paths: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+        let named_ffi = name_modules_from_file_finished_importing(
+            all_ir, registry, closure_ctx.as_ref(), &mut gt_named, &mut gt_paths,
+        );
+        if named_ffi > 0 {
+            log::debug!("[pipeline] module naming from fileFinishedImporting: {named_ffi} named");
+        }
+
         // STAGE W4b: name modules from the source file encoded in their function
         // names. Hermes bakes `<fn>_<package>_<file>Ts<N>` (or `<file>Tsx<N>`) into
         // the name table for library and worklet functions, so the source file, which
         // IS the module, is recoverable ground truth. Runs before propagation so the
         // names flow into imports and closure captures.
-        let named_src = name_modules_from_source_files(file, registry, closure_ctx.as_ref());
+        let named_src = name_modules_from_source_files(
+            file, registry, closure_ctx.as_ref(), &mut gt_named,
+        );
         if named_src > 0 {
             log::debug!("[pipeline] module naming from source files: {named_src} named");
         }
@@ -105,6 +120,11 @@ impl PipelineContext {
             }
         }
 
+        // STAGE W7c: drop placeholder specifiers (`clear`, `keys`, `module_N` stored
+        // as a recovered name) and uniquify collisions so two Metro ids never share
+        // a `from "…"` string. Must run after every fill pass and before IPA/codegen.
+        crate::analysis::metro::finalize_module_specifiers(registry, &gt_named, &gt_paths);
+
         // STAGE W8: Inter-Procedural Analysis (IPA)
         let t = std::time::Instant::now();
         let mut func_name_index = build_function_name_index(file);
@@ -143,8 +163,12 @@ impl PipelineContext {
 
         // STAGE W10: Closure Property Naming (cross-function)
         let t = std::time::Instant::now();
-        let closure_renames = if let Some(ctx) = closure_ctx.as_ref() {
-            transforms::rename_closure_variables_cross_function(all_ir, ctx)
+        let closure_renames = if let Some(ctx) = closure_ctx.as_mut() {
+            transforms::rename_closure_variables_cross_function(
+                all_ir,
+                ctx,
+                &mut global_analysis.param_names,
+            )
         } else {
             let mut count = 0;
             let mut fb_keys: Vec<_> = all_ir.keys().copied().collect();
@@ -231,8 +255,12 @@ impl PipelineContext {
                     });
                 }
                 let mut renamed = 0;
-                if let Some(ctx) = closure_ctx.as_ref() {
-                    renamed += transforms::rename_closure_variables_cross_function(all_ir, ctx);
+                if let Some(ctx) = closure_ctx.as_mut() {
+                    renamed += transforms::rename_closure_variables_cross_function(
+                        all_ir,
+                        ctx,
+                        &mut global_analysis.param_names,
+                    );
                     // A slot that was Unknown / argN becomes inheritable once IPA has
                     // named it, so re-run the inherit pass each round (Piste 2).
                     renamed += transforms::inherit_ancestor_closure_names(all_ir, ctx);
@@ -431,6 +459,147 @@ fn merge_param_names(
     added
 }
 
+// Walk from `fid` up the closure parent chain to the Metro factory it belongs to.
+fn enclosing_module_id(
+    fid: u32,
+    registry: &crate::analysis::MetroRegistry,
+    closure_ctx: Option<&crate::analysis::ClosureContext>,
+) -> Option<u32> {
+    let mut cur = fid;
+    for _ in 0..32 {
+        if let Some(&m) = registry.function_to_module.get(&cur) {
+            return Some(m);
+        }
+        match closure_ctx.and_then(|ctx| ctx.parent_function.get(&cur)) {
+            Some(&p) if p != cur => cur = p,
+            _ => break,
+        }
+    }
+    None
+}
+
+// Name modules from `obj.fileFinishedImporting("path/to/Foo.tsx")` (or a direct
+// call). The string is a source path baked into the factory: take the file stem
+// as the specifier. Overwrites a heuristic name already sitting on the module
+// (factory export `clear`, etc.). Returns how many modules were named.
+fn name_modules_from_file_finished_importing(
+    all_ir: &BTreeMap<u32, Vec<Statement>>,
+    registry: &mut crate::analysis::MetroRegistry,
+    closure_ctx: Option<&crate::analysis::ClosureContext>,
+    gt_named: &mut std::collections::HashSet<u32>,
+    gt_paths: &mut std::collections::HashMap<u32, String>,
+) -> usize {
+    let mut stems: BTreeMap<u32, (String, String)> = BTreeMap::new();
+    for (fid, stmts) in all_ir {
+        if let Some(path) = find_file_finished_importing_path(stmts) {
+            if let Some(stem) = stem_from_source_path(&path) {
+                stems.insert(*fid, (stem, path));
+            }
+        }
+    }
+    let mut assigned = std::collections::HashSet::new();
+    let mut named = 0;
+    for (fid, (stem, path)) in stems {
+        let Some(mid) = enclosing_module_id(fid, registry, closure_ctx) else { continue };
+        if !assigned.insert(mid) {
+            continue;
+        }
+        if let Some(module) = registry.modules.get_mut(&mid) {
+            module.name = Some(stem);
+            gt_named.insert(mid);
+            gt_paths.insert(mid, path);
+            named += 1;
+        }
+    }
+    named
+}
+
+fn find_file_finished_importing_path(stmts: &[Statement]) -> Option<String> {
+    struct FindFfi {
+        path: Option<String>,
+    }
+    impl<'a> Visitor<'a> for FindFfi {
+        fn visit_expression(&mut self, expr: &'a Expression) {
+            if self.path.is_some() {
+                return;
+            }
+            if let Expression::Call { callee, arguments } = expr {
+                if is_file_finished_importing_callee(callee) {
+                    for arg in arguments {
+                        if let Expression::Value(Value::Constant(Constant::String(s))) = arg {
+                            if looks_like_source_path(s) {
+                                self.path = Some(s.clone());
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            self.walk_expression(expr);
+        }
+    }
+    let mut find = FindFfi { path: None };
+    for stmt in stmts {
+        find.visit_statement(stmt);
+        if find.path.is_some() {
+            break;
+        }
+    }
+    find.path
+}
+
+fn is_file_finished_importing_callee(callee: &Expression) -> bool {
+    match callee {
+        Expression::Member {
+            property: PropertyKey::Ident(s) | PropertyKey::String(s),
+            ..
+        } => s == "fileFinishedImporting",
+        Expression::Value(Value::Variable(s)) => s == "fileFinishedImporting",
+        _ => false,
+    }
+}
+
+fn looks_like_source_path(s: &str) -> bool {
+    let s = s.split(['?', '#']).next().unwrap_or(s);
+    let lower = s.to_ascii_lowercase();
+    lower.ends_with(".tsx")
+        || lower.ends_with(".ts")
+        || lower.ends_with(".jsx")
+        || lower.ends_with(".js")
+}
+
+// `"../pkg/logger/Foo.android.tsx"` → `Foo`. Rejects stems that are not a JS
+// identifier or that would be a placeholder specifier.
+fn stem_from_source_path(path: &str) -> Option<String> {
+    if !looks_like_source_path(path) {
+        return None;
+    }
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    let file = path.rsplit('/').next().filter(|s| !s.is_empty())?;
+    let mut stem = file
+        .strip_suffix(".tsx")
+        .or_else(|| file.strip_suffix(".ts"))
+        .or_else(|| file.strip_suffix(".jsx"))
+        .or_else(|| file.strip_suffix(".js"))
+        .unwrap_or(file);
+    for plat in [".android", ".native", ".ios", ".web"] {
+        if let Some(stripped) = stem.strip_suffix(plat) {
+            stem = stripped;
+            break;
+        }
+    }
+    if stem.is_empty() {
+        return None;
+    }
+    if !crate::util::is_valid_identifier(stem) {
+        return None;
+    }
+    if crate::analysis::metro::is_generic_module_specifier(stem) {
+        return None;
+    }
+    Some(stem.to_string())
+}
+
 // Name unnamed Metro modules from the source file encoded in their function names.
 // For each function whose name carries the Hermes source encoding, walk up the
 // closure parent chain to the module factory and, if that module has no name yet,
@@ -439,8 +608,8 @@ fn name_modules_from_source_files(
     file: &BytecodeFile,
     registry: &mut crate::analysis::MetroRegistry,
     closure_ctx: Option<&crate::analysis::ClosureContext>,
+    gt_named: &mut std::collections::HashSet<u32>,
 ) -> usize {
-    let Some(ctx) = closure_ctx else { return 0 };
     let count = file.function_headers.len() as u32;
     let mut named = 0;
     for fid in 0..count {
@@ -452,23 +621,11 @@ fn name_modules_from_source_files(
         let Some(name) = raw else { continue };
         let Some(src_file) = source_file_from_fn_name(&name) else { continue };
 
-        // Walk to the enclosing module factory.
-        let mut cur = fid;
-        let mut mod_id = None;
-        for _ in 0..32 {
-            if let Some(&m) = registry.function_to_module.get(&cur) {
-                mod_id = Some(m);
-                break;
-            }
-            match ctx.parent_function.get(&cur) {
-                Some(&p) if p != cur => cur = p,
-                _ => break,
-            }
-        }
-        if let Some(mid) = mod_id {
+        if let Some(mid) = enclosing_module_id(fid, registry, closure_ctx) {
             if let Some(module) = registry.modules.get_mut(&mid) {
                 if module.name.is_none() {
                     module.name = Some(src_file);
+                    gt_named.insert(mid);
                     named += 1;
                 }
             }
@@ -491,7 +648,7 @@ fn source_file_from_fn_name(name: &str) -> Option<String> {
     let src_file = base.rsplit('_').next()?;
     if src_file.len() >= 3
         && crate::util::is_valid_identifier(src_file)
-        && !crate::analysis::metro::is_obviously_generic(src_file)
+        && !crate::analysis::metro::is_generic_module_specifier(src_file)
     {
         Some(src_file.to_string())
     } else {
@@ -511,7 +668,7 @@ fn name_from_single_export(exports: &std::collections::HashMap<String, u32>) -> 
         .filter(|k| {
             crate::util::is_valid_identifier(k)
                 && k.len() >= 3
-                && !crate::analysis::metro::is_obviously_generic(k)
+                && !crate::analysis::metro::is_generic_module_specifier(k)
         })
         .collect();
     names.sort();
@@ -520,5 +677,78 @@ fn name_from_single_export(exports: &std::collections::HashMap<String, u32>) -> 
         Some(names[0].clone())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod file_path_naming_tests {
+    use super::{
+        find_file_finished_importing_path, looks_like_source_path, stem_from_source_path,
+    };
+    use crate::ir::{Constant, Expression, PropertyKey, Statement, Value};
+
+    fn ffi_stmt(path: &str) -> Statement {
+        Statement::Let {
+            name: "result".into(),
+            value: Expression::Call {
+                callee: Box::new(Expression::Member {
+                    object: Box::new(Expression::Value(Value::Variable("clear".into()))),
+                    property: PropertyKey::Ident("fileFinishedImporting".into()),
+                    optional: false,
+                }),
+                arguments: vec![Expression::Value(Value::Constant(Constant::String(
+                    path.into(),
+                )))],
+            },
+            kind: crate::ir::VarKind::Const,
+        }
+    }
+
+    #[test]
+    fn stem_strips_path_and_platform_suffix() {
+        assert_eq!(
+            stem_from_source_path(
+                "../discord_common/js/packages/logger/LoggerPIIRestrictedObjects.tsx"
+            )
+            .as_deref(),
+            Some("LoggerPIIRestrictedObjects")
+        );
+        assert_eq!(
+            stem_from_source_path("utils/SnowflakeUtils.tsx").as_deref(),
+            Some("SnowflakeUtils")
+        );
+        assert_eq!(
+            stem_from_source_path("Foo.android.tsx").as_deref(),
+            Some("Foo")
+        );
+        assert_eq!(stem_from_source_path("index.tsx"), None);
+        assert_eq!(stem_from_source_path("clear.js"), None);
+        assert_eq!(stem_from_source_path("not_a_path"), None);
+        assert!(!looks_like_source_path("not_a_path"));
+    }
+
+    #[test]
+    fn finds_file_finished_importing_string() {
+        let stmts = vec![ffi_stmt(
+            "../discord_common/js/packages/logger/Logger.tsx",
+        )];
+        assert_eq!(
+            find_file_finished_importing_path(&stmts).as_deref(),
+            Some("../discord_common/js/packages/logger/Logger.tsx")
+        );
+        let assign = Statement::Assign {
+            target: crate::ir::AssignTarget::Member {
+                object: Expression::Value(Value::Variable("exports".into())),
+                property: "fileFinishedImporting".into(),
+            },
+            value: Expression::Function {
+                id: crate::ir::FunctionId(1),
+                name: Some("fileFinishedImporting".into()),
+                is_arrow: false,
+                is_async: false,
+                is_generator: false,
+            },
+        };
+        assert_eq!(find_file_finished_importing_path(&[assign]), None);
     }
 }

@@ -1,5 +1,5 @@
 use crate::ir::{AssignTarget, Expression, ObjectProperty, PropertyKey, Statement, Value,
-    expr_uses_register, map_nested_bodies_mut, stmt_has_side_effects};
+    expr_uses_register, stmt_has_side_effects};
 use std::collections::HashSet;
 
 mod inline_literals;
@@ -12,23 +12,13 @@ use inline_literals::inline_single_use_literals;
 mod tests;
 
 pub fn transform_object_literals(statements: &mut Vec<Statement>) {
-    // Structure recovery runs before this pass, so nested if/switch/try/loop
-    // bodies have to be folded on their own; a top-level scan never sees
-    // `obj[N] = val` that lives in a case.
-    for stmt in statements.iter_mut() {
-        map_nested_bodies_mut(stmt, |mut body| {
-            transform_object_literals(&mut body);
-            body
-        });
-    }
-
     // HBC ≥97 emits a shape-table object literal with placeholder values for
     // non-serializable properties (`{a:1, b:null}`), then fills them via
     // `PutOwnBySlotIdx obj, val, slot`, which lowers to `obj[slot] = val`. Fold
     // those slot fills back into the literal's Nth property before the rest of
-    // the object-literal handling runs. Nested bodies were already folded above,
-    // so only this statement list is scanned.
-    slot_fills::fold_slot_index_fills_here(statements);
+    // the object-literal handling runs. Nested if/switch bodies are left
+    // alone (see fold_slot_index_fills): folding them broke v98 generators.
+    fold_slot_index_fills(statements);
 
     // A register assigned more than once in the whole body is a genuine
     // re-assignment: referencing it as a property value is unsafe because its

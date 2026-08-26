@@ -116,6 +116,24 @@ impl PipelineContext {
         if let Some(ctx) = closure_ctx.as_mut() {
             Self::collapse_generator_wrappers(all_ir, ctx);
         }
+
+        // STAGE W16f: object-key names (`{ login: closure_1_0 }`) are often only
+        // visible after slot-fill folding and v98 generator reconstruct. Re-run
+        // closure naming so a captured param stored under a property key is named
+        // from that key (ground truth), including the parent parameter.
+        if let Some(ctx) = closure_ctx.as_mut() {
+            let renamed = transforms::rename_closure_variables_cross_function(
+                all_ir,
+                ctx,
+                &mut global_analysis.param_names,
+            );
+            let inherited = transforms::inherit_ancestor_closure_names(all_ir, ctx);
+            if renamed > 0 || inherited > 0 {
+                log::debug!(
+                    "[pipeline] post-reconstruct object-key naming: {renamed} closures, {inherited} inherited"
+                );
+            }
+        }
     }
 
     // See STAGE W16b. Replace each generator wrapper's body with the inner
@@ -162,9 +180,38 @@ impl PipelineContext {
             .collect();
         for fid in gen_ids {
             if let Some(body) = all_ir.remove(&fid) {
-                all_ir.insert(fid, transforms::reconstruct_generator_v98(body));
+                let mut body = transforms::reconstruct_generator_v98(body);
+                // Reconstruct runs after the W14 yield→await pass, so a v98
+                // machine that just became `yield` still needs the async rewrite.
+                if closure_ctx.is_async(fid) {
+                    body = convert_yields_to_awaits(body);
+                }
+                // Flat body: inline `obj2 = {login}; obj1.body = obj2` then
+                // fold placeholder members into the literal, then drop the
+                // leftover state-machine temps (`c1 = tmp3`, `dependencyMap = 0`).
+                body = transforms::inline_named_variables(body);
+                transforms::fold_slot_index_fills(&mut body);
+                body = transforms::inline_named_variables(body);
+                transforms::fold_slot_index_fills(&mut body);
+                body = transforms::remove_dead_temp_bindings(body);
+                body = transforms::eliminate_dead_stores(body);
+                body = drop_unread_bookkeeping(body);
+                body = drop_duplicate_bare_requires(body);
+                all_ir.insert(fid, body);
             }
         }
+
+        // W14 ran before reconstruct, so v98 machines had no `yield` yet and
+        // detect may have missed `asyncGeneratorStep(undefined, function*(){})`.
+        // Re-scan and convert now that bodies are flat.
+        let async_ids = async_detection::detect_async_generator_wrappers(all_ir);
+        for func_id in &async_ids {
+            closure_ctx.mark_async(*func_id);
+            if let Some(body) = all_ir.remove(func_id) {
+                all_ir.insert(*func_id, convert_yields_to_awaits(body));
+            }
+        }
+        async_detection::strip_redundant_async_helpers(all_ir, closure_ctx);
 
         // STAGE W16d: Reconstruct HBC >=97 array destructuring from the flat
         // iterator protocol (after the cleanup-handler skip un-nests it). The
@@ -210,4 +257,126 @@ impl PipelineContext {
         }
     }
 
+}
+
+// Drop leftover state-machine bookkeeping that reconstruct no longer reads
+// (`c1 = tmp3`, `dependencyMap = 0`). Only unread trivial copies/scalars.
+fn drop_unread_bookkeeping(stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::Statement> {
+    use crate::ir::{AssignTarget, Expression, Statement, Value, Visitor};
+    use std::collections::HashMap;
+
+    struct Reads<'a>(&'a mut HashMap<String, u32>);
+    impl Visitor<'_> for Reads<'_> {
+        fn visit_expression(&mut self, e: &Expression) {
+            if let Expression::Value(Value::Variable(n)) = e {
+                *self.0.entry(n.clone()).or_insert(0) += 1;
+            }
+            self.walk_expression(e);
+        }
+    }
+    let mut reads = HashMap::new();
+    {
+        let mut c = Reads(&mut reads);
+        for s in &stmts {
+            c.visit_statement(s);
+        }
+    }
+    stmts
+        .into_iter()
+        .filter(|stmt| match stmt {
+            Statement::Let { name, value, .. } | Statement::Assign {
+                target: AssignTarget::Variable(name),
+                value,
+            } => {
+                if !is_bookkeeping_name(name) {
+                    return true;
+                }
+                if reads.get(name).copied().unwrap_or(0) != 0 {
+                    return true;
+                }
+                !is_trivial_bookkeeping_value(value)
+            }
+            _ => true,
+        })
+        .collect()
+}
+
+fn is_bookkeeping_name(name: &str) -> bool {
+    if name == "dependencyMap" || name == "_dependencyMap" {
+        return true;
+    }
+    if name == "tmp" || name.strip_prefix("tmp").is_some_and(|r| r.chars().all(|c| c.is_ascii_digit())) {
+        return true;
+    }
+    let mut ch = name.chars();
+    matches!(
+        (ch.next(), ch.as_str()),
+        (Some('c' | 'v'), rest) if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())
+    )
+}
+
+fn drop_duplicate_bare_requires(stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::Statement> {
+    use crate::ir::{Expression, Statement};
+    fn require_key(e: &Expression) -> Option<String> {
+        let Expression::Call { arguments, .. } = e else { return None };
+        let args = if arguments.len() >= 2
+            && matches!(
+                &arguments[0],
+                Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::Undefined))
+            ) {
+            &arguments[1..]
+        } else {
+            arguments.as_slice()
+        };
+        match args.first() {
+            Some(Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::Integer(id)))) => {
+                Some(format!("i{id}"))
+            }
+            Some(Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::String(s)))) => {
+                Some(format!("s{s}"))
+            }
+            _ => None,
+        }
+    }
+    use crate::ir::Visitor;
+    struct Keys<'a>(&'a mut std::collections::HashSet<String>, bool);
+    impl Visitor<'_> for Keys<'_> {
+        fn visit_expression(&mut self, e: &Expression) {
+            if let Some(k) = require_key(e) {
+                if self.1 {
+                    self.0.insert(k);
+                }
+            }
+            self.walk_expression(e);
+        }
+    }
+    let mut used = std::collections::HashSet::new();
+    {
+        let mut c = Keys(&mut used, true);
+        for s in &stmts {
+            if !matches!(s, Statement::Expr(e) if require_key(e).is_some()) {
+                c.visit_statement(s);
+            }
+        }
+    }
+    stmts
+        .into_iter()
+        .filter(|s| match s {
+            Statement::Expr(e) => require_key(e).is_none_or(|k| !used.contains(&k)),
+            _ => true,
+        })
+        .collect()
+}
+
+fn is_trivial_bookkeeping_value(e: &crate::ir::Expression) -> bool {
+    use crate::ir::{Constant, Expression, Value};
+    matches!(
+        e,
+        Expression::Value(Value::Variable(_))
+            | Expression::Value(Value::Register(_))
+            | Expression::Value(Value::Parameter(_))
+            | Expression::Value(Value::Constant(
+                Constant::Integer(_) | Constant::Null | Constant::Undefined | Constant::Bool(_)
+            ))
+    )
 }

@@ -140,7 +140,9 @@ impl Codegen {
             // Index-based lookup via dep_names
             if let Some(ref dep_map) = self.dep_names {
                 if let Some(name) = dep_map.get(&id) {
-                    return Some(name.clone());
+                    if crate::analysis::metro::is_usable_module_specifier(name) {
+                        return Some(name.clone());
+                    }
                 }
             }
             return None;
@@ -152,11 +154,13 @@ impl Codegen {
         // any absId that collides with a small dep index.
         if let Some(ref imp_map) = self.import_map {
             if let Some(name) = imp_map.get(&id) {
-                return Some(name.clone());
+                if crate::analysis::metro::is_usable_module_specifier(name) {
+                    return Some(name.clone());
+                }
             }
         }
 
-        // Last resort: generic name
+        // Honest fallback: not a recovered name.
         Some(format!("module_{id}"))
     }
 

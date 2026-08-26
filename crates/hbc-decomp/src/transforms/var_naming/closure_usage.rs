@@ -112,13 +112,16 @@ pub(super) struct ClosureUsageInfo {
     pub indexed_accesses: usize,
     // Spread `...closure_N`, often the captured `arguments` array.
     pub spread: bool,
+    // Object / member keys this capture is stored under (`{ login: closure_1_0 }`,
+    // `obj.login = closure_1_0`). A unique key is ground truth for the slot name.
+    pub object_keys: Vec<String>,
 }
 
-// Check if a variable name is a generic closure name (`closure_N` or short `cN`
-// from constant-initialised env slots).
+// Check if a variable name is a generic closure name (`closure_N`,
+// `closure_{level}_{slot}`, or short `cN` from constant-initialised env slots).
 pub(super) fn is_closure_name(name: &str) -> bool {
     if let Some(suffix) = name.strip_prefix("closure_") {
-        return !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit());
+        return is_closure_numeric_suffix(suffix);
     }
     if let Some(suffix) = name.strip_prefix('c') {
         return !suffix.is_empty()
@@ -128,10 +131,98 @@ pub(super) fn is_closure_name(name: &str) -> bool {
     false
 }
 
+fn is_closure_numeric_suffix(rest: &str) -> bool {
+    if rest.is_empty() {
+        return false;
+    }
+    rest.split('_')
+        .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
+// A unique, usable object-key this capture was stored under. Ground truth:
+// `{ login: closure_1_0 }` names the capture `login`. Ambiguous (two distinct
+// keys) or generic keys yield None.
+pub(super) fn unique_object_key(info: &ClosureUsageInfo) -> Option<String> {
+    let mut keys: Vec<&str> = info
+        .object_keys
+        .iter()
+        .map(String::as_str)
+        .filter(|k| is_usable_object_key(k))
+        .collect();
+    if keys.is_empty() {
+        return None;
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    if keys.len() == 1 {
+        Some(keys[0].to_string())
+    } else {
+        None
+    }
+}
+
+pub(super) fn is_usable_object_key(k: &str) -> bool {
+    if k.is_empty() || k.len() > 40 {
+        return false;
+    }
+    let mut chars = k.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$' => {}
+        _ => return false,
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {
+        return false;
+    }
+    // JS object machinery and positional guesses are not domain names.
+    !matches!(
+        k,
+        "length"
+            | "prototype"
+            | "constructor"
+            | "toString"
+            | "valueOf"
+            | "hasOwnProperty"
+            | "isPrototypeOf"
+            | "propertyIsEnumerable"
+            | "__proto__"
+            | "default"
+            | "first"
+            | "second"
+            | "third"
+            | "fourth"
+            | "last"
+            | "obj"
+            | "arr"
+            | "tmp"
+            | "val"
+            | "fn"
+            | "self"
+    )
+}
+
+fn record_object_key_for_value(
+    key: &str,
+    value: &Expression,
+    usage: &mut BTreeMap<String, ClosureUsageInfo>,
+) {
+    if let Expression::Value(Value::Variable(name)) = value {
+        if is_closure_name(name) {
+            usage
+                .entry(name.clone())
+                .or_default()
+                .object_keys
+                .push(key.to_string());
+        }
+    }
+}
+
 // Collect usage information for all closure_N variables in a statement tree.
 pub(super) fn collect_closure_usage_in_stmt(stmt: &Statement, usage: &mut BTreeMap<String, ClosureUsageInfo>) {
     match stmt {
         Statement::Assign { target, value } => {
+            if let AssignTarget::Member { property, .. } = target {
+                record_object_key_for_value(property, value, usage);
+            }
             collect_closure_usage_in_target(target, usage);
             collect_closure_usage_in_expr(value, usage);
         }
@@ -181,6 +272,19 @@ pub(super) fn collect_closure_usage_in_stmt(stmt: &Statement, usage: &mut BTreeM
         }
         Statement::Block(stmts) => {
             for s in stmts { collect_closure_usage_in_stmt(s, usage); }
+        }
+        Statement::Class { constructor, methods, .. } => {
+            if let Some(c) = constructor {
+                collect_closure_usage_in_stmt(c, usage);
+            }
+            for m in methods {
+                collect_closure_usage_in_expr(&m.value, usage);
+                if let Some(body) = &m.body {
+                    for s in body {
+                        collect_closure_usage_in_stmt(s, usage);
+                    }
+                }
+            }
         }
         _ => {}
     }
@@ -291,9 +395,21 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
             for e in elements.iter().flatten() { collect_closure_usage_in_expr(e, usage); }
         }
         Expression::Object { properties } => {
-            for p in properties { collect_closure_usage_in_expr(&p.value, usage); }
+            for p in properties {
+                if let Some(key) = ident_from_property(&p.key) {
+                    record_object_key_for_value(&key, &p.value, usage);
+                }
+                collect_closure_usage_in_expr(&p.value, usage);
+            }
         }
         Expression::Assignment { target, value } => {
+            if let Expression::Member {
+                property: PropertyKey::Ident(key) | PropertyKey::String(key),
+                ..
+            } = target.as_ref()
+            {
+                record_object_key_for_value(key, value, usage);
+            }
             collect_closure_usage_in_expr(target, usage);
             collect_closure_usage_in_expr(value, usage);
         }

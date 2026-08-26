@@ -1,15 +1,6 @@
-use crate::ir::{
-    map_nested_bodies_mut, AssignTarget, Expression, Statement, Value, expr_uses_register,
-    stmt_has_side_effects,
-};
+use crate::ir::{AssignTarget, Expression, Statement, Value, expr_uses_register, stmt_has_side_effects};
 
 pub fn transform_array_literals(statements: &mut Vec<Statement>) {
-    for stmt in statements.iter_mut() {
-        map_nested_bodies_mut(stmt, |mut body| {
-            transform_array_literals(&mut body);
-            body
-        });
-    }
     let mut i = 0;
     while i < statements.len() {
         // Look for: let arr_reg = NewArray(size);

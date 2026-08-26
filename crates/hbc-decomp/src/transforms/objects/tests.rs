@@ -60,6 +60,55 @@ fn folds_named_let_slot_fills() {
 }
 
 #[test]
+fn folds_named_member_placeholder_assigns() {
+    let mut stmts = vec![
+        Statement::Let {
+            name: "obj1".into(),
+            value: Expression::Object {
+                properties: vec![
+                    ObjectProperty {
+                        key: PropertyKey::Ident("url".into()),
+                        value: Expression::Value(Value::Variable("URL".into())),
+                    },
+                    ObjectProperty {
+                        key: PropertyKey::Ident("body".into()),
+                        value: null(),
+                    },
+                ],
+            },
+            kind: VarKind::Let,
+        },
+        Statement::Assign {
+            target: AssignTarget::Member {
+                object: Expression::Value(Value::Variable("obj1".into())),
+                property: "body".into(),
+            },
+            value: Expression::Object {
+                properties: vec![ObjectProperty {
+                    key: PropertyKey::Ident("login".into()),
+                    value: Expression::Value(Value::Variable("user".into())),
+                }],
+            },
+        },
+    ];
+    fold_slot_index_fills(&mut stmts);
+    assert_eq!(stmts.len(), 1, "member fill should be consumed: {stmts:?}");
+    match &stmts[0] {
+        Statement::Let {
+            value: Expression::Object { properties },
+            ..
+        } => {
+            assert!(
+                matches!(&properties[1].value, Expression::Object { .. }),
+                "body should be the login object: {:?}",
+                properties[1].value
+            );
+        }
+        other => panic!("expected folded object, got {other:?}"),
+    }
+}
+
+#[test]
 fn does_not_fold_forward_referenced_value() {
     // `obj = {a: null, b: null}; config = {...}; obj[0] = config; obj[1] = Themes.ACTIVE`.
     // Slot 0's value `config` is defined AFTER the object, so folding it into the
@@ -109,9 +158,9 @@ fn does_not_fold_forward_referenced_value() {
 }
 
 #[test]
-fn folds_slot_fills_inside_switch_and_if() {
-    // Structure recovery wraps the shape-table fills in switch/if before this
-    // pass runs. A top-level-only scan leaves `obj[0] = val` in the case body.
+fn does_not_fold_slot_fills_inside_switch() {
+    // Nested folding is intentionally off: it rewrote generator `{value,done}`
+    // objects and left raw v98 state machines in the dump.
     let inner = vec![
         Statement::Let {
             name: "obj".into(),
@@ -138,41 +187,12 @@ fn folds_slot_fills_inside_switch_and_if() {
             Expression::Value(Value::Constant(Constant::String("MESSAGE_CREATE".into()))),
             inner.clone(),
         )],
-        default: Some(vec![Statement::If {
-            condition: Expression::Value(Value::Variable("flag".into())),
-            then_body: inner,
-            else_body: vec![],
-        }]),
+        default: None,
     }];
     fold_slot_index_fills(&mut stmts);
-    let check = |body: &[Statement], where_: &str| {
-        assert_eq!(body.len(), 1, "{where_} should consume fills: {body:?}");
-        match &body[0] {
-            Statement::Let {
-                value: Expression::Object { properties },
-                ..
-            } => {
-                assert!(
-                    matches!(&properties[0].value, Expression::Value(Value::Variable(n)) if n == "type"),
-                    "{where_} slot 0: {:?}",
-                    properties[0].value
-                );
-                assert!(
-                    matches!(&properties[1].value, Expression::Value(Value::Variable(n)) if n == "guild_id"),
-                    "{where_} slot 1: {:?}",
-                    properties[1].value
-                );
-            }
-            other => panic!("{where_}: expected folded Let object, got {other:?}"),
-        }
-    };
     match &stmts[0] {
-        Statement::Switch { cases, default, .. } => {
-            check(&cases[0].1, "switch case");
-            match default.as_ref().unwrap().as_slice() {
-                [Statement::If { then_body, .. }] => check(then_body, "if then"),
-                other => panic!("expected if in default, got {other:?}"),
-            }
+        Statement::Switch { cases, .. } => {
+            assert_eq!(cases[0].1.len(), 3, "nested fills must stay: {:?}", cases[0].1);
         }
         other => panic!("expected switch, got {other:?}"),
     }

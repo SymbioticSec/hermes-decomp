@@ -88,6 +88,34 @@ mod tests {
     }
 
     #[test]
+    fn test_http_query_object_named_request() {
+        let stmts = vec![Statement::Assign {
+            target: AssignTarget::Register(2),
+            value: Expression::Object {
+                properties: vec![
+                    crate::ir::ObjectProperty {
+                        key: PropertyKey::Ident("url".into()),
+                        value: Expression::Value(Value::Variable("u".into())),
+                    },
+                    crate::ir::ObjectProperty {
+                        key: PropertyKey::Ident("query".into()),
+                        value: Expression::Value(Value::Variable("q".into())),
+                    },
+                ],
+            },
+        }];
+        let result = infer_variable_names(stmts);
+        if let Statement::Assign { target, .. } = &result[0] {
+            assert!(
+                matches!(target, AssignTarget::Variable(n) if n == "request"),
+                "got {target:?}"
+            );
+        } else {
+            panic!("Expected assign statement");
+        }
+    }
+
+    #[test]
     fn test_new_instance_naming() {
         // r0 = new Date() → date = new Date()
         let stmts = vec![Statement::Assign {

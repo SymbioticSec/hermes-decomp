@@ -136,7 +136,8 @@ pub fn run_ipa(
             // method that received it.
             let override_role = matches!(&name, Some(n) if !inference::is_callback_role_name(n))
                 && matches!(&existing[i], Some(e) if inference::is_callback_role_name(e));
-            if existing[i].is_none() || override_role {
+            let existing_placeholder = matches!(&existing[i], Some(e) if is_generic_name(e));
+            if existing[i].is_none() || override_role || existing_placeholder {
                 existing[i] = name;
             }
         }

@@ -1,5 +1,5 @@
 use super::{Codegen, DescriptorInfo, EsmClassification, sanitize_import_name, replace_whole_word};
-use super::esm_imports::consolidate_imports;
+use super::esm_imports::{consolidate_imports, fold_redundant_imports};
 use crate::ir::Statement;
 
 impl Codegen {
@@ -283,6 +283,8 @@ impl Codegen {
         // from "_curry2";` x65), and merge distinct named imports of the same module
         // into one `import { a, b } from "M";`.
         let imports = consolidate_imports(imports);
+        let (imports, extra_consts) =
+            fold_redundant_imports(imports, &mut body_stmts, &mut exports);
 
         // Deduplicate exports (e.g. multiple export * from same module)
         {
@@ -307,6 +309,18 @@ impl Codegen {
         if !imports.is_empty() {
             for imp in &imports {
                 output.push_str(imp);
+                output.push('\n');
+            }
+            if extra_consts.is_empty() {
+                output.push('\n');
+            }
+        }
+        if !extra_consts.is_empty() {
+            if !imports.is_empty() {
+                output.push('\n');
+            }
+            for c in &extra_consts {
+                output.push_str(c);
                 output.push('\n');
             }
             output.push('\n');
@@ -461,7 +475,7 @@ impl Codegen {
                 }
             });
             let Some((mod_name, id)) = resolved else { continue };
-            let base = crate::util::sanitize_identifier(&mod_name);
+            let base = super::sanitize_import_name(&mod_name);
             if !crate::util::is_valid_identifier(&base) || is_bad_module_binding(&base) {
                 continue;
             }
@@ -491,14 +505,26 @@ impl Codegen {
 // A binding whose name is a decompiler placeholder that should take its module's
 // name when it is an import.
 fn is_generic_import_binding(name: &str) -> bool {
-    name.starts_with("closure_")
-        || (name.starts_with("tmp") && name[3..].chars().all(|c| c.is_ascii_digit()))
+    if name.starts_with("closure_") {
+        return true;
+    }
+    let result_stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
+    if result_stem.ends_with("Result") {
+        return true;
+    }
+    let digit_suffix = |prefix: &str| {
+        name.strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit()))
+    };
+    digit_suffix("tmp")
         || (name.starts_with('r') && name.len() > 1 && name[1..].chars().all(|c| c.is_ascii_digit()))
+        || digit_suffix("obj")
+        || digit_suffix("arr")
 }
 
 // Module names too generic to become a binding (would not read better than the
 // placeholder).
 fn is_bad_module_binding(name: &str) -> bool {
-    crate::analysis::metro::is_obviously_generic(name)
-        || matches!(name, "result" | "index" | "module" | "exports" | "default" | "require")
+    crate::analysis::metro::is_generic_module_specifier(name)
+        || matches!(name, "module" | "exports" | "default" | "require")
 }

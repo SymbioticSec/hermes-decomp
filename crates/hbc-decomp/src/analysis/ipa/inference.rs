@@ -159,6 +159,12 @@ fn walk_expr_for_params(
 }
 
 pub fn is_generic_name(name: &str) -> bool {
+    // Diagnostic capture names leaking into call-site hints (`forgotPassword(closure_1_6)`).
+    // These are not ground-truth parameter names.
+    if name.starts_with("closure_") || name.starts_with("outer") {
+        return true;
+    }
+
     // Check for generic prefixes like r0, arg1, var2, etc.
     let prefixes = ["r", "t", "arg", "var", "val", "tmp", "obj", "str", "num"];
     for &prefix in &prefixes {
@@ -300,6 +306,10 @@ mod tests {
         assert!(!is_generic_name("email"));
         assert!(!is_generic_name("response"));
         assert!(!is_generic_name("user"));
+        assert!(!is_generic_name("login"));
+        assert!(is_generic_name("closure_1_6"));
+        assert!(is_generic_name("closure_0"));
+        assert!(is_generic_name("first"));
     }
 
     #[test]

@@ -203,6 +203,43 @@ fn test_esm_import_from_require() {
 }
 
 #[test]
+fn test_esm_renames_array_result_import_binding() {
+    let req = |id: i32| {
+        Expression::call(
+            Expression::Value(crate::ir::Value::Variable("require".into())),
+            vec![
+                Expression::constant(Constant::Undefined),
+                Expression::constant(Constant::Integer(id)),
+            ],
+        )
+    };
+    let stmts = vec![
+        Statement::let_stmt("ArrayResult", req(4)),
+        Statement::let_stmt("ArrayResult1", req(3)),
+    ];
+    let mut import_map = BTreeMap::new();
+    import_map.insert(4u32, "logger/Logger".to_string());
+    import_map.insert(3u32, "Logger".to_string());
+    let mut codegen = Codegen::new(CodegenOptions::new())
+        .with_imports(import_map)
+        .with_esm_mode(BTreeMap::new());
+    let output = codegen.generate_esm_module(&stmts, 1, Some("GiftCodeUtils"));
+    assert!(
+        output.contains("import Logger from \"logger/Logger\""),
+        "Expected Logger binding from path specifier, got: {output}"
+    );
+    assert!(
+        output.contains("import Logger2 from \"Logger\"")
+            || output.contains("import Logger from \"Logger\""),
+        "Expected second Logger module binding, got: {output}"
+    );
+    assert!(
+        !output.contains("ArrayResult"),
+        "placeholder binding should be replaced, got: {output}"
+    );
+}
+
+#[test]
 fn test_esm_export_from_assign() {
     // exports.default = value should become `export default value`
     let stmts = vec![Statement::Assign {

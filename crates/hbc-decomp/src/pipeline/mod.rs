@@ -235,19 +235,82 @@ fn get_function_name(file: &BytecodeFile, function_id: u32) -> String {
         .unwrap_or_else(|| format!("f{function_id}"))
 }
 
-fn get_function_params(file: &BytecodeFile, function_id: u32) -> Vec<String> {
-    let param_count = file
-        .function_headers
+// How many arguments the function actually declares. `param_count` includes the
+// implicit `this` (Hermes LoadParam index 0); the body names user arguments
+// 0-indexed (LoadParam idx -> Parameter(idx-1) -> argN), so `this` is not one of
+// them. This count is authoritative for a signature: recovered names may propose
+// more entries than the function has (a callback role table suggests a name per
+// conventional position, `item`/`index` for `.map`, `acc`/`item`/`index` for
+// `.reduce`) and rendering those extras would invent parameters, changing the
+// function's arity.
+pub(crate) fn user_param_count(file: &BytecodeFile, function_id: u32) -> usize {
+    file.function_headers
         .get(function_id as usize)
         .map(|h| h.param_count())
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .saturating_sub(1) as usize
+}
 
-    // param_count includes the implicit `this` (Hermes LoadParam index 0). The
-    // body names user arguments 0-indexed (LoadParam idx -> Parameter(idx-1) ->
-    // argN), so the signature must list the user args the same way and NOT show
-    // `this`. Otherwise the signature's argN is the body's arg(N-1) (off by one).
-    let user_params = param_count.saturating_sub(1);
-    (0..user_params).map(|i| format!("arg{i}")).collect()
+// Build a signature from recovered names, cut to the arity the function really
+// declares and padded with `argN` where no name was recovered.
+//
+// The header arity is a lower bound, not an exact count: Hermes does not count a
+// default or rest parameter in it (`function greet(name = "anon")` reports zero
+// declared arguments and reads the value in the body instead). So a recovered
+// name past that bound is kept when the body actually reads that parameter, and
+// dropped when it does not, which is the callback role case (`.map` proposes
+// `item, index` even for a one argument callback).
+pub(crate) fn params_from_names(
+    file: &BytecodeFile,
+    function_id: u32,
+    names: &[Option<String>],
+    body: &[crate::ir::Statement],
+) -> Vec<String> {
+    let declared = user_param_count(file, function_id);
+    let mut count = declared;
+    while count < names.len() && body_uses_param(body, count as u32) {
+        count += 1;
+    }
+    (0..count)
+        .map(|idx| {
+            names
+                .get(idx)
+                .cloned()
+                .flatten()
+                .unwrap_or_else(|| format!("arg{idx}"))
+        })
+        .collect()
+}
+
+// Whether the body reads `Parameter(idx)`. Must run on the IR before parameter
+// renaming, which rewrites those nodes into named variables.
+fn body_uses_param(body: &[crate::ir::Statement], idx: u32) -> bool {
+    use crate::ir::{Expression, Value, Visitor};
+    struct V {
+        idx: u32,
+        found: bool,
+    }
+    impl<'a> Visitor<'a> for V {
+        fn visit_expression(&mut self, e: &'a Expression) {
+            if let Expression::Value(Value::Parameter(i)) = e {
+                if *i == self.idx {
+                    self.found = true;
+                }
+            }
+            self.walk_expression(e);
+        }
+    }
+    let mut v = V { idx, found: false };
+    for s in body {
+        v.visit_statement(s);
+    }
+    v.found
+}
+
+fn get_function_params(file: &BytecodeFile, function_id: u32) -> Vec<String> {
+    (0..user_param_count(file, function_id))
+        .map(|i| format!("arg{i}"))
+        .collect()
 }
 
 fn build_function_name_index(file: &BytecodeFile) -> crate::analysis::FunctionNameIndex {

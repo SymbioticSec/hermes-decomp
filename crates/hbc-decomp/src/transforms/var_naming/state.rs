@@ -114,8 +114,20 @@ pub fn infer_name_from_expr(expr: &Expression) -> Option<String> {
             return Some("items".to_string());
         }
 
-        // Object literals → obj, config, options
-        Expression::Object { .. } => {
+        // Object literals: property-set signature (`url`+`query` → request) or `obj`.
+        Expression::Object { properties } => {
+            let mut props = HashSet::new();
+            for p in properties {
+                match &p.key {
+                    PropertyKey::Ident(k) | PropertyKey::String(k) => {
+                        props.insert(k.clone());
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(n) = crate::analysis::naming::infer_type_from_properties(&props) {
+                return Some(n.to_string());
+            }
             return Some("obj".to_string());
         }
 
