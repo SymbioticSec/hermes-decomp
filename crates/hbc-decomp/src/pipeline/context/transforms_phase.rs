@@ -186,7 +186,19 @@ impl PipelineContext {
             .collect();
         for fid in gen_ids {
             if let Some(body) = all_ir.remove(&fid) {
-                let mut body = transforms::reconstruct_generator_v98(body);
+                let Some(lifted) = transforms::try_reconstruct_generator_v98(&body) else {
+                    // The machine did not lift, so it stays exactly as decoded.
+                    // The cleanup below reads data flow to decide what is dead,
+                    // and in a raw resume machine the flow runs through the label
+                    // and status slots, which those passes cannot follow: they
+                    // then delete live code. That is how the header build in
+                    // `piloteAuthHeaders`, `Bearer ` and `x-refresh-token`
+                    // included, disappeared from the output while still being
+                    // present in the per function decompile of the same body.
+                    all_ir.insert(fid, body);
+                    continue;
+                };
+                let mut body = lifted;
                 // Reconstruct runs after the W14 yield→await pass, so a v98
                 // machine that just became `yield` still needs the async rewrite.
                 if closure_ctx.is_async(fid) {

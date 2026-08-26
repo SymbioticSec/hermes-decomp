@@ -34,7 +34,7 @@ pub use default_params::transform_default_params;
 pub use destructuring::{detect_destructuring, detect_iterator_destructuring, reconstruct_v98_array_destructuring};
 pub use generator::{
     cleanup_generator_comments, detect_generator_patterns, has_generator_patterns,
-    reconstruct_generator_v98, simplify_state_machine,
+    reconstruct_generator_v98, simplify_state_machine, try_reconstruct_generator_v98,
 };
 pub use inline::{
     cleanup_noise, extra_writes_from_nested_bodies, fold_array_literals, fold_object_literals,
