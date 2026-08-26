@@ -9,7 +9,7 @@
 // We lower Load/Store to `ClosureVar { level, slot }` so closure resolution can
 // distinguish parent captures from local env slots that share the same index.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 // Levels from this value up denote a nested environment, one that was loaded out
 // of a slot rather than reached by walking up the parent chain. The level encodes
@@ -26,6 +26,8 @@ pub struct EnvRegMap {
     /// register → the (level, slot) it was loaded from, for a register that later
     /// turns out to hold an environment
     reg_source_slot: BTreeMap<u32, (u32, u32)>,
+    /// registers holding an environment this function just created
+    created_envs: HashSet<u32>,
 }
 
 impl EnvRegMap {
@@ -39,6 +41,16 @@ impl EnvRegMap {
     pub fn set_level(&mut self, reg: u32, level: u32) {
         self.reg_level.insert(reg, level);
         self.reg_source_slot.remove(&reg);
+        self.created_envs.remove(&reg);
+    }
+
+    /// `reg` holds an environment this function just created.
+    pub fn mark_created_env(&mut self, reg: u32) {
+        self.created_envs.insert(reg);
+    }
+
+    pub fn is_created_env(&self, reg: u32) -> bool {
+        self.created_envs.contains(&reg)
     }
 
     /// Level for an env register, defaulting to 0 (current) when unknown.
@@ -85,6 +97,11 @@ impl EnvRegMap {
             None => {
                 self.reg_source_slot.remove(&dst);
             }
+        }
+        if self.created_envs.contains(&src) {
+            self.created_envs.insert(dst);
+        } else {
+            self.created_envs.remove(&dst);
         }
     }
 }
