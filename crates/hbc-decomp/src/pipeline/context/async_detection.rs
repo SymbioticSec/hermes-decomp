@@ -332,7 +332,12 @@ fn detect_async_wrapper_pattern(stmts: &[Statement]) -> Option<u32> {
     // return CALL(..., Function{B})(..arguments)
     if stmts.len() == 1 {
         if let Statement::Return(Some(outer_call)) = &stmts[0] {
-            return extract_wrapper_from_nested_call(outer_call);
+            if let Some(id) = extract_wrapper_from_nested_call(outer_call) {
+                return Some(id);
+            }
+            if let Some(id) = extract_spawn_async_body(outer_call) {
+                return Some(id);
+            }
         }
     }
 
@@ -365,6 +370,34 @@ fn detect_async_wrapper_pattern(stmts: &[Statement]) -> Option<u32> {
     // typeof-apply / applyArguments fallback, plus env-slot stores of the
     // helper result. `_resolveGiftCode` is this shape (6+ statements).
     detect_apply_forwarded_async_helper(stmts)
+}
+
+// `return HermesBuiltin.spawnAsync(function body, this, arguments)`, the shape a
+// native `async function` compiles to from HBC 97 on. The older shapes all pass
+// `arguments` spread or through `.apply`, so none of them match this one: here
+// `this` and `arguments` are plain positional arguments of the builtin. Without
+// this case the wrapper stayed in the output and the reconstructed body was
+// rendered nested inside it instead of becoming the function itself.
+fn extract_spawn_async_body(expr: &crate::ir::Expression) -> Option<u32> {
+    use crate::ir::{Expression, Value};
+
+    let Expression::Call { callee, arguments } = expr else {
+        return None;
+    };
+    if !is_async_helper_callee(callee) {
+        return None;
+    }
+    // The builtin takes the body first, then the receiver and the argument list.
+    let forwards_arguments = arguments
+        .iter()
+        .any(|a| matches!(a, Expression::Value(Value::Arguments)));
+    if !forwards_arguments {
+        return None;
+    }
+    arguments.iter().find_map(|a| match a {
+        Expression::Function { id, .. } => Some(id.0),
+        _ => None,
+    })
 }
 
 fn detect_apply_forwarded_async_helper(stmts: &[Statement]) -> Option<u32> {

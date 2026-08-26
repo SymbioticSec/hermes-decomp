@@ -169,6 +169,12 @@ impl PipelineContext {
                 all_ir.remove(&inner);
             }
         }
+        // The wrapper collapse above just marked new generators, and W14 marked the
+        // wrappers async. Propagate now so a generator whose parent is async is
+        // known to be async BEFORE the reconstruction loop below, which is what
+        // decides whether its `yield`s become `await`s.
+        closure_ctx.propagate_async_to_generators();
+
         // STAGE W16c: Reconstruct HBC >=97 generator state machines into flat
         // `yield` bodies. v97 removed the generator opcodes; `function*` is now a
         // desugared switch over status/label env slots. The recognizer is

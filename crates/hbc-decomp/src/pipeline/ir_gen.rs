@@ -325,80 +325,29 @@ pub fn build_closure_context_from_file(
 // Convert all `Expression::Yield` to `Expression::Await` in a statement list.
 // Used for async functions where the CFG-level generator transform emitted Yield
 // but the function is actually async.
+// Rewrite every `yield` into `await` in an async function body.
+//
+// Hermes compiles `async` to a generator, so the reconstructed body suspends
+// with `yield`; the async form of the same suspension is `await`. This walks the
+// whole tree through MutVisitor rather than a hand written match, because the
+// previous hand written walk skipped object and array literals, `new`, spreads,
+// switches and the for-in/for-of/do-while bodies, which left a bare `yield`
+// inside a function rendered as `async`.
 pub(crate) fn convert_yields_to_awaits(stmts: Vec<Statement>) -> Vec<Statement> {
-    stmts.into_iter().map(convert_yield_stmt).collect()
-}
+    use crate::ir::MutVisitor;
 
-fn convert_yield_stmt(stmt: Statement) -> Statement {
-    match stmt {
-        Statement::Assign { target, value } => Statement::Assign {
-            target,
-            value: convert_yield_expr(value),
-        },
-        Statement::Expr(e) => Statement::Expr(convert_yield_expr(e)),
-        Statement::Return(Some(e)) => Statement::Return(Some(convert_yield_expr(e))),
-        Statement::Throw(e) => Statement::Throw(convert_yield_expr(e)),
-        Statement::Let { name, value, kind } => Statement::Let {
-            name,
-            value: convert_yield_expr(value),
-            kind,
-        },
-        Statement::If { condition, then_body, else_body } => Statement::If {
-            condition: convert_yield_expr(condition),
-            then_body: convert_yields_to_awaits(then_body),
-            else_body: convert_yields_to_awaits(else_body),
-        },
-        Statement::While { condition, body } => Statement::While {
-            condition: convert_yield_expr(condition),
-            body: convert_yields_to_awaits(body),
-        },
-        Statement::For { init, condition, update, body } => Statement::For {
-            init: init.map(|s| Box::new(convert_yield_stmt(*s))),
-            condition: condition.map(convert_yield_expr),
-            update: update.map(|s| Box::new(convert_yield_stmt(*s))),
-            body: convert_yields_to_awaits(body),
-        },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
-            try_body: convert_yields_to_awaits(try_body),
-            catch_param,
-            catch_body: convert_yields_to_awaits(catch_body),
-            finally_body: convert_yields_to_awaits(finally_body),
-        },
-        Statement::Block(inner) => Statement::Block(convert_yields_to_awaits(inner)),
-        other => other,
+    struct YieldToAwait;
+    impl MutVisitor for YieldToAwait {
+        fn visit_expression(&mut self, expr: &mut Expression) {
+            self.walk_expression(expr);
+            if let Expression::Yield { value, .. } = expr {
+                let inner = std::mem::replace(value.as_mut(), Expression::Value(crate::ir::Value::This));
+                *expr = Expression::Await(Box::new(inner));
+            }
+        }
     }
-}
 
-fn convert_yield_expr(expr: Expression) -> Expression {
-    match expr {
-        Expression::Yield { value, .. } => Expression::Await(Box::new(convert_yield_expr(*value))),
-        Expression::Call { callee, arguments } => Expression::Call {
-            callee: Box::new(convert_yield_expr(*callee)),
-            arguments: arguments.into_iter().map(convert_yield_expr).collect(),
-        },
-        Expression::Binary { op, left, right } => Expression::Binary {
-            op,
-            left: Box::new(convert_yield_expr(*left)),
-            right: Box::new(convert_yield_expr(*right)),
-        },
-        Expression::Unary { op, operand } => Expression::Unary {
-            op,
-            operand: Box::new(convert_yield_expr(*operand)),
-        },
-        Expression::Conditional { condition, then_expr, else_expr } => Expression::Conditional {
-            condition: Box::new(convert_yield_expr(*condition)),
-            then_expr: Box::new(convert_yield_expr(*then_expr)),
-            else_expr: Box::new(convert_yield_expr(*else_expr)),
-        },
-        Expression::Member { object, property, optional } => Expression::Member {
-            object: Box::new(convert_yield_expr(*object)),
-            property,
-            optional,
-        },
-        Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(convert_yield_expr(*target)),
-            value: Box::new(convert_yield_expr(*value)),
-        },
-        other => other,
-    }
+    let mut stmts = stmts;
+    YieldToAwait.visit_statement_list(&mut stmts);
+    stmts
 }
