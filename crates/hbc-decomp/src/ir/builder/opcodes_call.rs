@@ -322,17 +322,31 @@ fn builtin_name_to_expr(name: &str) -> Expression {
     }
 }
 
-// Handle GetBuiltinClosure opcode.
-pub fn handle_get_builtin_closure(inst: &Instruction) -> Option<Statement> {
+// Handle GetBuiltinClosure opcode: `rDst = <builtin closure>`.
+//
+// Resolved from the same per-version table as CallBuiltin. Leaving it as an
+// opaque `builtin<N>` placeholder hid what the closure is, and HBC >=97 relies on
+// this opcode for `async` functions: the compiler dropped `CreateAsyncClosure`
+// and now lowers `async function f() {...}` to
+// `HermesBuiltin.spawnAsync(innerGenerator, this, arguments)`, so an unresolved
+// callee means nothing downstream can recognise the function as async.
+pub fn handle_get_builtin_closure(inst: &Instruction, version: u32) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
     let builtin_idx = inst.operands.get(1)?.value.as_u32()?;
 
-    Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
-        value: Expression::Unknown {
+    let table = crate::opcode::builtins_for_version(version);
+    let value = match table.get(builtin_idx as usize) {
+        Some(name) => builtin_name_to_expr(name),
+        // Unknown index for this version: keep a debuggable placeholder.
+        None => Expression::Unknown {
             opcode: format!("builtin{builtin_idx}"),
             operands: vec![],
         },
+    };
+
+    Some(Statement::Assign {
+        target: AssignTarget::Register(dst),
+        value,
     })
 }
 
@@ -370,6 +384,22 @@ pub fn handle_call_require(inst: &Instruction) -> Option<Statement> {
         value: Expression::Call {
             callee: Box::new(Expression::Value(Value::Variable("require".to_string()))),
             arguments: vec![arg_expr],
+        },
+    })
+}
+
+// DirectEval rDst, rSource, strictCaller: a direct `eval(source)` call. Hermes has
+// a dedicated opcode because a direct eval sees the caller scope, but the source
+// form is a plain call.
+pub fn handle_direct_eval(inst: &Instruction) -> Option<Statement> {
+    let dst = get_reg(&inst.operands, 0)?;
+    let source = reg_expr(&inst.operands, 1)?;
+
+    Some(Statement::Assign {
+        target: AssignTarget::Register(dst),
+        value: Expression::Call {
+            callee: Box::new(Expression::Value(Value::Variable("eval".to_string()))),
+            arguments: vec![source],
         },
     })
 }

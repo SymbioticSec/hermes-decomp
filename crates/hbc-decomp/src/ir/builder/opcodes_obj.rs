@@ -554,3 +554,15 @@ pub fn handle_put_own_getter_setter_by_val(inst: &Instruction) -> Option<Stateme
         ],
     }))
 }
+
+// FastArrayAppend rDst, rSrc: append one fast array onto another. The JS this
+// lowers from is a spread push, so it is reconstructed as one.
+pub fn handle_fast_array_append(inst: &Instruction) -> Option<Statement> {
+    let dst = reg_expr(&inst.operands, 0)?;
+    let src = reg_expr(&inst.operands, 1)?;
+
+    Some(Statement::Expr(Expression::Call {
+        callee: Box::new(Expression::member(dst, "push")),
+        arguments: vec![Expression::Spread(Box::new(src))],
+    }))
+}

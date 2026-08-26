@@ -236,3 +236,50 @@ pub fn handle_del_by_id(
         result: Some(dst),
     })
 }
+
+// ToPropertyKey rDst, rValue: ToPropertyKey(value), the coercion Hermes runs on a
+// computed property name (`obj[expr]`). The coercion is implicit in the bracket
+// syntax, so the value passes through unchanged.
+pub fn handle_to_property_key(inst: &Instruction) -> Option<Statement> {
+    let dst = get_reg(&inst.operands, 0)?;
+    let value = reg_expr(&inst.operands, 1)?;
+
+    Some(Statement::Assign {
+        target: AssignTarget::Register(dst),
+        value,
+    })
+}
+
+// GetByValWithReceiver rDst, rObj, rKey, rReceiver: the computed-key counterpart
+// of GetByIdWithReceiver. Hermes emits a with-receiver form only for `super`
+// access, where the looked-up object is the parent prototype and the receiver is
+// the distinct `this`, so this reconstructs `super[key]` and drops the parent
+// prototype register the same way handle_get_by_id_with_receiver does.
+pub fn handle_get_by_val_with_receiver(inst: &Instruction) -> Option<Statement> {
+    let dst = get_reg(&inst.operands, 0)?;
+    let key = reg_expr(&inst.operands, 2)?;
+
+    Some(Statement::Assign {
+        target: AssignTarget::Register(dst),
+        value: Expression::Member {
+            object: Box::new(Expression::Value(crate::ir::Value::Super)),
+            property: PropertyKey::Computed(Box::new(key)),
+            optional: false,
+        },
+    })
+}
+
+// PutByValWithReceiver rObj, rKey, rValue, rReceiver, strict: `super[key] = value`.
+// Operand order differs from the Get form, which puts the destination first.
+pub fn handle_put_by_val_with_receiver(inst: &Instruction) -> Option<Statement> {
+    let key = reg_expr(&inst.operands, 1)?;
+    let value = reg_expr(&inst.operands, 2)?;
+
+    Some(Statement::Assign {
+        target: AssignTarget::Index {
+            object: Expression::Value(crate::ir::Value::Super),
+            key,
+        },
+        value,
+    })
+}
