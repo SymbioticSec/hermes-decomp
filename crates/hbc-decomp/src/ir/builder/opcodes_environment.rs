@@ -51,12 +51,15 @@ pub fn handle_get_closure_environment(
 // LoadFromEnvironment rDst, rEnv, slot
 pub fn handle_load_from_environment(
     inst: &crate::Instruction,
-    env_map: &EnvRegMap,
+    env_map: &mut EnvRegMap,
 ) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
     let env_reg = get_reg(&inst.operands, 1)?;
     let slot = inst.operands.get(2)?.value.as_u32()?;
-    let level = env_map.level_of(env_reg);
+    let level = env_map.env_level_of(env_reg);
+    // Remember where this value came from: if it is used as an environment
+    // later, that is what identifies it.
+    env_map.set_source_slot(dst, level, slot);
 
     Some(FlowResult::Statement(Statement::Assign {
         target: crate::ir::AssignTarget::Register(dst),
@@ -72,7 +75,7 @@ pub fn handle_store_to_environment(
     let env_reg = get_reg(&inst.operands, 0)?;
     let slot = inst.operands.get(1)?.value.as_u32()?;
     let value = reg_expr(&inst.operands, 2)?;
-    let level = env_map.level_of(env_reg);
+    let level = env_map.env_level_of(env_reg);
 
     Some(FlowResult::Statement(Statement::Assign {
         target: crate::ir::AssignTarget::ClosureVar { level, slot },
