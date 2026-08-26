@@ -10,10 +10,12 @@ use super::is_reg_used;
 // is never absorbed. Matches both still-register objects and named
 // Variable/Let objects (after register naming).
 //
-// Does NOT recurse into if/switch/try/loop: nested folding rewrote the v98
+// The FOLD does NOT recurse into if/switch/try/loop: hoisting a value into the
+// literal changes when it is evaluated, and nested folding rewrote the v98
 // generator result object (`obj = {value, done}; obj[0] = V; return obj`)
-// into a shape the reconstructor used to miss, and left raw state machines
-// in the dump. Nested `obj[N]` fills stay as-is.
+// into a shape the reconstructor used to miss. Nested fills therefore stay as
+// separate statements, but they are still renamed to their key by
+// `rewrite_slot_index_names`, which does recurse.
 pub fn fold_slot_index_fills(statements: &mut Vec<Statement>) {
     fold_slot_index_fills_here(statements);
 }
@@ -161,6 +163,19 @@ fn prop_key_is(key: &crate::ir::PropertyKey, name: &str) -> bool {
 
 fn rewrite_slot_index_names(statements: &mut [Statement]) {
     let mut shapes: Vec<(ObjRef, Vec<String>)> = Vec::new();
+    rewrite_slot_index_names_in(statements, &mut shapes);
+}
+
+// Unlike the folding above, this recurses into nested bodies. Renaming `obj[2]`
+// to `obj.end` moves nothing and evaluates nothing, so it is safe inside a branch
+// or a loop, and that is where most slot fills actually sit. Shapes from the
+// enclosing scope stay visible inside a nested body, and any shape whose object is
+// reassigned somewhere in that body is dropped afterwards so a later fill cannot
+// be renamed against a stale key list.
+fn rewrite_slot_index_names_in(
+    statements: &mut [Statement],
+    shapes: &mut Vec<(ObjRef, Vec<String>)>,
+) {
     for stmt in statements.iter_mut() {
         if let Some((obj, keys)) = object_ident_keys(stmt) {
             shapes.retain(|(o, _)| !obj_ref_eq(o, &obj));
@@ -206,7 +221,47 @@ fn rewrite_slot_index_names(statements: &mut [Statement]) {
             };
             shapes.retain(|(o, _)| !obj_ref_eq(o, &obj));
         }
+
+        let mut inner = clone_shapes(shapes);
+        crate::ir::map_nested_bodies_mut(stmt, |mut body| {
+            rewrite_slot_index_names_in(&mut body, &mut inner);
+            body
+        });
+        shapes.retain(|(o, _)| !reassigns_deep(stmt, o));
     }
+}
+
+fn clone_shapes(shapes: &[(ObjRef, Vec<String>)]) -> Vec<(ObjRef, Vec<String>)> {
+    shapes
+        .iter()
+        .map(|(o, k)| {
+            let o = match o {
+                ObjRef::Register(r) => ObjRef::Register(*r),
+                ObjRef::Name(n) => ObjRef::Name(n.clone()),
+            };
+            (o, k.clone())
+        })
+        .collect()
+}
+
+// Whether `obj` is reassigned anywhere inside `stmt`, at any depth.
+fn reassigns_deep(stmt: &Statement, obj: &ObjRef) -> bool {
+    use crate::ir::Visitor;
+    struct V<'a> {
+        obj: &'a ObjRef,
+        found: bool,
+    }
+    impl<'a, 'b> Visitor<'b> for V<'a> {
+        fn visit_statement(&mut self, s: &'b Statement) {
+            if obj_reassigned(s, self.obj) {
+                self.found = true;
+            }
+            self.walk_statement(s);
+        }
+    }
+    let mut v = V { obj, found: false };
+    v.visit_statement(stmt);
+    v.found
 }
 
 fn object_ident_keys(stmt: &Statement) -> Option<(ObjRef, Vec<String>)> {

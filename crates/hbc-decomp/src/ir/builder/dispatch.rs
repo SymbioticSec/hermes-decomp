@@ -281,7 +281,7 @@ fn try_obj_handlers(
             handle_create_class(inst, file, resolve_strings, true).map(FlowResult::Statement)
         }
         "NewObjectWithParent" | "NewObjectWithBufferAndParent" => {
-            handle_new_object_with_parent(inst).map(FlowResult::Statement)
+            handle_new_object_with_parent(inst, file).map(FlowResult::Statement)
         }
         "NewObjectWithBuffer" | "NewObjectWithBufferLong" => {
             handle_new_object_with_buffer(inst, file, resolve_strings).map(FlowResult::Statement)
