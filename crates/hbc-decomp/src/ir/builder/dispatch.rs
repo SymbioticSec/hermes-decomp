@@ -257,7 +257,7 @@ fn try_call_handlers(
             handle_create_generator_closure(inst, file, resolve_strings).map(FlowResult::Statement)
         }
         "CallBuiltin" | "CallBuiltinLong" => {
-            handle_call_builtin(inst, frame_size, version).map(FlowResult::Statement)
+            handle_call_builtin(inst, frame_size, version).map(noreturn_builtin_result)
         }
         "GetBuiltinClosure" => handle_get_builtin_closure(inst, version).map(FlowResult::Statement),
         "DirectEval" => handle_direct_eval(inst).map(FlowResult::Statement),
@@ -403,9 +403,14 @@ fn try_flow_handlers(
             handle_jmp_builtin_is(name, inst, format)
         }
         "Ret" => handle_ret(inst),
-        "Throw" | "ThrowIfEmpty" => handle_throw(inst),
+        "Throw" => handle_throw(inst),
         "ThrowIfThisInitialized" | "ProfilePoint" | "Unreachable" => handle_ignored_guard(),
-        "ThrowIfUndefined" => handle_throw_if_undefined(inst),
+        // Both are dead-zone guards of the shape (destination, checked value):
+        // they raise only when the value is still empty or undefined, and
+        // otherwise move it. Routing them to the unconditional Throw handler
+        // threw the destination register and cut the block short on a path that
+        // does not actually raise.
+        "ThrowIfUndefined" | "ThrowIfEmpty" => handle_throw_if_undefined(inst),
         // Environment opcodes handled in try_env_handlers (need EnvRegMap).
         "SelectObject" => handle_select_object(inst),
         "Debugger" | "AsyncBreakCheck" => handle_debugger(),
@@ -424,6 +429,40 @@ fn try_flow_handlers(
         }
         _ => None,
     }
+}
+
+// `HermesBuiltin.throwTypeError` and `throwReferenceError` never return: they
+// raise. Emitted as an ordinary call, the block kept its fall through and every
+// statement after them stayed reachable, which produced dead branches that read
+// as real control flow. They become a throw of the error they raise, which both
+// prints as source and terminates the block.
+fn noreturn_builtin_result(stmt: Statement) -> FlowResult {
+    use crate::ir::{Expression, PropertyKey, Value};
+
+    if let Statement::Assign {
+        value: Expression::Call { callee, arguments },
+        ..
+    } = &stmt
+    {
+        let ctor = match callee.as_ref() {
+            Expression::Member {
+                property: PropertyKey::Ident(p) | PropertyKey::String(p),
+                ..
+            } => match p.as_str() {
+                "throwTypeError" => Some("TypeError"),
+                "throwReferenceError" => Some("ReferenceError"),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(ctor) = ctor {
+            return FlowResult::Throw(Expression::New {
+                callee: Box::new(Expression::member(Expression::Value(Value::Global), ctor)),
+                arguments: arguments.clone(),
+            });
+        }
+    }
+    FlowResult::Statement(stmt)
 }
 
 fn unknown_opcode(inst: &Instruction) -> FlowResult {
