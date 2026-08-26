@@ -9,11 +9,27 @@ use crate::ir::{Expression, Statement};
 // CreateInnerEnvironment, result register holds the *current* function env
 // (nesting level 0).
 pub fn handle_create_environment(
+    name: &str,
     inst: &crate::Instruction,
     env_map: &mut EnvRegMap,
 ) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
     env_map.set_level(dst, 0);
+    // CreateTopLevelEnvironment / CreateInnerEnvironment / 3-operand
+    // CreateEnvironment build an ADDITIONAL environment, a separate scope. It is
+    // captured a moment later by `StoreToEnvironment parent, K, thisEnv`; the
+    // store gives it the identity of parent slot K so its own slot accesses use
+    // the same level the capturing child computes, instead of colliding with the
+    // running env's slot names (`email = undefined` over the real login email).
+    let creates_new_env = match name {
+        "CreateFunctionEnvironment" => false,
+        "CreateEnvironment" => inst.operands.len() >= 3,
+        "CreateTopLevelEnvironment" | "CreateInnerEnvironment" => true,
+        _ => false,
+    };
+    if creates_new_env {
+        env_map.mark_created_env(dst);
+    }
     // No visible JS statement, pure env setup.
     Some(FlowResult::Noop)
 }
@@ -70,12 +86,24 @@ pub fn handle_load_from_environment(
 // StoreToEnvironment rEnv, slot, rValue
 pub fn handle_store_to_environment(
     inst: &crate::Instruction,
-    env_map: &EnvRegMap,
+    env_map: &mut EnvRegMap,
 ) -> Option<FlowResult> {
     let env_reg = get_reg(&inst.operands, 0)?;
     let slot = inst.operands.get(1)?.value.as_u32()?;
-    let value = reg_expr(&inst.operands, 2)?;
     let level = env_map.env_level_of(env_reg);
+
+    // Capturing a freshly created environment into parent slot `slot`: give it the
+    // identity of that slot, so its own slot accesses use the level a load from
+    // the same slot produces (see env_level_of). Parent and capturing child then
+    // name the shared scope the same way, and its zero-inits stop colliding with
+    // the running env's slots.
+    if let Some(value_reg) = get_reg(&inst.operands, 2) {
+        if env_map.is_created_env(value_reg) {
+            env_map.set_source_slot(value_reg, level, slot);
+        }
+    }
+
+    let value = reg_expr(&inst.operands, 2)?;
 
     Some(FlowResult::Statement(Statement::Assign {
         target: crate::ir::AssignTarget::ClosureVar { level, slot },
@@ -85,7 +113,7 @@ pub fn handle_store_to_environment(
 
 pub fn handle_store_np_to_environment(
     inst: &crate::Instruction,
-    env_map: &EnvRegMap,
+    env_map: &mut EnvRegMap,
 ) -> Option<FlowResult> {
     handle_store_to_environment(inst, env_map)
 }

@@ -77,7 +77,7 @@ fn try_env_handlers(
         "CreateEnvironment"
         | "CreateFunctionEnvironment"
         | "CreateTopLevelEnvironment"
-        | "CreateInnerEnvironment" => handle_create_environment(inst, env_map),
+        | "CreateInnerEnvironment" => handle_create_environment(name, inst, env_map),
         "GetEnvironment" | "GetParentEnvironment" => handle_get_environment(inst, env_map),
         "GetClosureEnvironment" => handle_get_closure_environment(inst, env_map),
         "LoadFromEnvironment" | "LoadFromEnvironmentL" => {
