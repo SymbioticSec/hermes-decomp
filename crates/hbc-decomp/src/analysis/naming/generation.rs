@@ -15,6 +15,7 @@ pub(crate) fn infer_type_from_properties(props: &HashSet<String>) -> Option<&'st
         (&["left", "right", "top", "bottom"], 2, "rect"),
         (&["host", "port", "protocol", "pathname", "hostname"], 2, "url"),
         (&["method", "url", "body"], 2, "request"),
+        (&["url", "query"], 2, "request"),
         (&["params", "query", "route"], 2, "route"),
         (&["children", "props", "type"], 2, "element"),
         (&["dispatch", "getState", "subscribe"], 2, "store"),
@@ -196,6 +197,15 @@ mod tests {
     fn test_infer_no_match() {
         let props: HashSet<String> = ["foo", "bar"].iter().map(|s| s.to_string()).collect();
         assert_eq!(infer_type_from_properties(&props), None);
+    }
+
+    #[test]
+    fn test_infer_http_query_request() {
+        let props: HashSet<String> = ["url", "query", "oldFormErrors"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(infer_type_from_properties(&props), Some("request"));
     }
 
     #[test]

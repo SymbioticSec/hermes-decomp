@@ -1,4 +1,4 @@
-use crate::ir::{map_nested_bodies_mut, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
 
 // Reconstruct spread syntax from the Hermes spread/apply protocol.
 //
@@ -14,15 +14,6 @@ use crate::ir::{map_nested_bodies_mut, AssignTarget, Expression, PropertyKey, St
 //   -> f(...a)            (thisArg undefined)
 //   -> f.apply(thisArg, args)  (otherwise)
 pub fn transform_spread_rest(stmts: &mut Vec<Statement>) {
-    // Spread/apply protocols inside if/switch/try would otherwise stay as
-    // `HermesBuiltin.arraySpread` / `.apply` because this pass used to scan
-    // only the top-level statement list after structure recovery.
-    for stmt in stmts.iter_mut() {
-        map_nested_bodies_mut(stmt, |mut body| {
-            transform_spread_rest(&mut body);
-            body
-        });
-    }
     fold_array_spreads(stmts);
     reconstruct_apply(stmts);
 

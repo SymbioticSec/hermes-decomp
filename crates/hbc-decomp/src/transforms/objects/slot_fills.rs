@@ -1,6 +1,5 @@
 use crate::ir::{
-    map_nested_bodies_mut, AssignTarget, Expression, ObjectProperty, Statement, Value,
-    stmt_has_side_effects,
+    AssignTarget, Expression, ObjectProperty, Statement, Value, stmt_has_side_effects,
 };
 use super::is_reg_used;
 
@@ -11,17 +10,11 @@ use super::is_reg_used;
 // is never absorbed. Matches both still-register objects and named
 // Variable/Let objects (after register naming).
 //
-// Recurses into if/switch/try/loop bodies first: structure recovery runs
-// before this pass, so the Discord notification dispatcher (and any other
-// shape-table object inside a case) would otherwise keep `obj[0] = val`
-// next to a named-key literal.
+// Does NOT recurse into if/switch/try/loop: nested folding rewrote the v98
+// generator result object (`obj = {value, done}; obj[0] = V; return obj`)
+// into a shape the reconstructor used to miss, and left raw state machines
+// in the dump. Nested `obj[N]` fills stay as-is.
 pub fn fold_slot_index_fills(statements: &mut Vec<Statement>) {
-    for stmt in statements.iter_mut() {
-        map_nested_bodies_mut(stmt, |mut body| {
-            fold_slot_index_fills(&mut body);
-            body
-        });
-    }
     fold_slot_index_fills_here(statements);
 }
 
@@ -83,11 +76,87 @@ pub(super) fn fold_slot_index_fills_here(statements: &mut Vec<Statement>) {
             keep
         });
     }
+    fold_named_placeholder_fills_here(statements);
     // Fills we could not hoist (forward-ref values, or an `if` between slots)
     // still use a slot index. Rewrite `obj[N] = val` to `obj.key = val` from
     // the literal's Nth property name so the output matches the shape instead
     // of a numeric index. Evaluation order is unchanged.
     rewrite_slot_index_names(statements);
+}
+
+// `obj = { url: null, body: null }; obj.body = val` after slot-index fills have
+// already become named members. Fold the placeholder property into the literal.
+fn fold_named_placeholder_fills_here(statements: &mut Vec<Statement>) {
+    let mut consumed = vec![false; statements.len()];
+    let mut i = 0;
+    while i < statements.len() {
+        let Some((obj, _)) = object_literal_def(&statements[i]) else {
+            i += 1;
+            continue;
+        };
+        let mut defined_after_vars: Vec<String> = Vec::new();
+        let mut defined_after_regs: Vec<u32> = Vec::new();
+        let mut j = i + 1;
+        while j < statements.len() {
+            if let Some((prop, val)) = named_member_fill(&statements[j], &obj) {
+                if val_refs_forward(&val, &defined_after_regs, &defined_after_vars) {
+                    j += 1;
+                    continue;
+                }
+                if let Some(properties) = object_properties_mut(&mut statements[i]) {
+                    if let Some(slot) = properties.iter().position(|p| prop_key_is(&p.key, &prop)) {
+                        if is_placeholder(&properties[slot].value) {
+                            properties[slot].value = val;
+                            consumed[j] = true;
+                            record_defs(&statements[j], &mut defined_after_regs, &mut defined_after_vars);
+                            j += 1;
+                            continue;
+                        }
+                    }
+                }
+                break;
+            } else if obj_reassigned(&statements[j], &obj)
+                || obj_used(&statements[j], &obj)
+                || stmt_has_side_effects(&statements[j])
+            {
+                break;
+            }
+            record_defs(&statements[j], &mut defined_after_regs, &mut defined_after_vars);
+            j += 1;
+        }
+        i += 1;
+    }
+    if consumed.iter().any(|&c| c) {
+        let mut idx = 0;
+        statements.retain(|_| {
+            let keep = !consumed[idx];
+            idx += 1;
+            keep
+        });
+    }
+}
+
+fn named_member_fill(stmt: &Statement, obj: &ObjRef) -> Option<(String, Expression)> {
+    let Statement::Assign {
+        target: AssignTarget::Member { object, property },
+        value,
+    } = stmt
+    else {
+        return None;
+    };
+    let obj_now = match object {
+        Expression::Value(Value::Register(r)) => ObjRef::Register(*r),
+        Expression::Value(Value::Variable(n)) => ObjRef::Name(n.clone()),
+        _ => return None,
+    };
+    if !obj_ref_eq(&obj_now, obj) {
+        return None;
+    }
+    Some((property.clone(), value.clone()))
+}
+
+fn prop_key_is(key: &crate::ir::PropertyKey, name: &str) -> bool {
+    matches!(key, crate::ir::PropertyKey::Ident(s) | crate::ir::PropertyKey::String(s) if s == name)
 }
 
 fn rewrite_slot_index_names(statements: &mut [Statement]) {

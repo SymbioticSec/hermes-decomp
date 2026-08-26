@@ -1,4 +1,4 @@
-use super::closure_usage::ClosureUsageInfo;
+use super::closure_usage::{unique_object_key, ClosureUsageInfo};
 
 // Infer a name from the collected usage patterns of a closure variable.
 pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_hint: Option<&str>) -> Option<String> {
@@ -6,6 +6,15 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
         .chain(info.properties.iter())
         .map(|s| s.as_str())
         .collect();
+
+    // GROUND_TRUTH: `{ login: closure_1_0 }` / `obj.login = closure_1_0`.
+    // A Metro factory role already on the slot wins: `{ foo: require }` must
+    // not rename `require`.
+    if !is_metro_factory_role(slot_name_hint) {
+        if let Some(key) = unique_object_key(info) {
+            return Some(key);
+        }
+    }
 
     // Prefer a meaningful slot hint from the parent StoreToEnvironment
     // (e.g. factory roles rewritten to require/dependencyMap, or a named var).
@@ -261,6 +270,22 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
     }
 
     None
+}
+
+fn is_metro_factory_role(hint: Option<&str>) -> bool {
+    matches!(
+        hint,
+        Some(
+            "require"
+                | "dependencyMap"
+                | "exports"
+                | "module"
+                | "global"
+                | "importDefault"
+                | "importAll"
+                | "args"
+        )
+    )
 }
 
 // Strong hints from the parent env store, always prefer these.

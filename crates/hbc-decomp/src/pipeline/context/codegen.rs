@@ -32,17 +32,69 @@ impl PipelineContext {
         None
     }
 
-    // Build import map (dep_module_id → name) for a module.
+    // ESM maps for a function's enclosing Metro module, so nested/inlined
+    // bodies resolve `require(id)` the same way the factory does. Without this,
+    // inner generators render `v6OrEarlierAPIError(709)` instead of the module.
+    pub(super) fn with_module_esm(
+        &self,
+        mut codegen: crate::transforms::Codegen,
+        function_id: u32,
+    ) -> crate::transforms::Codegen {
+        let Some(module) = self.resolve_module_for_function(function_id) else {
+            return codegen;
+        };
+        codegen = codegen.with_imports(self.build_import_map(module));
+        let mut dep_names = BTreeMap::new();
+        let mut dep_ids = BTreeMap::new();
+        for (idx, &dep_id) in module.dependencies.iter().enumerate() {
+            dep_ids.insert(idx as u32, dep_id);
+            if let Some(dep_mod) = self.registry.modules.get(&dep_id) {
+                if let Some(name) = &dep_mod.name {
+                    if crate::analysis::metro::is_usable_module_specifier(name) {
+                        dep_names.insert(idx as u32, name.clone());
+                    } else {
+                        dep_names.insert(idx as u32, format!("module_{dep_id}"));
+                    }
+                } else {
+                    dep_names.insert(idx as u32, format!("module_{dep_id}"));
+                }
+            }
+        }
+        codegen
+            .with_esm_mode(dep_names)
+            .with_esm_module_meta(dep_ids)
+    }
+
+    // Build import map (absolute Metro id → specifier). Starts with this factory's
+    // declared deps, then every named module in the registry so `importDefault(4)`
+    // / `require(4)` in a nested body still resolve when 4 is not in the dep array.
     pub(super) fn build_import_map(&self, module: &crate::analysis::MetroModule) -> BTreeMap<u32, String> {
         let mut imports = BTreeMap::new();
         for &dep_id in &module.dependencies {
-            if let Some(dep_mod) = self.registry.modules.get(&dep_id) {
-                if let Some(name) = &dep_mod.name {
-                    imports.insert(dep_id, name.clone());
+            if let Some(name) = self.named_specifier(dep_id) {
+                imports.insert(dep_id, name);
+            }
+        }
+        for (&id, dep_mod) in &self.registry.modules {
+            if imports.contains_key(&id) {
+                continue;
+            }
+            if let Some(name) = &dep_mod.name {
+                if crate::analysis::metro::is_usable_module_specifier(name) {
+                    imports.insert(id, name.clone());
                 }
             }
         }
         imports
+    }
+
+    fn named_specifier(&self, id: u32) -> Option<String> {
+        let name = self.registry.modules.get(&id)?.name.as_ref()?;
+        if crate::analysis::metro::is_usable_module_specifier(name) {
+            Some(name.clone())
+        } else {
+            None
+        }
     }
 
     // Write counts for free variables mutated in descendant closures of `function_id`.
@@ -109,11 +161,12 @@ impl PipelineContext {
 
         // Get params with IPA names
         let params = if let Some(names) = self.global_analysis.param_names.get(&function_id) {
-            names
-                .iter()
-                .enumerate()
-                .map(|(idx, n)| n.clone().unwrap_or_else(|| format!("arg{idx}")))
-                .collect()
+            crate::pipeline::params_from_names(
+                file,
+                function_id,
+                names,
+                self.all_ir.get(&function_id).map(|s| s.as_slice()).unwrap_or(&[]),
+            )
         } else {
             get_function_params(file, function_id)
         };
@@ -147,7 +200,11 @@ impl PipelineContext {
                 dep_ids.insert(idx as u32, dep_id);
                 if let Some(dep_mod) = self.registry.modules.get(&dep_id) {
                     if let Some(name) = &dep_mod.name {
-                        dep_names.insert(idx as u32, name.clone());
+                        if crate::analysis::metro::is_usable_module_specifier(name) {
+                            dep_names.insert(idx as u32, name.clone());
+                        } else {
+                            dep_names.insert(idx as u32, format!("module_{dep_id}"));
+                        }
                     } else {
                         dep_names.insert(idx as u32, format!("module_{dep_id}"));
                     }

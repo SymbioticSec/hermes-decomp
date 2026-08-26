@@ -28,7 +28,218 @@ pub(crate) const GENERIC_EXACT_NAMES: &[&str] = &[
     "importDefault", "importAll", "_importDefault", "_importAll",
     "Object", "Object2", "Object3", "Array", "Array2", "Array3",
     "num", "str", "val", "res",
+    // Common method / export keys that leaked as Metro specifiers
+    // (`from "clear"`, `export * from "keys"`). These are not recovered names.
+    "keys", "clear", "result", "store", "callback", "set",
 ];
+
+// Extra placeholders rejected as import specifiers even when they can still be
+// a meaningful *binding* in other passes. `size` is the next export on Discord
+// module 2 after `clear`; `index` is the stem of many `index.tsx` files.
+const SPECIFIER_PLACEHOLDERS: &[&str] = &["size", "index"];
+
+// How many modules may share one recovered stem before the stem is treated as a
+// shared helper/export name rather than a module identity. Genuinely repeated
+// filenames in a bundle (two `Dispatcher.tsx` in different packages) come in
+// small groups and stay disambiguated; a call target reused by hundreds of
+// modules does not.
+const MAX_MODULES_PER_STEM: usize = 4;
+
+// True when `name` is the honest fallback specifier `module_<id>`, not a recovered
+// name. Codegen still emits it; naming must not treat it as ground truth.
+pub(crate) fn is_module_id_fallback(name: &str) -> bool {
+    name.strip_prefix("module_")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+}
+
+// True when `name` must not be stored or emitted as a recovered module specifier.
+pub(crate) fn is_generic_module_specifier(name: &str) -> bool {
+    if is_module_id_fallback(name) {
+        return true;
+    }
+    if is_obviously_generic(name) {
+        return true;
+    }
+    SPECIFIER_PLACEHOLDERS.contains(&name)
+}
+
+// True when `name` may appear in `from "..."` / import_map. The `module_N`
+// fallback is allowed here so lookup does not drop unnamed dependencies.
+pub(crate) fn is_usable_module_specifier(name: &str) -> bool {
+    is_module_id_fallback(name) || !is_generic_module_specifier(name)
+}
+
+// After every naming pass: drop placeholder specifiers and make each recovered
+// name unique across module ids. `locked` are modules named from ground truth
+// (fileFinishedImporting / source-file encoding): they keep the bare stem when
+// a later heuristic collides. Two Metro ids never share a specifier.
+//
+// When several modules share a stem and we have their `fileFinishedImporting`
+// paths, disambiguate with parent directories (`flux/Dispatcher` vs
+// `Dispatcher.tsx` → `Dispatcher`) instead of the volatile Metro id
+// (`Dispatcher_709`), so a require is grep-able against the source filename.
+pub(crate) fn finalize_module_specifiers(
+    registry: &mut MetroRegistry,
+    locked: &std::collections::HashSet<u32>,
+    gt_paths: &std::collections::HashMap<u32, String>,
+) {
+    use std::collections::{BTreeMap, HashSet};
+
+    for module in registry.modules.values_mut() {
+        if let Some(name) = &module.name {
+            if is_generic_module_specifier(name) {
+                module.name = None;
+            }
+        }
+    }
+
+    let mut by_name: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+    for (id, module) in &registry.modules {
+        if let Some(name) = &module.name {
+            by_name.entry(name.clone()).or_default().push(*id);
+        }
+    }
+
+    let mut occupied: HashSet<String> = by_name.keys().cloned().collect();
+    let mut renames: Vec<(u32, String)> = Vec::new();
+    let mut clears: Vec<u32> = Vec::new();
+    for (name, mut ids) in by_name {
+        if ids.len() <= 1 {
+            continue;
+        }
+        ids.sort_unstable();
+        // A stem claimed by this many modules is not any one module's identity:
+        // it is a helper they all call (`registerAsset` in every packaged asset
+        // module) or an export key they all re-expose (`formatDistance` in every
+        // date-fns locale). Numbering them `registerAsset_1240`,
+        // `registerAsset_1241`, ... invents thousands of false specifiers that
+        // also change whenever Metro renumbers, so the stem is dropped and those
+        // modules fall back to the stable `module_<content_hash>`. A module whose
+        // name came from ground truth keeps it.
+        if ids.len() > MAX_MODULES_PER_STEM {
+            clears.extend(ids.iter().copied().filter(|id| !locked.contains(id)));
+            continue;
+        }
+        let winner = pick_specifier_winner(&ids, locked, gt_paths);
+        for &id in &ids {
+            if id == winner {
+                continue;
+            }
+            let mut cand = None;
+            if let Some(path) = gt_paths.get(&id) {
+                for next in path_disambiguators(path, &name) {
+                    if !occupied.contains(&next) && !is_generic_module_specifier(&next) {
+                        cand = Some(next);
+                        break;
+                    }
+                }
+            }
+            // No source path to disambiguate with: we cannot tell which module
+            // owns the stem, so nothing is invented. `{name}_{id}` would read as
+            // a recovered name while really encoding a Metro id that changes on
+            // every build. The module goes back to unnamed and picks up the
+            // stable `module_<content_hash>` instead.
+            let Some(cand) = cand else {
+                clears.push(id);
+                continue;
+            };
+            occupied.insert(cand.clone());
+            renames.push((id, cand));
+        }
+    }
+    for (id, new_name) in renames {
+        if let Some(module) = registry.modules.get_mut(&id) {
+            module.name = Some(new_name);
+        }
+    }
+    for id in clears {
+        if let Some(module) = registry.modules.get_mut(&id) {
+            module.name = None;
+        }
+    }
+
+    for (func_id, factory) in registry.factories.iter_mut() {
+        if let Some(mod_id) = registry.function_to_module.get(func_id).copied() {
+            if let Some(module) = registry.modules.get(&mod_id) {
+                factory.name = module.name.clone();
+            }
+        }
+    }
+}
+
+// Prefer the module whose source path is the shortest (a bare `Dispatcher.tsx`
+// beats `packages/flux/Dispatcher.tsx`), then a locked GT name, then the
+// lowest Metro id. The shortest path is the file the app actually named
+// `Dispatcher.tsx`; nested copies keep a parent-dir prefix.
+fn pick_specifier_winner(
+    ids: &[u32],
+    locked: &std::collections::HashSet<u32>,
+    gt_paths: &std::collections::HashMap<u32, String>,
+) -> u32 {
+    *ids
+        .iter()
+        .min_by_key(|id| {
+            let segs = gt_paths
+                .get(id)
+                .map(|p| meaningful_path_segments(p).len().max(1))
+                .unwrap_or(1);
+            let unlocked = u32::from(!locked.contains(id));
+            (segs, unlocked, **id)
+        })
+        .unwrap_or(&ids[0])
+}
+
+// Directory names that do not distinguish two files of the same stem.
+const GENERIC_PATH_SEGS: &[&str] = &[
+    "js", "ts", "src", "lib", "packages", "node_modules", "native", "ios", "android", "web",
+];
+
+fn strip_source_file_ext(file: &str) -> &str {
+    let mut stem = file
+        .strip_suffix(".tsx")
+        .or_else(|| file.strip_suffix(".ts"))
+        .or_else(|| file.strip_suffix(".jsx"))
+        .or_else(|| file.strip_suffix(".js"))
+        .unwrap_or(file);
+    for plat in [".android", ".native", ".ios", ".web"] {
+        if let Some(stripped) = stem.strip_suffix(plat) {
+            stem = stripped;
+            break;
+        }
+    }
+    stem
+}
+
+fn meaningful_path_segments(path: &str) -> Vec<String> {
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    path.split('/')
+        .filter(|s| !s.is_empty() && *s != "." && *s != "..")
+        .map(|s| strip_source_file_ext(s).to_string())
+        .filter(|s| {
+            !s.is_empty()
+                && !GENERIC_PATH_SEGS.contains(&s.as_str())
+                && crate::util::is_valid_identifier(s)
+        })
+        .collect()
+}
+
+// Increasingly specific suffixes of the GT path: `flux/Dispatcher`, then
+// `discord_common/flux/Dispatcher`, … Never emits the bare stem (that is the
+// winner's specifier).
+fn path_disambiguators(path: &str, stem: &str) -> Vec<String> {
+    let mut segs = meaningful_path_segments(path);
+    if segs.last().map(String::as_str) != Some(stem) {
+        segs.push(stem.to_string());
+    }
+    let mut out = Vec::new();
+    for n in 2..=segs.len() {
+        let cand = segs[segs.len() - n..].join("/");
+        if cand != stem {
+            out.push(cand);
+        }
+    }
+    out
+}
 
 // Check if a name is obviously generic (decompiler-generated, too vague, or a common placeholder).
 //
@@ -40,8 +251,11 @@ pub(crate) fn is_obviously_generic(name: &str) -> bool {
     if GENERIC_EXACT_NAMES.contains(&name) { return true; }
     // Reject generic prefixes from shared list
     if GENERIC_NAME_PREFIXES.iter().any(|p| name.starts_with(p)) { return true; }
-    // Reject decompiler-generated *Result names (fnResult, fn2Result, definePropertyResult, etc.)
-    if name.ends_with("Result") { return true; }
+    // Reject decompiler-generated *Result names (fnResult, fn2Result,
+    // definePropertyResult, etc.). The register namer also numbers repeats, so
+    // trailing digits are stripped first: `importDefaultResult1` is the same
+    // temporary as `importDefaultResult` and must not become a module name.
+    if name.trim_end_matches(|c: char| c.is_ascii_digit()).ends_with("Result") { return true; }
     // Reject register or type role names with an optional numeric suffix, for any
     // number of digits: obj, obj2, obj129, arr5, items9, set7, fn3, num2, str1.
     // The suffix count is unbounded since same-role registers are numbered without
@@ -121,8 +335,141 @@ mod generic_name_tests {
     }
     #[test]
     fn keeps_real_words() {
-        for n in ["object", "objectPool", "arrow", "settings", "mapper", "result", "response", "listener", "items_list", "numbers", "string2Value"] {
+        for n in ["object", "objectPool", "arrow", "settings", "mapper", "response", "listener", "items_list", "numbers", "string2Value"] {
             assert!(!is_obviously_generic(n), "{n} should be kept");
         }
+    }
+
+    #[test]
+    fn rejects_placeholder_module_specifiers() {
+        use super::{finalize_module_specifiers, is_generic_module_specifier, is_usable_module_specifier};
+        use super::registry::{FactoryRoles, MetroModule, MetroRegistry};
+
+        for n in ["clear", "keys", "result", "store", "callback", "set", "size", "index", "obj2", "module_2"] {
+            assert!(is_generic_module_specifier(n), "{n} should be a generic specifier");
+            assert!(!is_usable_module_specifier(n) || n == "module_2", "{n} usable?");
+        }
+        assert!(is_usable_module_specifier("module_2"));
+        assert!(is_usable_module_specifier("LoggerPIIRestrictedObjects"));
+        assert!(!is_generic_module_specifier("LoggerPIIRestrictedObjects"));
+
+        let mut registry = MetroRegistry::new();
+        let mk = |id: u32, name: Option<&str>| MetroModule {
+            module_id: id,
+            function_id: id,
+            name: name.map(str::to_string),
+            dependencies: Vec::new(),
+            exports: Default::default(),
+            roles: FactoryRoles::standard(),
+        };
+        registry.modules.insert(2, mk(2, Some("clear")));
+        registry.modules.insert(6, mk(6, Some("LoggerPIIRestrictedObjects")));
+        registry.modules.insert(10, mk(10, Some("SnowflakeUtils")));
+        registry.modules.insert(11, mk(11, Some("SnowflakeUtils")));
+        registry.modules.insert(12, mk(12, Some("keys")));
+        finalize_module_specifiers(&mut registry, &Default::default(), &Default::default());
+        assert_eq!(registry.modules[&2].name, None);
+        assert_eq!(registry.modules[&6].name.as_deref(), Some("LoggerPIIRestrictedObjects"));
+        assert_eq!(registry.modules[&10].name.as_deref(), Some("SnowflakeUtils"));
+        // The second claimant has no source path to disambiguate with, so no name
+        // is invented for it: it goes back to unnamed rather than becoming
+        // `SnowflakeUtils_11`, which would encode a Metro id as a recovered name.
+        assert_eq!(registry.modules[&11].name, None);
+        assert_eq!(registry.modules[&12].name, None);
+
+        let mut registry = MetroRegistry::new();
+        registry.modules.insert(3, mk(3, Some("Logger")));
+        registry.modules.insert(6, mk(6, Some("Logger")));
+        let locked = std::collections::HashSet::from([6u32]);
+        finalize_module_specifiers(&mut registry, &locked, &Default::default());
+        assert_eq!(registry.modules[&6].name.as_deref(), Some("Logger"));
+        assert_eq!(registry.modules[&3].name, None);
+    }
+
+    #[test]
+    fn drops_stems_shared_by_many_modules() {
+        use super::{finalize_module_specifiers, is_obviously_generic};
+        use super::registry::{FactoryRoles, MetroModule, MetroRegistry};
+
+        // A numbered decompiler temporary is not a module name. `Result` alone was
+        // already rejected; the numbered repeats leaked through and named modules
+        // `importDefaultResult1`, which then collided across the whole bundle.
+        assert!(is_obviously_generic("importDefaultResult"));
+        assert!(is_obviously_generic("importDefaultResult1"));
+        assert!(is_obviously_generic("SymbolResult12"));
+        assert!(!is_obviously_generic("QueryResultView"));
+
+        let mk = |id: u32, name: &str| MetroModule {
+            module_id: id,
+            function_id: id,
+            name: Some(name.to_string()),
+            dependencies: Vec::new(),
+            exports: Default::default(),
+            roles: FactoryRoles::standard(),
+        };
+
+        // Every packaged asset module calls `registerAsset`, so the stem names none
+        // of them. With more claimants than MAX_MODULES_PER_STEM the stem is dropped
+        // for all of them instead of numbering them `registerAsset_<metro id>`.
+        let mut registry = MetroRegistry::new();
+        let shared: Vec<u32> = (1..=(super::MAX_MODULES_PER_STEM as u32 + 2)).collect();
+        for &id in &shared {
+            registry.modules.insert(id, mk(id, "registerAsset"));
+        }
+        registry.modules.insert(100, mk(100, "Dispatcher"));
+        registry.modules.insert(101, mk(101, "Dispatcher"));
+        finalize_module_specifiers(&mut registry, &Default::default(), &Default::default());
+        for &id in &shared {
+            assert_eq!(registry.modules[&id].name, None, "module {id} kept a shared stem");
+        }
+        // A small group is not a shared helper: the winner still keeps the stem.
+        assert_eq!(registry.modules[&100].name.as_deref(), Some("Dispatcher"));
+        assert_eq!(registry.modules[&101].name, None);
+
+        // Ground truth outranks the shared-stem rule.
+        let mut registry = MetroRegistry::new();
+        for &id in &shared {
+            registry.modules.insert(id, mk(id, "registerAsset"));
+        }
+        let locked = std::collections::HashSet::from([shared[0]]);
+        finalize_module_specifiers(&mut registry, &locked, &Default::default());
+        assert_eq!(registry.modules[&shared[0]].name.as_deref(), Some("registerAsset"));
+        assert_eq!(registry.modules[&shared[1]].name, None);
+    }
+
+    #[test]
+    fn uniquifies_colliding_stems_from_source_path() {
+        use super::{finalize_module_specifiers, path_disambiguators};
+        use super::registry::{FactoryRoles, MetroModule, MetroRegistry};
+        use std::collections::{HashMap, HashSet};
+
+        assert_eq!(
+            path_disambiguators(
+                "../discord_common/js/packages/flux/Dispatcher.tsx",
+                "Dispatcher"
+            ),
+            vec!["flux/Dispatcher".to_string(), "discord_common/flux/Dispatcher".to_string()]
+        );
+        assert!(path_disambiguators("Dispatcher.tsx", "Dispatcher").is_empty());
+
+        let mk = |id: u32, name: Option<&str>| MetroModule {
+            module_id: id,
+            function_id: id,
+            name: name.map(str::to_string),
+            dependencies: Vec::new(),
+            exports: Default::default(),
+            roles: FactoryRoles::standard(),
+        };
+        let mut registry = MetroRegistry::new();
+        registry.modules.insert(650, mk(650, Some("Dispatcher")));
+        registry.modules.insert(709, mk(709, Some("Dispatcher")));
+        let locked = HashSet::from([650u32, 709]);
+        let paths = HashMap::from([
+            (650u32, "../discord_common/js/packages/flux/Dispatcher.tsx".to_string()),
+            (709u32, "Dispatcher.tsx".to_string()),
+        ]);
+        finalize_module_specifiers(&mut registry, &locked, &paths);
+        assert_eq!(registry.modules[&709].name.as_deref(), Some("Dispatcher"));
+        assert_eq!(registry.modules[&650].name.as_deref(), Some("flux/Dispatcher"));
     }
 }

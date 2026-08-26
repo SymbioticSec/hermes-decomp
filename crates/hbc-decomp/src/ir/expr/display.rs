@@ -29,6 +29,19 @@ fn escape_js_string(s: &str) -> String {
     out
 }
 
+// The `#field` name behind a computed key, when the key is just that name. Any
+// other computed expression keeps bracket syntax.
+pub fn private_field_name(expr: &Expression) -> Option<&str> {
+    let Expression::Value(crate::ir::Value::Variable(name)) = expr else {
+        return None;
+    };
+    let rest = name.strip_prefix('#')?;
+    if rest.is_empty() || !crate::util::is_valid_identifier(rest) {
+        return None;
+    }
+    Some(name)
+}
+
 /// Safe as `obj.name` (not `obj["name"]`).
 fn is_dot_property_name(name: &str) -> bool {
     if name.is_empty() || name.starts_with('#') {
@@ -86,7 +99,18 @@ pub fn format_member_access_with(
                 format!("{obj}{opt}[\"{}\"]", escape_js_string(s))
             }
         }
-        PropertyKey::Computed(e) => format!("{obj}{opt}[{}]", format_computed(e)),
+        PropertyKey::Computed(e) => {
+            // A private class field reaches here as a computed key, because the
+            // bytecode identifies it by the symbol register minted by
+            // CreatePrivateName rather than by a string index. Once that register
+            // resolves back to the field name it must print as `obj.#field`,
+            // which is the only valid syntax for a private field.
+            if let Some(name) = private_field_name(e) {
+                format!("{obj}{opt}.{name}")
+            } else {
+                format!("{obj}{opt}[{}]", format_computed(e))
+            }
+        }
         PropertyKey::Index(i) => format!("{obj}{opt}[{i}]"),
     }
 }
