@@ -181,7 +181,58 @@ fn collect_depmap_aliases(stmts: &[Statement], roles: &FactoryRoles) -> HashSet<
         }
     }
     walk(stmts, &mut aliases, roles);
+
+    // A name is only a dependency array if it always holds one. HBC >=97 reuses
+    // a slot for unrelated values, and the factory role naming still calls that
+    // slot `dependencyMap`, so a name alone proves nothing: a slot holding the
+    // result of `jwt.split(".")` was read as the dependency array, and
+    // `atob(jwt.split(".")[1])` was rewritten into `require(<dependency 1>)`,
+    // which is a call the program never makes. Any name that is also assigned
+    // something that is not the dependency array is dropped here.
+    let mut reused: HashSet<String> = HashSet::new();
+    collect_reused(stmts, &aliases, roles, &mut reused);
+    aliases.retain(|name| !reused.contains(name));
     aliases
+}
+
+// Names from `aliases` that are assigned a value which is not the dependency
+// array, anywhere in the function.
+fn collect_reused(
+    stmts: &[Statement],
+    aliases: &HashSet<String>,
+    roles: &FactoryRoles,
+    reused: &mut HashSet<String>,
+) {
+    use crate::ir::Visitor;
+    struct V<'a> {
+        aliases: &'a HashSet<String>,
+        roles: &'a FactoryRoles,
+        reused: &'a mut HashSet<String>,
+    }
+    impl<'a, 'b> Visitor<'b> for V<'a> {
+        fn visit_statement(&mut self, s: &'b Statement) {
+            let bound = match s {
+                Statement::Let { name, value, .. }
+                | Statement::Assign {
+                    target: AssignTarget::Variable(name),
+                    value,
+                } => Some((name, value)),
+                _ => None,
+            };
+            if let Some((name, value)) = bound {
+                if self.aliases.contains(name)
+                    && !expr_is_depmap_root(value, self.aliases, self.roles)
+                {
+                    self.reused.insert(name.clone());
+                }
+            }
+            self.walk_statement(s);
+        }
+    }
+    let mut v = V { aliases, roles, reused };
+    for s in stmts {
+        v.visit_statement(s);
+    }
 }
 
 fn expr_is_depmap_root(expr: &Expression, aliases: &HashSet<String>, roles: &FactoryRoles) -> bool {
@@ -330,6 +381,7 @@ fn rewrite_expr(
     roles: &FactoryRoles,
 ) -> u64 {
     if let Some(mod_id) = try_resolve_depmap_index(expr, deps, aliases, roles) {
+        log::trace!(target: "depmap", "rewrite {expr:?} -> module {mod_id}");
         *expr = Expression::Value(Value::Constant(crate::ir::Constant::Integer(mod_id as i32)));
         return 1;
     }
