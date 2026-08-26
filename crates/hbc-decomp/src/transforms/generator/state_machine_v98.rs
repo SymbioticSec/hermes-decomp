@@ -102,7 +102,29 @@ fn try_reconstruct(body: &[Statement]) -> Option<Vec<Statement>> {
     for (p, (_, raw)) in parsed.into_iter().zip(cases.iter()) {
         match p {
             Some(c) if !c.done => suspends.push(c),
-            Some(c) => terminal = Some(c),
+            Some(c) => {
+                // Several cases can end the generator: the one that carries the
+                // real result, and the label fall through that just returns
+                // undefined. Keeping whichever came last discarded the real one
+                // whenever it was not the last, which is how `getUserUuid` came
+                // out as `return null` while its case decoded the JWT and
+                // returned the user. Replace a terminal only when the one held
+                // so far carries nothing.
+                let holds_work = terminal
+                    .as_ref()
+                    .is_some_and(|t| !t.pre.is_empty() || !is_empty_result(&t.value));
+                if holds_work {
+                    if !c.pre.is_empty() || !is_empty_result(&c.value) {
+                        // Two terminals with real content: which one runs is a
+                        // control flow question this pass does not answer, so the
+                        // raw machine stays.
+                        log::trace!(target: "genlift", "bail: two terminal cases with content");
+                        return None;
+                    }
+                } else {
+                    terminal = Some(c);
+                }
+            }
             None if is_catch_label(raw) => {}
             None => {
                 log::trace!(target: "genlift", "bail: unparsable case with no throw");
@@ -406,6 +428,13 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
 
 fn is_resume_param(e: &Expression) -> bool {
     matches!(e, Expression::Value(Value::Parameter(1)))
+}
+
+// A terminal value that says nothing: the fall through cases return undefined or
+// null having done no work.
+fn is_empty_result(e: &Expression) -> bool {
+    is_undefined(e)
+        || matches!(e, Expression::Value(Value::Constant(Constant::Null)))
 }
 
 fn is_undefined(e: &Expression) -> bool {
