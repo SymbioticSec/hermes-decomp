@@ -342,13 +342,25 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
     if stmts.len() >= 3 {
         if let (
             Statement::Assign { target: AssignTarget::Variable(o1), value: Expression::Object { properties } },
-            Statement::Assign { target: AssignTarget::Index { object, key }, value: real_value },
+            Statement::Assign { target: value_target, value: real_value },
             Statement::Return(Some(Expression::Value(Value::Variable(o3)))),
         ) = (&stmts[0], &stmts[1], &stmts[2])
         {
             let obj_is = |e: &Expression, name: &str| matches!(e, Expression::Value(Value::Variable(v)) if v == name);
-            let key_is_zero = matches!(key, Expression::Value(Value::Constant(Constant::Integer(0))));
-            if o1 == o3 && obj_is(object, o1) && key_is_zero {
+            // The fill of the `value` slot reaches here either as the raw slot
+            // index the bytecode emits or, once slot indexes have been renamed
+            // against the object shape, as the named member. Both are the same
+            // store into property 0.
+            let value_fill = match value_target {
+                AssignTarget::Index { object, key } => Some((
+                    object,
+                    matches!(key, Expression::Value(Value::Constant(Constant::Integer(0)))),
+                )),
+                AssignTarget::Member { object, property } => Some((object, property == "value")),
+                _ => None,
+            };
+            let (object, fills_value) = value_fill?;
+            if o1 == o3 && obj_is(object, o1) && fills_value {
                 let done = properties.iter().find_map(|p| match &p.key {
                     PropertyKey::Ident(k) | PropertyKey::String(k) if k == "done" => Some(is_truthy(&p.value)),
                     _ => None,
