@@ -99,7 +99,11 @@ pub fn rewrite_dependency_map_indices(
             // Collect local aliases of the dependency array (e.g.
             // `const map = dependencyMap`, `let d = arg4`).
             let mut aliases = collect_depmap_aliases(stmts, &roles);
+            let before = rewrites;
             rewrites += rewrite_stmts(stmts, &deps, &mut aliases, &roles);
+            if rewrites > before {
+                log::trace!(target: "depmap", "fn{fid}: {} rewrites", rewrites - before);
+            }
         }
     }
     if rewrites > 0 {
