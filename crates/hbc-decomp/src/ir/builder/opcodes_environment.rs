@@ -14,6 +14,12 @@ pub fn handle_create_environment(
     env_map: &mut EnvRegMap,
 ) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
+    if name == "CreateFunctionEnvironment" {
+        // First one is the environment the function runs in; any later one is a
+        // separate scope for a closure and must not share this function's slots.
+        env_map.claim_function_env(dst);
+        return Some(FlowResult::Noop);
+    }
     env_map.set_level(dst, 0);
     // CreateTopLevelEnvironment / CreateInnerEnvironment / 3-operand
     // CreateEnvironment build an ADDITIONAL environment, a separate scope. It is

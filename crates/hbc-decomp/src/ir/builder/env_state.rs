@@ -32,6 +32,13 @@ pub struct EnvRegMap {
     borrows_current_env: bool,
     /// registers holding an environment this function just created
     created_envs: HashSet<u32>,
+    /// Whether the environment this function runs in has already been created.
+    /// A second `CreateFunctionEnvironment` in the same function does not rebuild
+    /// that environment, it builds a separate small one for a closure being made.
+    own_env_created: bool,
+    /// How many separate environments this function has built past its own, used
+    /// to give each one a distinct level so their slots stay apart.
+    extra_env_count: u32,
 }
 
 impl EnvRegMap {
@@ -67,6 +74,29 @@ impl EnvRegMap {
     }
 
     /// `reg` holds an environment this function just created.
+    /// Claim `reg` as the environment this function runs in, or, when that has
+    /// already been claimed, as a separate environment built for a closure.
+    /// Returns the level to give it: 0 for the running environment, a distinct
+    /// level past `NESTED_ENV_LEVEL_BASE` for each separate one.
+    ///
+    /// Hermes emits one `CreateFunctionEnvironment` for the function itself and
+    /// one more per closure needing its own scope, all writing slot 0, slot 1 and
+    /// so on. Reading them at a single level merges scopes that share nothing: a
+    /// factory whose own slots start at 3 was given a slot 0 by a two slot child
+    /// environment, so captures of slot 0 inherited that unrelated value's name.
+    pub fn claim_function_env(&mut self, reg: u32) -> u32 {
+        if !self.own_env_created {
+            self.own_env_created = true;
+            self.set_level(reg, 0);
+            return 0;
+        }
+        self.extra_env_count += 1;
+        let level = (NESTED_ENV_LEVEL_BASE + self.extra_env_count).min(MAX_LEVEL);
+        self.set_level(reg, level);
+        self.created_envs.insert(reg);
+        level
+    }
+
     pub fn mark_created_env(&mut self, reg: u32) {
         self.created_envs.insert(reg);
     }
