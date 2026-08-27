@@ -85,11 +85,21 @@ pub(crate) fn finalize_module_specifiers(
 ) {
     use std::collections::{BTreeMap, HashSet};
 
-    for module in registry.modules.values_mut() {
-        if let Some(name) = &module.name {
-            if is_generic_module_specifier(name) {
-                module.name = None;
-            }
+    for (id, module) in registry.modules.iter_mut() {
+        let Some(name) = &module.name else { continue };
+        if is_generic_module_specifier(name) {
+            module.name = None;
+            continue;
+        }
+        // A recovered name that describes an action names one of the module's
+        // functions, not the module. Several passes reach a module through a
+        // single export they managed to see (`exports.getAndroidId = ...`) and
+        // hand that key to the whole module, so captures of expo-application
+        // printed `getAndroidId.nativeApplicationVersion`, naming a function and
+        // asking it for a field it does not have. Ground truth names keep their
+        // stem; a guessed one goes back to the honest id.
+        if !locked.contains(id) && names_an_action(name) {
+            module.name = None;
         }
     }
 
@@ -472,4 +482,28 @@ mod generic_name_tests {
         assert_eq!(registry.modules[&709].name.as_deref(), Some("Dispatcher"));
         assert_eq!(registry.modules[&650].name.as_deref(), Some("flux/Dispatcher"));
     }
+}
+
+// Whether a name describes an action rather than a thing. Such a name belongs to
+// a function, never to the module holding it, so a module must not be named after
+// an export called this.
+//
+// A module is named from the exports the analysis recovered, not from everything
+// it exports. expo-application arrived here with `getAndroidId` recovered and the
+// rest missed, so the whole module took that name and captures of it printed
+// `getAndroidId.nativeApplicationVersion`, naming a function and asking it for a
+// field it does not have. A verb led name is the reliable signal that what was
+// recovered is a function, so the module keeps its honest id instead.
+pub(crate) fn names_an_action(name: &str) -> bool {
+    const VERBS: &[&str] = &[
+        "get", "set", "is", "has", "use", "add", "on", "create", "make", "fetch",
+        "load", "save", "read", "write", "parse", "format", "handle", "remove",
+        "delete", "clear", "reset", "update", "init", "build", "check", "ensure",
+        "with", "to", "from", "can", "should", "will", "did",
+    ];
+    VERBS.iter().any(|verb| {
+        name.strip_prefix(verb)
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|c| c.is_ascii_uppercase())
+    })
 }
