@@ -38,17 +38,26 @@ pub fn handle_create_environment(
 // GetEnvironment rDst, rEnv, level  (some modern tables: 3 operands)
 // GetParentEnvironment rDst, level, same idea (level relative to current).
 pub fn handle_get_environment(
+    name: &str,
     inst: &crate::Instruction,
     env_map: &mut EnvRegMap,
 ) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
     // Level is the last integer operand (classic: op1; modern GetEnv: op2).
-    let level = inst
+    let operand_level = inst
         .operands
         .iter()
         .rev()
         .find_map(|op| op.value.as_u32())
         .unwrap_or(0);
+    // `GetParentEnvironment` counts from the environment the function runs in, so
+    // it shifts when that environment is not the function's own. `GetEnvironment`
+    // takes its base environment as a register operand and is already absolute.
+    let level = if name == "GetParentEnvironment" {
+        env_map.parent_env_level(operand_level)
+    } else {
+        operand_level
+    };
     env_map.set_level(dst, level);
     Some(FlowResult::Noop)
 }
