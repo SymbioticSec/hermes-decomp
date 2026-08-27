@@ -105,6 +105,14 @@ fn is_inheritable(name: &str) -> bool {
     if name.len() < 2 {
         return false;
     }
+    // A name that is not a valid identifier was never a binding name: it is an
+    // export key read verbatim, such as the `get ActivityIndicator` accessor a
+    // module defines on its exports. Inheriting it puts a getter's name on the
+    // module object, so `react-native` was printed as `get_ActivityIndicator`
+    // once the space was sanitised away.
+    if !crate::util::is_valid_identifier(name) {
+        return false;
+    }
     if name.starts_with("closure_") || name.starts_with("outer") {
         return false;
     }
@@ -140,5 +148,35 @@ fn collect_names(stmts: &[Statement], all: &mut HashSet<String>, closures: &mut 
     let mut c = C(all, closures);
     for s in stmts {
         c.visit_statement(s);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_inheritable;
+
+    #[test]
+    fn accessor_keys_are_not_inheritable() {
+        // An exports accessor key reaches a slot verbatim. It is a property name,
+        // never the name of the binding holding the module, so inheriting it
+        // renamed `react-native` into `get_ActivityIndicator`.
+        assert!(!is_inheritable("get ActivityIndicator"));
+        assert!(!is_inheritable("set value"));
+        assert!(!is_inheritable("app-platform"));
+        assert!(!is_inheritable("2fa"));
+    }
+
+    #[test]
+    fn real_binding_names_still_inherit() {
+        assert!(is_inheritable("SecureStore"));
+        assert!(is_inheritable("_reactNative"));
+        assert!(is_inheritable("$schema"));
+    }
+
+    #[test]
+    fn generic_names_stay_rejected() {
+        for name in ["r12", "arg3", "c0", "re7", "f2"] {
+            assert!(!is_inheritable(name), "{name} should not be inherited");
+        }
     }
 }
