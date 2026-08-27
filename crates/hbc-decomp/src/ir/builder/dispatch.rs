@@ -78,7 +78,7 @@ fn try_env_handlers(
         | "CreateFunctionEnvironment"
         | "CreateTopLevelEnvironment"
         | "CreateInnerEnvironment" => handle_create_environment(name, inst, env_map),
-        "GetEnvironment" | "GetParentEnvironment" => handle_get_environment(inst, env_map),
+        "GetEnvironment" | "GetParentEnvironment" => handle_get_environment(name, inst, env_map),
         "GetClosureEnvironment" => handle_get_closure_environment(inst, env_map),
         "LoadFromEnvironment" | "LoadFromEnvironmentL" => {
             handle_load_from_environment(inst, env_map)
@@ -90,7 +90,7 @@ fn try_env_handlers(
             handle_store_np_to_environment(inst, env_map)
         }
         // Legacy aliases treated as GetEnvironment.
-        "LoadParentNoTraps" | "TypedLoadParent" => handle_get_environment(inst, env_map),
+        "LoadParentNoTraps" | "TypedLoadParent" => handle_get_environment(name, inst, env_map),
         _ => None,
     }
 }

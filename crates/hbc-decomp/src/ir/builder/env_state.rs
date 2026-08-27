@@ -26,6 +26,10 @@ pub struct EnvRegMap {
     /// register → the (level, slot) it was loaded from, for a register that later
     /// turns out to hold an environment
     reg_source_slot: BTreeMap<u32, (u32, u32)>,
+    /// The function never creates the environment it runs in, so what
+    /// `GetParentEnvironment N` hands back is the Nth ancestor of the ENCLOSING
+    /// function, one hop further out than the IR level contract assumes.
+    borrows_current_env: bool,
     /// registers holding an environment this function just created
     created_envs: HashSet<u32>,
 }
@@ -33,6 +37,24 @@ pub struct EnvRegMap {
 impl EnvRegMap {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Declare that this function does not create the environment it runs in.
+    /// Set once, before any instruction is dispatched.
+    pub fn set_borrows_current_env(&mut self, borrows: bool) {
+        self.borrows_current_env = borrows;
+    }
+
+    /// The IR level a `GetParentEnvironment N` denotes. The IR contract is
+    /// `level 0 = this function's environment, 1 = its parent, ...`. A function
+    /// that creates no environment of its own runs in the enclosing one, so its
+    /// `GetParentEnvironment 0` already IS the parent and every level shifts out
+    /// by one. Without the shift a generator body read its grandparent's slots
+    /// against its parent, and the SecureStore key `pilote_jwt` held by the
+    /// factory two hops up resolved to the state label sitting at the same slot
+    /// index one hop up.
+    pub fn parent_env_level(&self, operand_level: u32) -> u32 {
+        operand_level + u32::from(self.borrows_current_env)
     }
 
     /// Register `reg` now holds the environment at nesting `level`. An
@@ -120,6 +142,60 @@ mod tests {
         assert_eq!(m.level_of(99), 0); // unknown → current
     }
 
+    // A function that creates the environment it runs in keeps the plain IR
+    // contract: GetParentEnvironment N is the Nth ancestor.
+    #[test]
+    fn owning_function_keeps_parent_levels() {
+        let mut m = EnvRegMap::new();
+        m.set_borrows_current_env(false);
+        assert_eq!(m.parent_env_level(0), 0); // own environment
+        assert_eq!(m.parent_env_level(1), 1); // direct parent
+    }
+
+    // A function with no environment of its own runs in the enclosing one, so
+    // every GetParentEnvironment level shifts out by one. This is the v98
+    // generator body: GetParentEnvironment 1 is the grandparent, which is where
+    // the factory keeps its constants (the SecureStore key).
+    #[test]
+    fn borrowing_function_shifts_parent_levels() {
+        let mut m = EnvRegMap::new();
+        m.set_borrows_current_env(true);
+        assert_eq!(m.parent_env_level(0), 1); // already the parent
+        assert_eq!(m.parent_env_level(1), 2); // grandparent, not the parent
+    }
+
+    // An environment created here and then stored into a slot of the enclosing
+    // one takes that slot's identity, which is the level a load from the same
+    // slot produces. Builder and capturing closure then agree on the name.
+    #[test]
+    fn captured_created_env_takes_the_capture_slot_identity() {
+        let mut m = EnvRegMap::new();
+        m.set_level(20, 0);
+        m.mark_created_env(20);
+        assert!(m.is_created_env(20));
+
+        // StoreToEnvironment r1(level 0), slot 3, r20
+        m.set_source_slot(20, 0, 3);
+        let created = m.env_level_of(20);
+
+        // LoadFromEnvironment rX, r1, 3 in the capturing closure
+        let mut child = EnvRegMap::new();
+        child.set_source_slot(7, 0, 3);
+        assert_eq!(created, child.env_level_of(7));
+        assert_eq!(created, NESTED_ENV_LEVEL_BASE + 3);
+    }
+
+    // Reaching an environment through the parent chain is not reaching one out of
+    // a slot: the provenance must not survive.
+    #[test]
+    fn walking_the_parent_chain_clears_slot_provenance() {
+        let mut m = EnvRegMap::new();
+        m.set_source_slot(4, 0, 2);
+        assert_eq!(m.env_level_of(4), NESTED_ENV_LEVEL_BASE + 2);
+        m.set_level(4, 1);
+        assert_eq!(m.env_level_of(4), 1);
+    }
+
     #[test]
     fn copy_propagates_level() {
         let mut m = EnvRegMap::new();
@@ -129,5 +205,12 @@ mod tests {
         m.copy_reg(5, 7); // src unknown → clear
         assert_eq!(m.level_of(5), 0);
         assert!(!m.reg_level.contains_key(&5));
+
+        // A Mov of a created environment carries that fact to the destination.
+        m.mark_created_env(3);
+        m.copy_reg(9, 3);
+        assert!(m.is_created_env(9));
+        m.copy_reg(9, 7); // src is not a created env → clear
+        assert!(!m.is_created_env(9));
     }
 }
