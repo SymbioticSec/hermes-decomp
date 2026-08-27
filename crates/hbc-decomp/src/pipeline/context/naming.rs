@@ -669,6 +669,7 @@ fn name_from_single_export(exports: &std::collections::HashMap<String, u32>) -> 
             crate::util::is_valid_identifier(k)
                 && k.len() >= 3
                 && !crate::analysis::metro::is_generic_module_specifier(k)
+                && !crate::analysis::metro::names_an_action(k)
         })
         .collect();
     names.sort();
@@ -677,6 +678,49 @@ fn name_from_single_export(exports: &std::collections::HashMap<String, u32>) -> 
         Some(names[0].clone())
     } else {
         None
+    }
+}
+
+
+#[cfg(test)]
+mod single_export_naming_tests {
+    use super::name_from_single_export;
+    use crate::analysis::metro::names_an_action;
+    use std::collections::HashMap;
+
+    fn exports(names: &[&str]) -> HashMap<String, u32> {
+        names.iter().enumerate().map(|(i, n)| ((*n).to_string(), i as u32)).collect()
+    }
+
+    #[test]
+    fn action_names_belong_to_functions() {
+        for name in [
+            "getAndroidId", "getNetworkStateAsync", "setItemAsync", "isAirplaneMode",
+            "useNetworkState", "addListener", "onChange", "createClient", "toString",
+        ] {
+            assert!(names_an_action(name), "{name} names an action");
+        }
+    }
+
+    #[test]
+    fn thing_names_are_left_alone() {
+        for name in [
+            "Dispatcher", "SecureStore", "getter", "settings", "isotope", "useful",
+            "Application", "NetworkStateType", "i18n",
+        ] {
+            assert!(!names_an_action(name), "{name} names a thing");
+        }
+    }
+
+    #[test]
+    fn a_module_is_not_named_after_a_recovered_function_export() {
+        assert_eq!(name_from_single_export(&exports(&["getAndroidId"])), None);
+        assert_eq!(
+            name_from_single_export(&exports(&["Dispatcher"])),
+            Some("Dispatcher".to_string())
+        );
+        // Still ambiguous when several thing-like exports remain.
+        assert_eq!(name_from_single_export(&exports(&["Dispatcher", "Store"])), None);
     }
 }
 

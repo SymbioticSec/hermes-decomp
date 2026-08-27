@@ -82,7 +82,17 @@ pub fn propagate_module_names(
     let inferred_count = inferred_names.len();
     for (mod_id, name) in &inferred_names {
         if let Some(module) = registry.modules.get_mut(mod_id) {
-            if module.name.is_none() && is_meaningful_name(name) {
+            // A name that describes an action names one of the module's functions,
+            // not the module. Inference reaches a module through whatever single
+            // export it managed to see, so `exports.getAndroidId = ...` handed that
+            // key to all of expo-application and captures printed
+            // `getAndroidId.nativeApplicationVersion`, naming a function and asking
+            // it for a field it does not have. This runs before names reach closure
+            // slots, so the honest id is what gets propagated.
+            if module.name.is_none()
+                && is_meaningful_name(name)
+                && !crate::analysis::metro::names_an_action(name)
+            {
                 module.name = Some(name.clone());
             }
         }
@@ -122,7 +132,7 @@ pub fn propagate_module_names(
         for (mod_id, name) in new_dep_names {
             if let Some(module) = registry.modules.get_mut(&mod_id) {
                 if module.name.is_none() {
-                    module.name = Some(name);
+                    { log::info!(target: "site", "P_mod125 = {:?}", name); module.name = Some(name); }
                 }
             }
         }
