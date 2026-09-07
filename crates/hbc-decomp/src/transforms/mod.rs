@@ -31,7 +31,7 @@ pub use cleanup::cleanup_statements;
 pub use cleanup::advanced::cleanup_advanced;
 pub use codegen::{Codegen, CodegenOptions};
 pub use default_params::transform_default_params;
-pub use destructuring::{detect_destructuring, detect_iterator_destructuring, reconstruct_v98_array_destructuring};
+pub use destructuring::{detect_destructuring, detect_iterator_destructuring, reconstruct_v98_array_destructuring, reconstruct_babel_array_destructuring};
 pub use generator::{
     cleanup_generator_comments, detect_generator_patterns, has_generator_patterns,
     reconstruct_generator_v98, simplify_state_machine, try_reconstruct_generator_v98,

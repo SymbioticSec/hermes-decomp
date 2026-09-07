@@ -238,7 +238,12 @@ impl PipelineContext {
         let fids: Vec<u32> = all_ir.keys().copied().collect();
         for fid in &fids {
             if let Some(body) = all_ir.remove(fid) {
-                all_ir.insert(*fid, transforms::reconstruct_v98_array_destructuring(body));
+                // Two lowerings reach here. Hermes emits the flat iterator protocol
+                // for source that still had `[a, b] = src`, while Babel had already
+                // rewritten its own inputs into a runtime helper call. A bundle
+                // built through Babel carries both.
+                let body = transforms::reconstruct_v98_array_destructuring(body);
+                all_ir.insert(*fid, transforms::reconstruct_babel_array_destructuring(body));
             }
         }
 
