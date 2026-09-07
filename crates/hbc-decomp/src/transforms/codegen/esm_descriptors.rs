@@ -155,6 +155,7 @@ impl Codegen {
         &self,
         stmt: &Statement,
         descriptor_vars: &std::collections::HashMap<String, DescriptorInfo>,
+        rebound: &std::collections::HashSet<String>,
     ) -> EsmClassification {
         // First try the Expr handler with descriptors for defineProperty
         if let Statement::Expr(expr) = stmt {
@@ -170,7 +171,7 @@ impl Codegen {
         }
 
         // Fall back to standard classification for everything else
-        self.classify_esm_stmt(stmt)
+        self.classify_esm_stmt(stmt, rebound)
     }
 
     // Detect re-export modules: modules that just re-export everything from another module.

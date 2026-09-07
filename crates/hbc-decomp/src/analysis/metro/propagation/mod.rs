@@ -132,7 +132,7 @@ pub fn propagate_module_names(
         for (mod_id, name) in new_dep_names {
             if let Some(module) = registry.modules.get_mut(&mod_id) {
                 if module.name.is_none() {
-                    { log::info!(target: "site", "P_mod125 = {:?}", name); module.name = Some(name); }
+                    module.name = Some(name);
                 }
             }
         }

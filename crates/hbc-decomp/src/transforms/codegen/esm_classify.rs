@@ -3,7 +3,11 @@ use crate::ir::Statement;
 
 impl Codegen {
     // Classify a single IR statement for ESM output.
-    pub(super) fn classify_esm_stmt(&self, stmt: &Statement) -> EsmClassification {
+    pub(super) fn classify_esm_stmt(
+        &self,
+        stmt: &Statement,
+        rebound: &std::collections::HashSet<String>,
+    ) -> EsmClassification {
         use crate::ir::{Expression, Value, Constant, AssignTarget};
 
         match stmt {
@@ -19,8 +23,8 @@ impl Codegen {
 
             // Let bindings: let x = require(N) or let x = _interopDefault(require(N))
             Statement::Let { name, value, .. } => {
-                if let Some(imp) = self.try_import_from_expr(name, value) {
-                    return EsmClassification::Import(imp);
+                if let Some(cls) = self.import_classification(name, value, rebound) {
+                    return cls;
                 }
                 // Skip interop wrapper function definitions
                 if Self::is_interop_wrapper_def(value) {
@@ -41,8 +45,8 @@ impl Codegen {
             Statement::Assign { target, value } => {
                 // Import: variable = require(N) or variable = _interopDefault(require(N))
                 if let AssignTarget::Variable(name) = target {
-                    if let Some(imp) = self.try_import_from_expr(name, value) {
-                        return EsmClassification::Import(imp);
+                    if let Some(cls) = self.import_classification(name, value, rebound) {
+                        return cls;
                     }
                 }
 
@@ -189,6 +193,76 @@ impl Codegen {
             }
 
             _ => EsmClassification::Body,
+        }
+    }
+}
+
+impl Codegen {
+    // An import for `name = value`, kept valid when the module writes to `name`
+    // again. An ESM import binding cannot be assigned to, and Hermes reuses one
+    // register for both halves of the interop dance, so `invariant = require(31)`
+    // followed by `invariant = interopResult` used to render as a write to the
+    // import. Bind the import under its own name and alias it locally instead, so
+    // the later write lands on a `let` the module actually owns.
+    pub(super) fn import_classification(
+        &self,
+        name: &str,
+        value: &crate::ir::Expression,
+        rebound: &std::collections::HashSet<String>,
+    ) -> Option<EsmClassification> {
+        if !rebound.contains(name) {
+            return self.try_import_from_expr(name, value).map(EsmClassification::Import);
+        }
+        let local = crate::util::sanitize_identifier(name);
+        if local.is_empty() {
+            return None;
+        }
+        let alias = format!("{local}_mod");
+        let imp = self.try_import_from_expr(&alias, value)?;
+        Some(EsmClassification::ImportAndBody(imp, format!("let {local} = {alias};\n")))
+    }
+}
+
+#[cfg(test)]
+mod rebound_import_tests {
+    use super::super::{Codegen, CodegenOptions, EsmClassification};
+    use crate::ir::{Constant, Expression, Value};
+    use std::collections::HashSet;
+
+    fn require_call(id: i32) -> Expression {
+        Expression::Call {
+            callee: Box::new(Expression::Value(Value::Variable("require".into()))),
+            arguments: vec![Expression::Value(Value::Constant(Constant::Integer(id)))],
+        }
+    }
+
+    #[test]
+    fn a_name_written_once_stays_a_plain_import() {
+        let cg = Codegen::new(CodegenOptions::default());
+        let rebound = HashSet::new();
+        match cg.import_classification("invariant", &require_call(31), &rebound) {
+            Some(EsmClassification::Import(line)) => {
+                assert!(line.starts_with("import invariant from "), "{line}");
+            }
+            _ => panic!("expected a plain import"),
+        }
+    }
+
+    #[test]
+    fn a_rebound_name_gets_its_own_binding_and_a_local_alias() {
+        // Hermes reuses one register for both halves of the interop dance, so the
+        // module writes to the name again after the load. An import binding cannot
+        // be assigned to, so the import takes a private name and the module keeps a
+        // local it owns.
+        let cg = Codegen::new(CodegenOptions::default());
+        let mut rebound = HashSet::new();
+        rebound.insert("invariant".to_string());
+        match cg.import_classification("invariant", &require_call(31), &rebound) {
+            Some(EsmClassification::ImportAndBody(imp, body)) => {
+                assert!(imp.starts_with("import invariant_mod from "), "{imp}");
+                assert_eq!(body, "let invariant = invariant_mod;\n");
+            }
+            _ => panic!("expected an import plus a local alias"),
         }
     }
 }

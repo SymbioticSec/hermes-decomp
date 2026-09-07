@@ -44,6 +44,41 @@ impl Codegen {
             &renamed_owned
         };
 
+        // Pre-pass: names the module writes to more than once at top level. The
+        // first write may look like a module load and become an import, but an ESM
+        // import binding is immutable, so any later write to the same name has to
+        // land on a local instead.
+        // Counting reaches nested blocks and bodies, not just the top level, because
+        // a write buried in a branch invalidates the import just as surely. Counting
+        // one name too many only costs a local alias that is still correct JS, while
+        // missing one emits an assignment to an import, which is not.
+        let rebound: HashSet<String> = {
+            use crate::ir::{AssignTarget, Visitor};
+            struct W<'a>(&'a mut HashMap<String, u32>);
+            impl<'b> Visitor<'b> for W<'_> {
+                fn visit_statement(&mut self, s: &'b Statement) {
+                    if let Statement::Let { name, .. } = s {
+                        *self.0.entry(name.clone()).or_insert(0) += 1;
+                    }
+                    self.walk_statement(s);
+                }
+                fn visit_assign_target(&mut self, t: &'b AssignTarget) {
+                    if let AssignTarget::Variable(name) = t {
+                        *self.0.entry(name.clone()).or_insert(0) += 1;
+                    }
+                    self.walk_assign_target(t);
+                }
+            }
+            let mut writes: HashMap<String, u32> = HashMap::new();
+            {
+                let mut w = W(&mut writes);
+                for stmt in statements {
+                    w.visit_statement(stmt);
+                }
+            }
+            writes.into_iter().filter(|(_, c)| *c > 1).map(|(n, _)| n).collect()
+        };
+
         // Pre-pass: collect descriptor variables (objects with get/value used in defineProperty)
         let mut descriptor_vars: HashMap<String, DescriptorInfo> = HashMap::new();
         let mut consumed_descriptors: HashSet<String> = HashSet::new();
@@ -187,7 +222,7 @@ impl Codegen {
                 _ => false,
             };
 
-            match self.classify_esm_stmt_with_descriptors(stmt, &descriptor_vars) {
+            match self.classify_esm_stmt_with_descriptors(stmt, &descriptor_vars, &rebound) {
                 EsmClassification::Import(line) => {
                     // Skip import for re-exported modules
                     if is_reexport_import {
@@ -199,6 +234,12 @@ impl Codegen {
                 EsmClassification::ImportAndExport(imp, exp) => {
                     imports.push(imp);
                     exports.push(exp);
+                }
+                EsmClassification::ImportAndBody(imp, line) => {
+                    if !is_reexport_import {
+                        imports.push(imp);
+                    }
+                    body_stmts.push(line);
                 }
                 EsmClassification::Skip => {}
                 EsmClassification::Body => body_stmts.push(self.generate_stmt(stmt)),
