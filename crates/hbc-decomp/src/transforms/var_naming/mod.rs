@@ -27,6 +27,13 @@ use analysis::analyze_stmt;
 pub fn infer_variable_names(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut namer = VariableNamer::new();
 
+    // Reserve every name the function already uses, so an inferred name can never
+    // land on a binding that is already live. Without this the pass could give two
+    // distinct registers one name and collapse them into each other.
+    for name in existing_names(&stmts) {
+        namer.reserve(&name);
+    }
+
     // First pass: analyze to infer names
     for stmt in &stmts {
         analyze_stmt(&mut namer, stmt);
@@ -41,10 +48,76 @@ pub fn infer_variable_names(stmts: Vec<Statement>) -> Vec<Statement> {
 }
 
 
+// Every variable name the statements already bind or read.
+fn existing_names(stmts: &[Statement]) -> std::collections::HashSet<String> {
+    use crate::ir::{AssignTarget, Expression, Value, Visitor};
+    struct C<'a>(&'a mut std::collections::HashSet<String>);
+    impl<'b> Visitor<'b> for C<'_> {
+        fn visit_expression(&mut self, e: &'b Expression) {
+            if let Expression::Value(Value::Variable(n)) = e {
+                self.0.insert(n.clone());
+            }
+            self.walk_expression(e);
+        }
+        fn visit_assign_target(&mut self, t: &'b AssignTarget) {
+            if let AssignTarget::Variable(n) = t {
+                self.0.insert(n.clone());
+            }
+            self.walk_assign_target(t);
+        }
+        fn visit_statement(&mut self, s: &'b Statement) {
+            if let Statement::Let { name, .. } = s {
+                self.0.insert(name.clone());
+            }
+            self.walk_statement(s);
+        }
+    }
+    let mut out = std::collections::HashSet::new();
+    {
+        let mut c = C(&mut out);
+        for s in stmts {
+            c.visit_statement(s);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ir::{AssignTarget, Expression, PropertyKey, Value};
+
+    #[test]
+    fn an_inferred_name_never_lands_on_a_live_binding() {
+        // Register naming hands out one name per live register, so two distinct
+        // objects arrive as `obj` and `obj1`. An inferred name that reused `obj`
+        // for the second one merged them, and the config object rendered as
+        // `obj.variations = obj`, a self reference losing the outer object.
+        let stmts = vec![
+            Statement::Let {
+                name: "obj".to_string(),
+                value: Expression::Value(Value::Constant(crate::ir::Constant::Integer(1))),
+                kind: crate::ir::VarKind::Let,
+            },
+            Statement::Assign {
+                target: AssignTarget::Member {
+                    object: Expression::Value(Value::Variable("obj".to_string())),
+                    property: "variations".to_string(),
+                },
+                value: Expression::Value(Value::Variable("obj1".to_string())),
+            },
+        ];
+        let out = infer_variable_names(stmts);
+        let rendered = out
+            .iter()
+            .map(|s| format!("{s}"))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            !rendered.contains("obj.variations = obj;"),
+            "the two bindings must not collapse onto one name: {rendered}"
+        );
+    }
 
     #[test]
     fn test_fetch_naming() {
