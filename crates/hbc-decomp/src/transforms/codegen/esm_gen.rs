@@ -324,7 +324,7 @@ impl Codegen {
         // from "_curry2";` x65), and merge distinct named imports of the same module
         // into one `import { a, b } from "M";`.
         let imports = consolidate_imports(imports);
-        let (imports, extra_consts) =
+        let (imports, mut extra_consts) =
             fold_redundant_imports(imports, &mut body_stmts, &mut exports);
 
         // Deduplicate exports (e.g. multiple export * from same module)
@@ -335,6 +335,16 @@ impl Codegen {
 
         // `function name(){…}` + `export const name = …` → `export function name`
         dedupe_function_export_collisions(&mut body_stmts, &mut exports);
+
+        // A module that still calls `require` needs it bound. Metro keeps some
+        // dependencies lazy, most visibly in the React Native index where every
+        // export is a getter closing over `require(...)`, and turning those into
+        // static imports would load eagerly and change what the module does. The
+        // call is therefore kept as written, and the binding it needs is declared
+        // here: Metro publishes its loader on the global as `__r`.
+        if body_calls_require(&body_stmts) || body_calls_require(&exports) {
+            extra_consts.insert(0, "const require = globalThis.__r;".to_string());
+        }
 
         // Build output
         let mut output = String::new();
@@ -568,4 +578,29 @@ fn is_generic_import_binding(name: &str) -> bool {
 fn is_bad_module_binding(name: &str) -> bool {
     crate::analysis::metro::is_generic_module_specifier(name)
         || matches!(name, "module" | "exports" | "default" | "require")
+}
+
+// Whether the rendered lines call `require` without binding it first. A property
+// access (`x.require(...)`) or a longer identifier ending in `require` is not a
+// call to the module loader.
+fn body_calls_require(lines: &[String]) -> bool {
+    let mut calls = false;
+    for line in lines {
+        for (idx, _) in line.match_indices("require") {
+            let before = line[..idx].chars().next_back();
+            if matches!(before, Some(c) if c == '.' || c == '_' || c.is_alphanumeric()) {
+                continue;
+            }
+            let after = line[idx + "require".len()..].trim_start();
+            if after.starts_with('(') {
+                calls = true;
+            }
+            // `const require = ...`, `let require = ...`, `require = ...` or a
+            // parameter list entry all bind the name, so nothing is dangling.
+            if after.starts_with('=') && !after.starts_with("==") {
+                return false;
+            }
+        }
+    }
+    calls
 }
