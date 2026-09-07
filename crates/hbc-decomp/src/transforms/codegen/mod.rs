@@ -186,6 +186,11 @@ pub(super) enum EsmClassification {
     Export(String),
     // Statement generates both an import and an export (e.g. `export default require(dep)(args)`)
     ImportAndExport(String, String),
+    // Statement generates an import plus a body line binding it to a local name.
+    // Used when the module writes to the name again later: an import binding is
+    // immutable, so `invariant = require(31)` followed by `invariant = interop`
+    // has to become `import invariant_mod ...` plus `let invariant = invariant_mod`.
+    ImportAndBody(String, String),
     // Boilerplate that should be removed from output
     Skip,
     // Regular code to keep in the module body
