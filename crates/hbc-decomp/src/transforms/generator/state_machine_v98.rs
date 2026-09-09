@@ -38,9 +38,18 @@ pub fn reconstruct_generator_v98(body: Vec<Statement>) -> Vec<Statement> {
     try_reconstruct(&body).unwrap_or(body)
 }
 
+// Same reconstruction, reporting whether it actually happened. A caller that
+// follows up with cleanup passes needs to know: those passes assume a flat body
+// whose data flow they can read, and on a machine that did not lift they delete
+// code they cannot see through.
+pub fn try_reconstruct_generator_v98(body: &[Statement]) -> Option<Vec<Statement>> {
+    try_reconstruct(body)
+}
+
 // A parsed state-machine case: the value the case resumes with (`x = <resume>`),
 // the real code before the suspend point, the yielded/returned value and whether
 // this is the terminal (done) case.
+#[derive(Clone)]
 struct ParsedCase {
     resume_binding: Option<AssignTarget>,
     pre: Vec<Statement>,
@@ -49,10 +58,17 @@ struct ParsedCase {
 }
 
 fn try_reconstruct(body: &[Statement]) -> Option<Vec<Statement>> {
-    let dispatch = find_label_dispatch(body)?;
-    let cases = collect_label_cases(dispatch)?;
+    let Some(dispatch) = find_label_dispatch(body) else {
+        log::trace!(target: "genlift", "bail: no label dispatch");
+        return None;
+    };
+    let Some(cases) = collect_label_cases(dispatch) else {
+        log::trace!(target: "genlift", "bail: no label cases");
+        return None;
+    };
     // A real state machine has at least one yield label plus the terminal case.
     if cases.len() < 2 {
+        log::trace!(target: "genlift", "bail: only {} case", cases.len());
         return None;
     }
 
@@ -61,47 +77,141 @@ fn try_reconstruct(body: &[Statement]) -> Option<Vec<Statement>> {
     // assignments are bookkeeping and get dropped from the reconstructed body.
     let state_vars = collect_state_vars(body);
 
-    let parsed: Vec<ParsedCase> = cases
+    let parsed: Vec<Option<ParsedCase>> = cases
         .iter()
         .map(|(_, b)| parse_case(b, &state_vars))
-        .collect::<Option<_>>()?;
+        .collect();
 
-    // The last case must be the terminal (done) one; every earlier case suspends.
-    let (last, rest) = parsed.split_last()?;
-    if !last.done || rest.iter().any(|c| c.done) {
-        return None;
+    // Happy path: every case parsed, only the last is terminal. Linear
+    // `yield; yield; return` with no catch label in the middle.
+    if parsed.iter().all(|p| p.is_some()) {
+        let all: Vec<ParsedCase> = parsed.iter().flatten().cloned().collect();
+        let (last, rest) = all.split_last()?;
+        if last.done && rest.iter().all(|c| !c.done) {
+            return emit_yield_chain(&all[..all.len() - 1], last);
+        }
     }
 
-    // Thread the resume protocol: case i suspends yielding `value_i`, and case i+1
-    // resumes binding that yield's result. So `case[i+1].binding = yield value_i`.
-    let mut out = Vec::new();
-    for (i, case) in parsed.iter().enumerate() {
-        if i > 0 {
-            let prev_value = parsed[i - 1].value.clone();
-            let yielded = Expression::Yield {
-                value: Box::new(prev_value),
-                delegate: false,
-            };
-            match &case.resume_binding {
-                Some(target) => out.push(Statement::Assign {
-                    target: target.clone(),
-                    value: yielded,
-                }),
-                None => out.push(Statement::Expr(yielded)),
+    // Async + try/catch (forgotPassword, etc.): a catch label sits between the
+    // yield case and the resume case (`else if (1 === label) { throw / return }`).
+    // Keep every suspend and the *last* terminal; skip middle error labels.
+    // An unparsed case is only skipped when it throws (catch-like). Anything
+    // else unknown means bail, so we never drop a real yield.
+    let mut suspends: Vec<ParsedCase> = Vec::new();
+    let mut terminal: Option<ParsedCase> = None;
+    for (p, (_, raw)) in parsed.into_iter().zip(cases.iter()) {
+        match p {
+            Some(c) if !c.done => suspends.push(c),
+            Some(c) => {
+                // Several cases can end the generator: the one that carries the
+                // real result, and the label fall through that just returns
+                // undefined. Keeping whichever came last discarded the real one
+                // whenever it was not the last, which is how `getUserUuid` came
+                // out as `return null` while its case decoded the JWT and
+                // returned the user. Replace a terminal only when the one held
+                // so far carries nothing.
+                let holds_work = terminal
+                    .as_ref()
+                    .is_some_and(|t| !t.pre.is_empty() || !is_empty_result(&t.value));
+                if holds_work {
+                    if !c.pre.is_empty() || !is_empty_result(&c.value) {
+                        // Two terminals with real content: which one runs is a
+                        // control flow question this pass does not answer, so the
+                        // raw machine stays.
+                        log::trace!(target: "genlift", "bail: two terminal cases with content");
+                        return None;
+                    }
+                } else {
+                    terminal = Some(c);
+                }
             }
+            None if is_catch_label(raw) => {}
+            None => {
+                log::trace!(target: "genlift", "bail: unparsable case with no throw");
+                return None;
+            }
+        }
+    }
+    let Some(t) = terminal.as_ref() else {
+        log::trace!(target: "genlift", "bail: no terminal case ({} suspends)", suspends.len());
+        return None;
+    };
+    let out = emit_yield_chain(&suspends, t);
+    if out.is_none() {
+        log::trace!(target: "genlift", "bail: emit_yield_chain ({} suspends)", suspends.len());
+    }
+    out
+}
+
+// A case the parser did not understand may be skipped only when it is a catch
+// label: once the resume protocol prologue is stripped, nothing remains but a
+// throw. The previous test looked at the raw body, which always contains the
+// `if (arg0 === 1) throw arg1` prologue that Hermes emits in EVERY case, so any
+// case the parser could not read was dropped silently and its real code went
+// with it. `piloteAuthHeaders` lost its entire header build, `Bearer ` and
+// `x-refresh-token` included, exactly this way. Anything else now bails, which
+// leaves the raw machine in place: unreadable, but complete.
+fn is_catch_label(body: &[Statement]) -> bool {
+    let real = strip_arg_protocol(body);
+    !real.is_empty() && real.iter().all(only_exits)
+}
+
+// Whether a statement can only leave the case, by throwing or returning, with no
+// work of its own. Branches are allowed as long as every leaf is an exit: an
+// error label may well be `if (isPhone) { return ... } else { throw err }`. An
+// assignment or a call means the case carries real code and must not be dropped.
+fn only_exits(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Throw(_) | Statement::Return(_) | Statement::Comment(_) => true,
+        Statement::If { then_body, else_body, .. } => {
+            then_body.iter().all(only_exits) && else_body.iter().all(only_exits)
+        }
+        Statement::Block(inner) => inner.iter().all(only_exits),
+        _ => false,
+    }
+}
+
+
+// `suspends` are the yield cases in source order; `terminal` is the done case
+// (resume after the last yield). Thread `yield value` into each next binding.
+fn emit_yield_chain(suspends: &[ParsedCase], terminal: &ParsedCase) -> Option<Vec<Statement>> {
+    if suspends.is_empty() {
+        return None;
+    }
+    let mut out = Vec::new();
+    for (i, case) in suspends.iter().enumerate() {
+        if i > 0 {
+            push_yield(&mut out, &suspends[i - 1].value, &case.resume_binding);
         }
         out.extend(case.pre.iter().cloned());
     }
-    // Terminal return, unless it returns undefined (a bare `return`).
-    if !is_undefined(&last.value) {
-        out.push(Statement::Return(Some(last.value.clone())));
+    push_yield(
+        &mut out,
+        &suspends.last()?.value,
+        &terminal.resume_binding,
+    );
+    out.extend(terminal.pre.iter().cloned());
+    if !is_undefined(&terminal.value) {
+        out.push(Statement::Return(Some(terminal.value.clone())));
     }
-
-    // Sanity: a reconstructed generator must contain at least one yield.
     if !out.iter().any(stmt_has_yield_deep) {
         return None;
     }
     Some(out)
+}
+
+fn push_yield(out: &mut Vec<Statement>, value: &Expression, binding: &Option<AssignTarget>) {
+    let yielded = Expression::Yield {
+        value: Box::new(value.clone()),
+        delegate: false,
+    };
+    match binding {
+        Some(target) => out.push(Statement::Assign {
+            target: target.clone(),
+            value: yielded,
+        }),
+        None => out.push(Statement::Expr(yielded)),
+    }
 }
 
 // Collect every variable name that is compared against an integer literal; these
@@ -256,8 +366,9 @@ fn is_bookkeeping(s: &Statement, state_vars: &std::collections::HashSet<String>)
     false
 }
 
-// Recognise the two result-object shapes the frontend emits:
+// Recognise the result-object shapes the frontend emits:
 //   return { value: V, done: D }
+//   obj = { value: V, done: D }; return obj          (after slot-fill fold)
 //   obj = { value: <ignored>, done: D }; obj[0] = V; return obj
 // Returns (value, done, statements_consumed).
 fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)> {
@@ -267,17 +378,43 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
             return Some((v, d, 1));
         }
     }
+    // Folded slot-fill: `obj = { value: V, done: D }; return obj`. Nested object
+    // folding used to turn the 3-statement form below into this, which made the
+    // whole generator pass bail and leave the raw v98 state machine in the dump.
+    if stmts.len() >= 2 {
+        if let Statement::Return(Some(Expression::Value(Value::Variable(o2)))) = &stmts[1] {
+            if let Some((o1, obj_expr)) = assigned_object(&stmts[0]) {
+                if o1 == o2 {
+                    if let Some((v, d)) = parse_result_object(obj_expr) {
+                        return Some((v, d, 2));
+                    }
+                }
+            }
+        }
+    }
     // Incremental object build then return.
     if stmts.len() >= 3 {
         if let (
             Statement::Assign { target: AssignTarget::Variable(o1), value: Expression::Object { properties } },
-            Statement::Assign { target: AssignTarget::Index { object, key }, value: real_value },
+            Statement::Assign { target: value_target, value: real_value },
             Statement::Return(Some(Expression::Value(Value::Variable(o3)))),
         ) = (&stmts[0], &stmts[1], &stmts[2])
         {
             let obj_is = |e: &Expression, name: &str| matches!(e, Expression::Value(Value::Variable(v)) if v == name);
-            let key_is_zero = matches!(key, Expression::Value(Value::Constant(Constant::Integer(0))));
-            if o1 == o3 && obj_is(object, o1) && key_is_zero {
+            // The fill of the `value` slot reaches here either as the raw slot
+            // index the bytecode emits or, once slot indexes have been renamed
+            // against the object shape, as the named member. Both are the same
+            // store into property 0.
+            let value_fill = match value_target {
+                AssignTarget::Index { object, key } => Some((
+                    object,
+                    matches!(key, Expression::Value(Value::Constant(Constant::Integer(0)))),
+                )),
+                AssignTarget::Member { object, property } => Some((object, property == "value")),
+                _ => None,
+            };
+            let (object, fills_value) = value_fill?;
+            if o1 == o3 && obj_is(object, o1) && fills_value {
                 let done = properties.iter().find_map(|p| match &p.key {
                     PropertyKey::Ident(k) | PropertyKey::String(k) if k == "done" => Some(is_truthy(&p.value)),
                     _ => None,
@@ -291,6 +428,13 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
 
 fn is_resume_param(e: &Expression) -> bool {
     matches!(e, Expression::Value(Value::Parameter(1)))
+}
+
+// A terminal value that says nothing: the fall through cases return undefined or
+// null having done no work.
+fn is_empty_result(e: &Expression) -> bool {
+    is_undefined(e)
+        || matches!(e, Expression::Value(Value::Constant(Constant::Null)))
 }
 
 fn is_undefined(e: &Expression) -> bool {
@@ -315,11 +459,39 @@ fn stmt_has_yield_deep(s: &Statement) -> bool {
 
 // --- locating the label dispatch ---
 
-// Find the TryCatch try-body (search through the status-guard if/else nest) then
-// the label-dispatch `if` inside it.
+// Find the label-dispatch `if`. Hermes wraps the dispatch in a try/catch only
+// when the source function has one of its own, so an async function without a
+// user try still has a dispatch, just one statement level higher. Looking only
+// inside a try meant every such function bailed before anything was examined.
+// The try body is searched first when there is one, then the status-guard
+// if/else nest, then the body itself.
 fn find_label_dispatch(body: &[Statement]) -> Option<&Statement> {
-    let try_body = find_generator_try(body)?;
-    try_body.iter().find(|s| is_label_dispatch_if(s))
+    if let Some(try_body) = find_generator_try(body) {
+        if let Some(found) = try_body.iter().find(|s| is_label_dispatch_if(s)) {
+            return Some(found);
+        }
+    }
+    find_dispatch_anywhere(body)
+}
+
+// The dispatch `if`, searched through the status-guard if/else nest that Hermes
+// emits around it. Only guard nests are traversed, not arbitrary bodies, so an
+// unrelated `if` deeper in the function is never mistaken for the dispatch.
+fn find_dispatch_anywhere(body: &[Statement]) -> Option<&Statement> {
+    if let Some(found) = body.iter().find(|s| is_label_dispatch_if(s)) {
+        return Some(found);
+    }
+    for s in body {
+        if let Statement::If { then_body, else_body, .. } = s {
+            if let Some(found) = find_dispatch_anywhere(then_body) {
+                return Some(found);
+            }
+            if let Some(found) = find_dispatch_anywhere(else_body) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn find_generator_try(body: &[Statement]) -> Option<&Vec<Statement>> {
@@ -459,5 +631,192 @@ fn is_truthy(e: &Expression) -> bool {
         Expression::Value(Value::Constant(Constant::Bool(b))) => *b,
         Expression::Value(Value::Constant(Constant::Integer(n))) => *n != 0,
         _ => false,
+    }
+}
+
+fn assigned_object(stmt: &Statement) -> Option<(&str, &Expression)> {
+    match stmt {
+        Statement::Assign {
+            target: AssignTarget::Variable(name),
+            value,
+        } => Some((name, value)),
+        Statement::Let { name, value, .. } => Some((name, value)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::ObjectProperty;
+
+    fn var(n: &str) -> Expression {
+        Expression::Value(Value::Variable(n.into()))
+    }
+    fn param(i: u32) -> Expression {
+        Expression::Value(Value::Parameter(i))
+    }
+    fn int(n: i32) -> Expression {
+        Expression::constant(Constant::Integer(n))
+    }
+    fn bool_c(b: bool) -> Expression {
+        Expression::constant(Constant::Bool(b))
+    }
+    fn eq(l: Expression, r: Expression) -> Expression {
+        Expression::binary(BinaryOp::StrictEq, l, r)
+    }
+    fn obj_value_done(value: Expression, done: bool) -> Expression {
+        Expression::Object {
+            properties: vec![
+                ObjectProperty {
+                    key: PropertyKey::Ident("value".into()),
+                    value,
+                },
+                ObjectProperty {
+                    key: PropertyKey::Ident("done".into()),
+                    value: bool_c(done),
+                },
+            ],
+        }
+    }
+    fn arg_protocol(real: Vec<Statement>) -> Vec<Statement> {
+        vec![Statement::If {
+            condition: eq(param(0), int(1)),
+            then_body: vec![Statement::Throw(param(1))],
+            else_body: vec![Statement::If {
+                condition: eq(param(0), int(2)),
+                then_body: vec![
+                    Statement::Assign {
+                        target: AssignTarget::Variable("obj".into()),
+                        value: obj_value_done(param(1), true),
+                    },
+                    Statement::Return(Some(var("obj"))),
+                ],
+                else_body: real,
+            }],
+        }]
+    }
+
+    #[test]
+    fn reconstructs_folded_two_statement_result_object() {
+        // Shape after nested slot-fill: yield is a direct `{value,done}` return,
+        // terminal is `obj = {value, done}; return obj` (the 2-stmt form).
+        let yield_case = arg_protocol(vec![
+            Statement::Expr(Expression::Call {
+                callee: Box::new(var("dispatch")),
+                arguments: vec![],
+            }),
+            Statement::Return(Some(obj_value_done(
+                Expression::Call {
+                    callee: Box::new(var("post")),
+                    arguments: vec![],
+                },
+                false,
+            ))),
+        ]);
+        let done_case = arg_protocol(vec![
+            Statement::Assign {
+                target: AssignTarget::Variable("obj".into()),
+                value: obj_value_done(
+                    Expression::Member {
+                        object: Box::new(param(1)),
+                        property: PropertyKey::Ident("token".into()),
+                        optional: false,
+                    },
+                    true,
+                ),
+            },
+            Statement::Return(Some(var("obj"))),
+        ]);
+        let body = vec![Statement::If {
+            condition: eq(var("status"), int(2)),
+            then_body: vec![Statement::Expr(Expression::Call {
+                callee: Box::new(var("throwTypeError")),
+                arguments: vec![],
+            })],
+            else_body: vec![Statement::TryCatch {
+                try_body: vec![Statement::If {
+                    condition: eq(int(0), var("label")),
+                    then_body: yield_case,
+                    else_body: done_case,
+                }],
+                catch_param: Some("e".into()),
+                catch_body: vec![Statement::Throw(var("e"))],
+                finally_body: vec![],
+            }],
+        }];
+
+        let out = reconstruct_generator_v98(body);
+        let has_yield = out.iter().any(stmt_has_yield_deep);
+        assert!(has_yield, "expected flattened yield, got {out:?}");
+        let dump = format!("{out:?}");
+        assert!(!dump.contains("throwTypeError"), "raw executing-guard leaked: {dump}");
+    }
+
+    #[test]
+    fn reconstructs_async_try_catch_skipping_error_label() {
+        // forgotPassword shape: label 0 yields, label 1 is the catch handler
+        // (throw / early return), trailing else is the resume after the yield.
+        let yield_case = arg_protocol(vec![
+            Statement::Expr(Expression::Call {
+                callee: Box::new(var("dispatchRequest")),
+                arguments: vec![],
+            }),
+            Statement::Return(Some(obj_value_done(var("posted"), false))),
+        ]);
+        let catch_case = vec![Statement::If {
+            condition: var("isPhone"),
+            then_body: vec![Statement::Return(Some(obj_value_done(
+                Expression::constant(Constant::Bool(false)),
+                true,
+            )))],
+            else_body: vec![Statement::Throw(var("err"))],
+        }];
+        let done_case = arg_protocol(vec![
+            Statement::Assign {
+                target: AssignTarget::Variable("body".into()),
+                value: param(1),
+            },
+            Statement::Expr(Expression::Call {
+                callee: Box::new(var("dispatchSent")),
+                arguments: vec![],
+            }),
+            Statement::Return(Some(obj_value_done(
+                Expression::Member {
+                    object: Box::new(var("body")),
+                    property: PropertyKey::Ident("method".into()),
+                    optional: false,
+                },
+                true,
+            ))),
+        ]);
+        let body = vec![Statement::If {
+            condition: eq(var("status"), int(2)),
+            then_body: vec![Statement::Expr(Expression::Call {
+                callee: Box::new(var("throwTypeError")),
+                arguments: vec![],
+            })],
+            else_body: vec![Statement::TryCatch {
+                try_body: vec![Statement::If {
+                    condition: eq(int(0), var("label")),
+                    then_body: yield_case,
+                    else_body: vec![Statement::If {
+                        condition: eq(int(1), var("label")),
+                        then_body: catch_case,
+                        else_body: done_case,
+                    }],
+                }],
+                catch_param: Some("e".into()),
+                catch_body: vec![Statement::Throw(var("e"))],
+                finally_body: vec![],
+            }],
+        }];
+
+        let out = reconstruct_generator_v98(body);
+        let dump = format!("{out:?}");
+        assert!(out.iter().any(stmt_has_yield_deep), "expected yield, got {dump}");
+        assert!(!dump.contains("throwTypeError"), "raw guard leaked: {dump}");
+        assert!(dump.contains("dispatchRequest"), "lost request dispatch: {dump}");
+        assert!(dump.contains("dispatchSent"), "lost sent dispatch: {dump}");
     }
 }

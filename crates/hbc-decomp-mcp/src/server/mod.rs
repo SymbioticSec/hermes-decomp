@@ -23,6 +23,9 @@ pub(crate) struct LoadedFile {
     pub(crate) path: String,
     pub(crate) bytes: Vec<u8>,
     pub(crate) pipeline_ctx: Option<PipelineContext>,
+    // Whether the cached `pipeline_ctx` was built in deep naming mode, so a request
+    // that toggles deep rebuilds instead of returning the wrong-mode context.
+    pub(crate) pipeline_deep: bool,
 }
 
 pub struct HermesService {
@@ -68,20 +71,26 @@ impl HermesService {
 }
 
 impl LoadedFile {
-    fn ensure_pipeline(&mut self) -> Result<(), McpError> {
-        if self.pipeline_ctx.is_none() {
+    fn ensure_pipeline(&mut self, deep: bool) -> Result<(), McpError> {
+        if self.pipeline_ctx.is_none() || self.pipeline_deep != deep {
             // Reuse an on-disk analysis cache (`<file>.hdcache`) keyed by the
-            // bytecode, so repeated sessions on the same file don't re-analyze.
+            // bytecode and options (deep is part of the key), so repeated sessions on
+            // the same file and mode don't re-analyze.
             let cache_path = hbc_decomp::default_cache_path(std::path::Path::new(&self.path));
+            let options = DecompileOptionsV2 {
+                deep,
+                ..DecompileOptionsV2::optimized()
+            };
             let ctx = PipelineContext::build_cached(
                 &self.file,
                 &self.format,
-                &DecompileOptionsV2::optimized(),
+                &options,
                 &self.bytes,
                 &cache_path,
             )
             .map_err(|e| McpError::internal_error(format!("Pipeline build error: {e}"), None))?;
             self.pipeline_ctx = Some(ctx);
+            self.pipeline_deep = deep;
         }
         Ok(())
     }

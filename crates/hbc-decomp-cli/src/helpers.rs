@@ -116,3 +116,26 @@ pub fn parse_globs(spec: Option<&str>) -> Vec<String> {
     })
     .unwrap_or_default()
 }
+
+// Remove the volatile ` /* <digits> */` module id annotations from decompiled
+// output. The Metro module id shifts whenever a module is added or removed
+// between builds, so these comments make every import line differ in a build to
+// build diff even when the readable name (which is kept) did not change.
+pub fn strip_module_id_comments(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find(" /* ") {
+        let (before, after_marker) = rest.split_at(pos);
+        out.push_str(before);
+        let after = &after_marker[4..]; // past " /* "
+        let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && after[digits..].starts_with(" */") {
+            rest = &after[digits + 3..]; // drop the whole ` /* <digits> */`
+        } else {
+            out.push_str(" /* ");
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}

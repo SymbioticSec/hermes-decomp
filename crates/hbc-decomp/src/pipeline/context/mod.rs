@@ -59,6 +59,8 @@ impl PipelineContext {
         let options = DecompileOptionsV2 {
             assembly_mode: user_options.assembly_mode,
             include_offsets: user_options.include_offsets || user_options.assembly_mode,
+            deep: user_options.deep,
+            stable: user_options.stable,
             ..DecompileOptionsV2::optimized()
         };
 
@@ -89,7 +91,7 @@ impl PipelineContext {
         // STAGE W5-W11: Name resolution (module names, closures, exports, IPA)
         let phase = super::progress::Phase::start("naming / IPA / closures");
         let mut global_analysis = Self::run_naming_pipeline(
-            &mut all_ir, &mut registry, &mut closure_ctx, file,
+            &mut all_ir, &mut registry, &mut closure_ctx, file, options.deep, options.stable,
         );
         phase.finish();
 

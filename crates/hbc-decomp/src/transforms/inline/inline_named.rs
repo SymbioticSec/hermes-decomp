@@ -14,6 +14,93 @@ use super::counting::{
 // Inline named variables (tmp*, closure_*, etc.) that are assigned once and used once,
 // AND eliminate dead assignments (assigned but never read).
 // Applied late in the pipeline after all naming passes.
+const MAX_ALIAS_PASSES: usize = 8;
+
+// Eliminate pure aliases of immutable bindings.
+//
+// A statement `X = V` where X has a generic inlinable name, is assigned exactly
+// once in the function, and V is a variable that is never assigned anywhere in the
+// function, is a pure alias of an immutable binding (a parameter, an import, a
+// module capture). Replace X by V everywhere, INCLUDING loop bodies, which is safe
+// because V never changes, and drop the alias definition. Applied to a fixed point
+// so chains (`a = b; b = require`) collapse. This removes the `tmp = require`,
+// `obj = x` aliases that the use-count inliner leaves inside loops.
+pub fn eliminate_immutable_aliases(mut stmts: Vec<Statement>) -> Vec<Statement> {
+    for _ in 0..MAX_ALIAS_PASSES {
+        let mut def_count: BTreeMap<String, usize> = BTreeMap::new();
+        let mut use_count: BTreeMap<String, usize> = BTreeMap::new();
+        count_var_defs_uses(&stmts, &mut def_count, &mut use_count);
+
+        let mut renames: BTreeMap<String, String> = BTreeMap::new();
+        collect_immutable_aliases(&stmts, &def_count, &mut renames);
+        if renames.is_empty() {
+            break;
+        }
+        resolve_transitive_renames(&mut renames);
+        // Substitute X -> V (values and targets); the alias definition then becomes
+        // `V = V` and is removed by the self-assignment cleanup.
+        crate::analysis::naming::rename_variables_in_stmts(&mut stmts, &renames);
+        stmts = cleanup_noise(stmts);
+    }
+    stmts
+}
+
+fn collect_immutable_aliases(
+    stmts: &[Statement],
+    def_count: &BTreeMap<String, usize>,
+    out: &mut BTreeMap<String, String>,
+) {
+    use crate::ir::Visitor;
+    struct C<'a> {
+        def_count: &'a BTreeMap<String, usize>,
+        out: &'a mut BTreeMap<String, String>,
+    }
+    impl<'b> Visitor<'b> for C<'_> {
+        fn visit_statement(&mut self, s: &'b Statement) {
+            let alias = match s {
+                Statement::Let { name, value, .. } => Some((name, value)),
+                Statement::Assign {
+                    target: AssignTarget::Variable(name),
+                    value,
+                } => Some((name, value)),
+                _ => None,
+            };
+            if let Some((name, Expression::Value(Value::Variable(v)))) = alias {
+                if v != name
+                    && is_inlinable_name(name)
+                    && self.def_count.get(name).copied() == Some(1)
+                    && self.def_count.get(v).copied().unwrap_or(0) == 0
+                    && !self.out.contains_key(name)
+                {
+                    self.out.insert(name.clone(), v.clone());
+                }
+            }
+            self.walk_statement(s);
+        }
+    }
+    let mut c = C { def_count, out };
+    for s in stmts {
+        c.visit_statement(s);
+    }
+}
+
+// Collapse alias chains so `X -> Y` becomes `X -> Z` when `Y -> Z` also holds.
+fn resolve_transitive_renames(renames: &mut BTreeMap<String, String>) {
+    let snapshot = renames.clone();
+    for target in renames.values_mut() {
+        let mut cur = target.clone();
+        let mut hops = 0;
+        while let Some(next) = snapshot.get(&cur) {
+            if next == &cur || hops > 32 {
+                break;
+            }
+            cur = next.clone();
+            hops += 1;
+        }
+        *target = cur;
+    }
+}
+
 pub fn inline_named_variables(stmts: Vec<Statement>) -> Vec<Statement> {
     // Phase 1: Count definitions and uses of all variables over the WHOLE
     // function (count_var_defs_uses recurses into nested blocks). The candidate

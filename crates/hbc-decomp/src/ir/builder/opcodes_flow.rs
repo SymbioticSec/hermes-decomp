@@ -254,6 +254,27 @@ pub fn handle_debugger() -> Option<FlowResult> {
     Some(FlowResult::Statement(Statement::Debugger))
 }
 
+// ThrowIfThisInitialized checks that a derived constructor has not already run
+// `super()`. ProfilePoint marks an instrumentation site. Neither has a JS form:
+// the first is implied by `super()` itself, the second is not source at all.
+// Dropping them beats leaving an unhandled-opcode comment behind.
+pub fn handle_ignored_guard() -> Option<FlowResult> {
+    Some(FlowResult::Noop)
+}
+
+// ThrowIfUndefined rDst, rValue: throws a ReferenceError when the value is
+// undefined, otherwise moves it. That is the temporal dead zone check Hermes
+// emits for a `let`/`const` read before its declaration. The guard is implicit in
+// the declaration itself, so only the move is reconstructed.
+pub fn handle_throw_if_undefined(inst: &Instruction) -> Option<FlowResult> {
+    let dst = get_reg(&inst.operands, 0)?;
+    let value = reg_expr(&inst.operands, 1)?;
+    Some(FlowResult::Statement(Statement::Assign {
+        target: crate::ir::AssignTarget::Register(dst),
+        value,
+    }))
+}
+
 // Handle Catch opcode.
 pub fn handle_catch(inst: &Instruction) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;

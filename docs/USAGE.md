@@ -35,14 +35,21 @@ hermes-decomp decompile app.hbc --modules 100-150,200
 hermes-decomp decompile app.hbc --module-name "Login*,Auth*"
 hermes-decomp decompile app.hbc --exclude-module-name "react*,lodash*"
 hermes-decomp decompile app.hbc --from-module 42 --module-depth 3
+hermes-decomp decompile app.hbc --deep
 hermes-decomp decompile app.hbc --function 5 --json
 ```
 
-Useful options: `--resolve-closures`, `--expand` / `--expand-depth N`,
-`--show-offsets`, `--no-strings`, `--no-propagate`, `--no-simplify`,
-`--no-structure`, `--check-dead-code`, `--assembly`, `--json`,
-`--modules`, `--module-name`, `--exclude-module-name`,
-`--from-module`, `--module-depth`, `--no-cache`.
+Useful options: `--deep`, `--stable`, `--resolve-closures`,
+`--expand` / `--expand-depth N`, `--show-offsets`, `--no-strings`,
+`--no-propagate`, `--no-simplify`, `--no-structure`, `--check-dead-code`,
+`--assembly`, `--json`, `--modules`, `--module-name`,
+`--exclude-module-name`, `--from-module`, `--module-depth`, `--no-cache`.
+
+`--deep` runs extra passes of inter-procedural and closure naming, so more
+parameters recover a real name instead of `argN`. It is slower and never
+overwrites a name already found, so the default output stays a subset of it.
+`--stable` favours names that stay the same across app builds, which keeps
+diffs between two versions smaller.
 
 Full-bundle `decompile` and runs with `-o` print **progress on stderr**.
 

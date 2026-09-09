@@ -6,9 +6,10 @@ use super::opcodes_environment::{
     handle_load_from_environment, handle_store_np_to_environment, handle_store_to_environment,
 };
 use super::opcodes_flow::{
-    handle_catch, handle_debugger, handle_get_next_pname, handle_jmp, handle_jmp_builtin_is,
-    handle_jmp_comparison, handle_jmp_cond, handle_jmp_typeof_is, handle_jmp_undefined, handle_ret,
-    handle_select_object, handle_throw, FlowResult,
+    handle_catch, handle_debugger, handle_get_next_pname, handle_ignored_guard, handle_jmp,
+    handle_jmp_builtin_is, handle_jmp_comparison, handle_jmp_cond, handle_jmp_typeof_is,
+    handle_jmp_undefined, handle_ret, handle_select_object, handle_throw,
+    handle_throw_if_undefined, FlowResult,
 };
 use super::opcodes_generator::{
     handle_complete_generator, handle_create_generator, handle_resume_generator,
@@ -76,8 +77,8 @@ fn try_env_handlers(
         "CreateEnvironment"
         | "CreateFunctionEnvironment"
         | "CreateTopLevelEnvironment"
-        | "CreateInnerEnvironment" => handle_create_environment(inst, env_map),
-        "GetEnvironment" | "GetParentEnvironment" => handle_get_environment(inst, env_map),
+        | "CreateInnerEnvironment" => handle_create_environment(name, inst, env_map),
+        "GetEnvironment" | "GetParentEnvironment" => handle_get_environment(name, inst, env_map),
         "GetClosureEnvironment" => handle_get_closure_environment(inst, env_map),
         "LoadFromEnvironment" | "LoadFromEnvironmentL" => {
             handle_load_from_environment(inst, env_map)
@@ -89,7 +90,7 @@ fn try_env_handlers(
             handle_store_np_to_environment(inst, env_map)
         }
         // Legacy aliases treated as GetEnvironment.
-        "LoadParentNoTraps" | "TypedLoadParent" => handle_get_environment(inst, env_map),
+        "LoadParentNoTraps" | "TypedLoadParent" => handle_get_environment(name, inst, env_map),
         _ => None,
     }
 }
@@ -181,6 +182,26 @@ fn try_prop_handlers(
             handle_put_by_id(inst, file, resolve_strings).map(FlowResult::Statement)
         }
         "GetByVal" => handle_get_by_val(inst).map(FlowResult::Statement),
+        "ToPropertyKey" => handle_to_property_key(inst).map(FlowResult::Statement),
+        "CreatePrivateName" => {
+            handle_create_private_name(inst, file, resolve_strings).map(FlowResult::Statement)
+        }
+        "GetOwnPrivateBySym" => {
+            handle_get_own_private_by_sym(inst).map(FlowResult::Statement)
+        }
+        "PutOwnPrivateBySym" => {
+            handle_put_own_private_by_sym(inst).map(FlowResult::Statement)
+        }
+        "AddOwnPrivateBySym" => {
+            handle_add_own_private_by_sym(inst).map(FlowResult::Statement)
+        }
+        "PrivateIsIn" => handle_private_is_in(inst).map(FlowResult::Statement),
+        "GetByValWithReceiver" => {
+            handle_get_by_val_with_receiver(inst).map(FlowResult::Statement)
+        }
+        "PutByValWithReceiver" => {
+            handle_put_by_val_with_receiver(inst).map(FlowResult::Statement)
+        }
         "PutByVal" | "PutByValLoose" | "PutByValStrict" => {
             handle_put_by_val(inst).map(FlowResult::Statement)
         }
@@ -236,9 +257,10 @@ fn try_call_handlers(
             handle_create_generator_closure(inst, file, resolve_strings).map(FlowResult::Statement)
         }
         "CallBuiltin" | "CallBuiltinLong" => {
-            handle_call_builtin(inst, frame_size, version).map(FlowResult::Statement)
+            handle_call_builtin(inst, frame_size, version).map(noreturn_builtin_result)
         }
-        "GetBuiltinClosure" => handle_get_builtin_closure(inst).map(FlowResult::Statement),
+        "GetBuiltinClosure" => handle_get_builtin_closure(inst, version).map(FlowResult::Statement),
+        "DirectEval" => handle_direct_eval(inst).map(FlowResult::Statement),
         "CallRequire" => handle_call_require(inst).map(FlowResult::Statement),
         _ => None,
     }
@@ -259,7 +281,7 @@ fn try_obj_handlers(
             handle_create_class(inst, file, resolve_strings, true).map(FlowResult::Statement)
         }
         "NewObjectWithParent" | "NewObjectWithBufferAndParent" => {
-            handle_new_object_with_parent(inst).map(FlowResult::Statement)
+            handle_new_object_with_parent(inst, file).map(FlowResult::Statement)
         }
         "NewObjectWithBuffer" | "NewObjectWithBufferLong" => {
             handle_new_object_with_buffer(inst, file, resolve_strings).map(FlowResult::Statement)
@@ -289,6 +311,7 @@ fn try_obj_handlers(
             handle_fast_array_store(inst).map(FlowResult::Statement)
         }
         "FastArrayPush" => handle_fast_array_push(inst).map(FlowResult::Statement),
+        "FastArrayAppend" => handle_fast_array_append(inst).map(FlowResult::Statement),
         "FastArrayLength" => handle_fast_array_length(inst).map(FlowResult::Statement),
         "CreateRegExp" => {
             handle_create_regexp(inst, file, resolve_strings).map(FlowResult::Statement)
@@ -380,7 +403,14 @@ fn try_flow_handlers(
             handle_jmp_builtin_is(name, inst, format)
         }
         "Ret" => handle_ret(inst),
-        "Throw" | "ThrowIfEmpty" => handle_throw(inst),
+        "Throw" => handle_throw(inst),
+        "ThrowIfThisInitialized" | "ProfilePoint" | "Unreachable" => handle_ignored_guard(),
+        // Both are dead-zone guards of the shape (destination, checked value):
+        // they raise only when the value is still empty or undefined, and
+        // otherwise move it. Routing them to the unconditional Throw handler
+        // threw the destination register and cut the block short on a path that
+        // does not actually raise.
+        "ThrowIfUndefined" | "ThrowIfEmpty" => handle_throw_if_undefined(inst),
         // Environment opcodes handled in try_env_handlers (need EnvRegMap).
         "SelectObject" => handle_select_object(inst),
         "Debugger" | "AsyncBreakCheck" => handle_debugger(),
@@ -399,6 +429,40 @@ fn try_flow_handlers(
         }
         _ => None,
     }
+}
+
+// `HermesBuiltin.throwTypeError` and `throwReferenceError` never return: they
+// raise. Emitted as an ordinary call, the block kept its fall through and every
+// statement after them stayed reachable, which produced dead branches that read
+// as real control flow. They become a throw of the error they raise, which both
+// prints as source and terminates the block.
+fn noreturn_builtin_result(stmt: Statement) -> FlowResult {
+    use crate::ir::{Expression, PropertyKey, Value};
+
+    if let Statement::Assign {
+        value: Expression::Call { callee, arguments },
+        ..
+    } = &stmt
+    {
+        let ctor = match callee.as_ref() {
+            Expression::Member {
+                property: PropertyKey::Ident(p) | PropertyKey::String(p),
+                ..
+            } => match p.as_str() {
+                "throwTypeError" => Some("TypeError"),
+                "throwReferenceError" => Some("ReferenceError"),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(ctor) = ctor {
+            return FlowResult::Throw(Expression::New {
+                callee: Box::new(Expression::member(Expression::Value(Value::Global), ctor)),
+                arguments: arguments.clone(),
+            });
+        }
+    }
+    FlowResult::Statement(stmt)
 }
 
 fn unknown_opcode(inst: &Instruction) -> FlowResult {

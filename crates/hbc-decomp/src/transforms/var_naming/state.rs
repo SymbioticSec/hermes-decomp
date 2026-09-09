@@ -28,8 +28,27 @@ impl VariableNamer {
             return;
         }
 
+        // A binding already carrying the suggested name keeps it, instead of being
+        // pushed off its own name by the reservation below.
+        if sanitize_name(base_name) == key {
+            self.used_names.insert(key.to_string());
+            self.inferred_names.insert(key.to_string(), key.to_string());
+            return;
+        }
+
         let name = self.get_unique_name(base_name);
         self.inferred_names.insert(key.to_string(), name);
+    }
+
+    /// Reserve a name that some other binding in this function already holds.
+    ///
+    /// Register naming hands out one name per live register, so two distinct
+    /// objects arrive here as `obj` and `obj1`. Suggestions were uniquified only
+    /// against names this pass had itself handed out, so suggesting `obj` for the
+    /// second one silently merged the two: an experiment config rendered as
+    /// `obj.variations = obj`, a self reference that loses the outer object.
+    pub fn reserve(&mut self, name: &str) {
+        self.used_names.insert(name.to_string());
     }
 
 
@@ -114,8 +133,20 @@ pub fn infer_name_from_expr(expr: &Expression) -> Option<String> {
             return Some("items".to_string());
         }
 
-        // Object literals → obj, config, options
-        Expression::Object { .. } => {
+        // Object literals: property-set signature (`url`+`query` → request) or `obj`.
+        Expression::Object { properties } => {
+            let mut props = HashSet::new();
+            for p in properties {
+                match &p.key {
+                    PropertyKey::Ident(k) | PropertyKey::String(k) => {
+                        props.insert(k.clone());
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(n) = crate::analysis::naming::infer_type_from_properties(&props) {
+                return Some(n.to_string());
+            }
             return Some("obj".to_string());
         }
 

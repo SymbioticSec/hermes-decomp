@@ -15,7 +15,7 @@ pub use declarations::{
     insert_declarations_with_outer,
 };
 pub use folding::{fold_array_literals, fold_object_literals};
-pub use inline_named::inline_named_variables;
+pub use inline_named::{eliminate_immutable_aliases, inline_named_variables};
 pub use reserved_words::rename_reserved_words;
 pub use strip_this::strip_hermes_this;
 

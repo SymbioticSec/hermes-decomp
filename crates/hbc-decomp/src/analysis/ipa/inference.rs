@@ -13,6 +13,17 @@ use std::collections::BTreeMap;
 // We collect all these hints and "vote" to find the most common name for each position.
 // We ignore generic names (like "p", "arg0") if better names are available.
 // Consistently used names (e.g., "email" appearing in 90% of calls) will win.
+// A generic callback role name injected from the method name (`.map` -> item,
+// `.then` -> result, `.reduce` -> acc, `.sort` -> a/b, `.replace` -> match_/offset).
+// These are guesses from the call, not from what the parameter actually is, so a
+// name derived from the parameter's own usage must win over them.
+pub(crate) fn is_callback_role_name(name: &str) -> bool {
+    matches!(
+        name,
+        "item" | "index" | "acc" | "a" | "b" | "result" | "match_" | "offset"
+    )
+}
+
 pub fn vote_on_names(sites: Vec<Vec<Option<String>>>) -> Vec<Option<String>> {
     let max_args = sites.iter().map(|s| s.len()).max().unwrap_or(0);
     let mut param_names_map: HashMap<usize, HashMap<String, usize>> = HashMap::new();
@@ -36,7 +47,16 @@ pub fn vote_on_names(sites: Vec<Vec<Option<String>>>) -> Vec<Option<String>> {
 
     for (arg_idx, final_name) in final_names.iter_mut().enumerate() {
         if let Some(name_counts) = param_names_map.get(&arg_idx) {
-            if let Some((name, _)) = name_counts.iter().max_by(|(n1, c1), (n2, c2)| c1.cmp(c2).then_with(|| n2.cmp(n1))) {
+            // Prefer a name derived from real signals over a callback role guess:
+            // pick the best non-role name first, and only fall back to a role name
+            // (item, result, ...) when nothing else was proposed for this slot.
+            let best = |role: bool| {
+                name_counts
+                    .iter()
+                    .filter(|(n, _)| is_callback_role_name(n) == role)
+                    .max_by(|(n1, c1), (n2, c2)| c1.cmp(c2).then_with(|| n2.cmp(n1)))
+            };
+            if let Some((name, _)) = best(false).or_else(|| best(true)) {
                 let mut chosen = name.clone();
                 if let Some(count) = used_names.get(name) {
                     chosen = format!("{}{}", name, count + 1);
@@ -139,6 +159,12 @@ fn walk_expr_for_params(
 }
 
 pub fn is_generic_name(name: &str) -> bool {
+    // Diagnostic capture names leaking into call-site hints (`forgotPassword(closure_1_6)`).
+    // These are not ground-truth parameter names.
+    if name.starts_with("closure_") || name.starts_with("outer") {
+        return true;
+    }
+
     // Check for generic prefixes like r0, arg1, var2, etc.
     let prefixes = ["r", "t", "arg", "var", "val", "tmp", "obj", "str", "num"];
     for &prefix in &prefixes {
@@ -158,6 +184,17 @@ pub fn is_generic_name(name: &str) -> bool {
         "tmp", "temp",
     ];
     if generic_vars.contains(&name) {
+        return true;
+    }
+
+    // Positional-index guesses (`arr[0]` -> "first"). Fine as a local variable
+    // name, but a positional guess must never seed or propagate a parameter name
+    // across functions: `first.join("")` fed to a callee is the joined value, not
+    // the array, so the callee's parameter is not "first". Treat these as generic
+    // so cross-function param inference rejects them (an honest argN beats a wrong
+    // "first").
+    let positional = ["first", "second", "third", "fourth", "last"];
+    if positional.contains(&name) {
         return true;
     }
 
@@ -269,6 +306,10 @@ mod tests {
         assert!(!is_generic_name("email"));
         assert!(!is_generic_name("response"));
         assert!(!is_generic_name("user"));
+        assert!(!is_generic_name("login"));
+        assert!(is_generic_name("closure_1_6"));
+        assert!(is_generic_name("closure_0"));
+        assert!(is_generic_name("first"));
     }
 
     #[test]

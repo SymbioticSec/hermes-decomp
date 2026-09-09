@@ -1,6 +1,6 @@
 // defineProperty-based module name inference.
 
-use super::default_roles;
+use crate::analysis::metro::registry::FactoryRoles;
 use super::inference::infer_from_expr;
 use crate::analysis::metro::detection::is_meaningful_name;
 use crate::ir::{target_to_key, Expression, PropertyKey, Statement, Value};
@@ -35,8 +35,8 @@ pub(super) fn infer_name_from_define_property(
         (1, 2)
     } else if arguments.len() >= 4 {
         let first_is_exports = match &arguments[0] {
-            Expression::Value(Value::Variable(n)) => default_roles().is_exports_param(n),
-            Expression::Value(Value::Parameter(idx)) if *idx == default_roles().exports_idx => true,
+            Expression::Value(Value::Variable(n)) => FactoryRoles::matches_exports_name(n),
+            Expression::Value(Value::Parameter(idx)) if FactoryRoles::is_exports_idx(*idx) => true,
             _ => false,
         };
         if first_is_exports { (1, 2) } else { (2, 3) }
@@ -167,8 +167,8 @@ pub(super) fn infer_name_from_all_define_properties(
                     1
                 } else if arguments.len() >= 4 {
                     let first_is_exports = match &arguments[0] {
-                        Expression::Value(Value::Variable(n)) => default_roles().is_exports_param(n),
-                        Expression::Value(Value::Parameter(idx)) if *idx == default_roles().exports_idx => true,
+                        Expression::Value(Value::Variable(n)) => FactoryRoles::matches_exports_name(n),
+                        Expression::Value(Value::Parameter(idx)) if FactoryRoles::is_exports_idx(*idx) => true,
                         _ => false,
                     };
                     if first_is_exports { 1 } else { 2 }

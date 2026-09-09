@@ -11,10 +11,24 @@ pub struct LoadFileParams {
     pub path: String,
 }
 
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct DecompileAllParams {
+    /// Deep naming: iterate naming to a fixed point and ground names in the bytecode
+    /// data flow. Slower; recovers more real names and cuts noise.
+    #[serde(default)]
+    #[schemars(description = "Deep naming mode (slower, more names recovered)")]
+    pub deep: bool,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FunctionIdParams {
     #[schemars(description = "Function ID (0-based index)")]
     pub function_id: u32,
+    /// Deep naming: iterate naming to a fixed point and ground names in the bytecode
+    /// data flow. Slower; recovers more real names and cuts noise.
+    #[serde(default)]
+    #[schemars(description = "Deep naming mode (slower, more names recovered)")]
+    pub deep: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
