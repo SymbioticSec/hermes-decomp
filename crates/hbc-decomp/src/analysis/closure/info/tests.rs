@@ -11,14 +11,36 @@ fn metro_roles_not_applied_in_get_slot_name() {
 
 #[test]
 fn metro_roles_applied_only_via_explicit_call() {
+    // Classic 5-param factory: arg4 is the dependency map.
+    let roles = crate::analysis::metro::FactoryRoles::from_param_count(5);
     let mut info = ClosureInfo::new();
     info.slots
         .insert(1, ClosureSlotValue::Variable("arg1".into()));
     info.slots
         .insert(4, ClosureSlotValue::Variable("arg4".into()));
-    info.apply_metro_param_roles();
+    info.apply_metro_param_roles(&roles);
     assert_eq!(info.get_slot_name(1), "require");
     assert_eq!(info.get_slot_name(4), "dependencyMap");
+}
+
+#[test]
+fn metro_roles_modern_layout_maps_module_and_exports() {
+    // Modern 7-param factory: arg4 is module, arg5 exports, arg6 deps, and
+    // arg2/arg3 are the interop helpers. The positional mapping used to label
+    // arg4 as dependencyMap, which broke export detection for these modules.
+    let roles = crate::analysis::metro::FactoryRoles::from_param_count(7);
+    let mut info = ClosureInfo::new();
+    for i in [1u32, 2, 3, 4, 5, 6] {
+        info.slots
+            .insert(i, ClosureSlotValue::Variable(format!("arg{i}")));
+    }
+    info.apply_metro_param_roles(&roles);
+    assert_eq!(info.get_slot_name(1), "require");
+    assert_eq!(info.get_slot_name(2), "importDefault");
+    assert_eq!(info.get_slot_name(3), "importAll");
+    assert_eq!(info.get_slot_name(4), "module");
+    assert_eq!(info.get_slot_name(5), "exports");
+    assert_eq!(info.get_slot_name(6), "dependencyMap");
 }
 
 #[test]

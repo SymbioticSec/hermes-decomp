@@ -68,8 +68,13 @@ fn collect_async_generators_from_expr(expr: &crate::ir::Expression, results: &mu
         Expression::Call { callee, arguments } => {
             // Check for any call with a generator function as first argument
             // In Babel async, this is the _asyncToGenerator(function*() {...}) pattern
-            if let Some(Expression::Function { id, is_generator: true, .. }) = arguments.first() {
-                results.push(id.0);
+            let helper = is_async_helper_callee(callee);
+            for arg in arguments {
+                if let Expression::Function { id, is_generator, .. } = arg {
+                    if *is_generator || helper {
+                        results.push(id.0);
+                    }
+                }
             }
             // Recurse into callee and arguments
             collect_async_generators_from_expr(callee, results);
@@ -119,6 +124,104 @@ fn collect_async_generators_from_expr(expr: &crate::ir::Expression, results: &mu
             }
         }
         _ => {}
+    }
+}
+
+fn is_async_helper_callee(callee: &crate::ir::Expression) -> bool {
+    use crate::ir::{Expression, PropertyKey, Value};
+    match callee {
+        Expression::Value(Value::Variable(n)) => looks_like_async_helper(n),
+        Expression::Member {
+            object,
+            property: PropertyKey::Ident(p) | PropertyKey::String(p),
+            ..
+        } => {
+            // `helper.default(...)` from a transpiled bundle, or a member whose own
+            // name is the helper: HBC >=97 emits `HermesBuiltin.spawnAsync(...)` for
+            // a native `async function`, so the property carries the name.
+            if p == "default" {
+                is_async_helper_callee(object)
+            } else {
+                looks_like_async_helper(p)
+            }
+        }
+        _ => false,
+    }
+}
+
+fn looks_like_async_helper(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.contains("async") || n.contains("generator") || n.contains("awaiter")
+}
+
+// `return asyncGeneratorStep(async () => { ... })()` → `return (async () => { ... })()`
+// once the inner function is already async. The Babel helper is then redundant.
+pub(super) fn strip_redundant_async_helpers(
+    all_ir: &mut BTreeMap<u32, Vec<Statement>>,
+    ctx: &crate::analysis::ClosureContext,
+) {
+    for body in all_ir.values_mut() {
+        for stmt in body.iter_mut() {
+            strip_redundant_async_helper_stmt(stmt, ctx);
+        }
+    }
+}
+
+fn strip_redundant_async_helper_stmt(stmt: &mut Statement, ctx: &crate::analysis::ClosureContext) {
+    match stmt {
+        Statement::Return(Some(e)) | Statement::Expr(e) | Statement::Throw(e) => {
+            strip_redundant_async_helper_expr(e, ctx);
+        }
+        Statement::Let { value, .. } | Statement::Assign { value, .. } => {
+            strip_redundant_async_helper_expr(value, ctx);
+        }
+        Statement::If { then_body, else_body, condition, .. } => {
+            strip_redundant_async_helper_expr(condition, ctx);
+            for s in then_body.iter_mut().chain(else_body.iter_mut()) {
+                strip_redundant_async_helper_stmt(s, ctx);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn strip_redundant_async_helper_expr(expr: &mut crate::ir::Expression, ctx: &crate::analysis::ClosureContext) {
+    use crate::ir::{Expression, FunctionId, Value};
+
+    if let Expression::Call { callee, arguments } = expr {
+        let empty_or_undef = arguments.is_empty()
+            || (arguments.len() == 1
+                && matches!(
+                    &arguments[0],
+                    Expression::Value(Value::Constant(crate::ir::Constant::Undefined))
+                ));
+        if empty_or_undef {
+            if let Expression::Call { callee: helper, arguments: inner_args } = callee.as_ref() {
+                if is_async_helper_callee(helper) {
+                    if let Some(Expression::Function { id, name, is_arrow, .. }) =
+                        inner_args.iter().find(|a| matches!(a, Expression::Function { .. }))
+                    {
+                        if ctx.is_async(id.0) {
+                            *expr = Expression::Call {
+                                callee: Box::new(Expression::Function {
+                                    id: FunctionId(id.0),
+                                    name: name.clone(),
+                                    is_arrow: *is_arrow,
+                                    is_async: true,
+                                    is_generator: false,
+                                }),
+                                arguments: Vec::new(),
+                            };
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        strip_redundant_async_helper_expr(callee, ctx);
+        for a in arguments.iter_mut() {
+            strip_redundant_async_helper_expr(a, ctx);
+        }
     }
 }
 
@@ -229,7 +332,12 @@ fn detect_async_wrapper_pattern(stmts: &[Statement]) -> Option<u32> {
     // return CALL(..., Function{B})(..arguments)
     if stmts.len() == 1 {
         if let Statement::Return(Some(outer_call)) = &stmts[0] {
-            return extract_wrapper_from_nested_call(outer_call);
+            if let Some(id) = extract_wrapper_from_nested_call(outer_call) {
+                return Some(id);
+            }
+            if let Some(id) = extract_spawn_async_body(outer_call) {
+                return Some(id);
+            }
         }
     }
 
@@ -258,7 +366,215 @@ fn detect_async_wrapper_pattern(stmts: &[Statement]) -> Option<u32> {
         }
     }
 
+    // Case 3: Hermes `_asyncToGenerator(fn).apply(this, arguments)` with a
+    // typeof-apply / applyArguments fallback, plus env-slot stores of the
+    // helper result. `_resolveGiftCode` is this shape (6+ statements).
+    detect_apply_forwarded_async_helper(stmts)
+}
+
+// `return HermesBuiltin.spawnAsync(function body, this, arguments)`, the shape a
+// native `async function` compiles to from HBC 97 on. The older shapes all pass
+// `arguments` spread or through `.apply`, so none of them match this one: here
+// `this` and `arguments` are plain positional arguments of the builtin. Without
+// this case the wrapper stayed in the output and the reconstructed body was
+// rendered nested inside it instead of becoming the function itself.
+fn extract_spawn_async_body(expr: &crate::ir::Expression) -> Option<u32> {
+    use crate::ir::{Expression, Value};
+
+    let Expression::Call { callee, arguments } = expr else {
+        return None;
+    };
+    if !is_async_helper_callee(callee) {
+        return None;
+    }
+    // The builtin takes the body first, then the receiver and the argument list.
+    let forwards_arguments = arguments
+        .iter()
+        .any(|a| matches!(a, Expression::Value(Value::Arguments)));
+    if !forwards_arguments {
+        return None;
+    }
+    arguments.iter().find_map(|a| match a {
+        Expression::Function { id, .. } => Some(id.0),
+        _ => None,
+    })
+}
+
+fn detect_apply_forwarded_async_helper(stmts: &[Statement]) -> Option<u32> {
+    let mut helper_var: Option<String> = None;
+    let mut inner_id: Option<u32> = None;
+    for stmt in stmts {
+        if let Some((name, id)) = async_helper_assignment(stmt) {
+            if helper_var.is_some() {
+                return None;
+            }
+            helper_var = Some(name);
+            inner_id = Some(id);
+        }
+    }
+    let var = helper_var?;
+    let id = inner_id?;
+    if stmts.iter().all(|s| {
+        async_helper_assignment(s).is_some() || is_apply_forward_boilerplate(s, &var)
+    }) {
+        Some(id)
+    } else {
+        None
+    }
+}
+
+fn async_helper_assignment(stmt: &Statement) -> Option<(String, u32)> {
+    use crate::ir::AssignTarget;
+    match stmt {
+        Statement::Let { name, value, .. } => {
+            extract_function_from_async_helper_call(value).map(|id| (name.clone(), id))
+        }
+        Statement::Assign {
+            target: AssignTarget::Variable(name),
+            value,
+        } => extract_function_from_async_helper_call(value).map(|id| (name.clone(), id)),
+        _ => None,
+    }
+}
+
+fn extract_function_from_async_helper_call(expr: &crate::ir::Expression) -> Option<u32> {
+    use crate::ir::Expression;
+    let Expression::Call { callee, arguments } = expr else {
+        return extract_generator_from_call(expr);
+    };
+    if !is_async_helper_callee(callee) {
+        return extract_generator_from_call(expr);
+    }
+    for arg in arguments {
+        if let Expression::Function { id, .. } = arg {
+            return Some(id.0);
+        }
+    }
     None
+}
+
+fn is_apply_forward_boilerplate(stmt: &Statement, helper_var: &str) -> bool {
+    use crate::ir::{AssignTarget, Expression, Value};
+    match stmt {
+        Statement::Comment(_) => true,
+        Statement::Let { name, value, .. } => {
+            is_apply_forward_value(name, value, helper_var)
+        }
+        Statement::Assign {
+            target: AssignTarget::Variable(name),
+            value,
+        } => is_apply_forward_value(name, value, helper_var),
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            is_typeof_apply_check(condition)
+                && then_body
+                    .iter()
+                    .all(|s| is_apply_forward_boilerplate(s, helper_var))
+                && else_body
+                    .iter()
+                    .all(|s| is_apply_forward_boilerplate(s, helper_var))
+        }
+        Statement::Return(Some(e)) => {
+            is_arguments_forward_call(e, helper_var)
+                || matches!(e, Expression::Value(Value::Variable(n)) if n == helper_var || n == "applyArgumentsResult" || n == "apply")
+                || is_apply_or_apply_arguments_call(e, helper_var)
+        }
+        Statement::Expr(e) => is_apply_or_apply_arguments_call(e, helper_var),
+        _ => false,
+    }
+}
+
+fn is_apply_forward_value(name: &str, value: &crate::ir::Expression, helper_var: &str) -> bool {
+    use crate::ir::{Expression, PropertyKey, Value};
+    if matches!(value, Expression::Value(Value::This)) {
+        return true;
+    }
+    if is_env_slot_name(name)
+        && matches!(value, Expression::Value(Value::Variable(v)) if v == helper_var)
+    {
+        return true;
+    }
+    if is_env_slot_name(name)
+        && matches!(
+            value,
+            Expression::Value(Value::Constant(
+                crate::ir::Constant::Integer(0) | crate::ir::Constant::Undefined
+            ))
+        )
+    {
+        return true;
+    }
+    if matches!(
+        value,
+        Expression::Member {
+            object,
+            property: PropertyKey::Ident(p) | PropertyKey::String(p),
+            ..
+        } if p == "apply"
+            && matches!(object.as_ref(), Expression::Value(Value::Variable(v)) if v == helper_var)
+    ) {
+        return true;
+    }
+    is_apply_or_apply_arguments_call(value, helper_var)
+}
+
+fn is_env_slot_name(name: &str) -> bool {
+    name.starts_with("closure_")
+        || (name.len() >= 2
+            && name.starts_with('c')
+            && name[1..].chars().all(|c| c.is_ascii_digit()))
+}
+
+fn is_typeof_apply_check(expr: &crate::ir::Expression) -> bool {
+    use crate::ir::{BinaryOp, Constant, Expression, UnaryOp, Value};
+    let Expression::Binary {
+        op: BinaryOp::Eq | BinaryOp::StrictEq | BinaryOp::Neq | BinaryOp::StrictNeq,
+        left,
+        right,
+    } = expr
+    else {
+        return false;
+    };
+    let is_unknown = |e: &Expression| {
+        matches!(
+            e,
+            Expression::Value(Value::Constant(Constant::String(s)))
+                if s == "unknown" || s == "undefined" || s == "function"
+        )
+    };
+    let is_typeof = |e: &Expression| {
+        matches!(e, Expression::Unary { op: UnaryOp::TypeOf, .. })
+    };
+    (is_typeof(left) && is_unknown(right)) || (is_typeof(right) && is_unknown(left))
+}
+
+fn is_apply_or_apply_arguments_call(expr: &crate::ir::Expression, helper_var: &str) -> bool {
+    use crate::ir::{Expression, PropertyKey, Value};
+    let Expression::Call { callee, arguments } = expr else {
+        return false;
+    };
+    if is_arguments_forward_call(expr, helper_var) {
+        return true;
+    }
+    match callee.as_ref() {
+        Expression::Value(Value::Variable(n)) if n == "apply" || n == helper_var => {
+            arguments.iter().any(|a| match a {
+                Expression::Value(Value::Arguments) => true,
+                Expression::Spread(inner) => {
+                    matches!(&**inner, Expression::Value(Value::Arguments))
+                }
+                _ => false,
+            })
+        }
+        Expression::Member {
+            property: PropertyKey::Ident(p) | PropertyKey::String(p),
+            ..
+        } if p == "applyArguments" || p == "apply" => true,
+        _ => false,
+    }
 }
 
 // Extract generator function ID from a nested call pattern (after inlining):
@@ -389,4 +705,98 @@ fn extract_single_return_function_id(stmts: &[Statement]) -> Option<u32> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{
+        AssignTarget, BinaryOp, Constant, Expression, FunctionId, PropertyKey, Statement,
+        UnaryOp, Value, VarKind,
+    };
+
+    fn async_helper_call(inner: u32) -> Expression {
+        Expression::Call {
+            callee: Box::new(Expression::Value(Value::Variable(
+                "asyncGeneratorStep".into(),
+            ))),
+            arguments: vec![Expression::Function {
+                id: FunctionId(inner),
+                name: None,
+                is_arrow: true,
+                is_async: true,
+                is_generator: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn detects_hermes_apply_forward_wrapper() {
+        let apply_member = Expression::Member {
+            object: Box::new(Expression::Value(Value::Variable("tmp".into()))),
+            property: PropertyKey::Ident("apply".into()),
+            optional: false,
+        };
+        let typeof_apply = Expression::Unary {
+            op: UnaryOp::TypeOf,
+            operand: Box::new(Expression::Value(Value::Variable("apply".into()))),
+        };
+        let stmts = vec![
+            Statement::Assign {
+                target: AssignTarget::Variable("self".into()),
+                value: Expression::Value(Value::This),
+            },
+            Statement::Let {
+                name: "tmp".into(),
+                value: async_helper_call(42),
+                kind: VarKind::Const,
+            },
+            Statement::Assign {
+                target: AssignTarget::Variable("closure_18".into()),
+                value: Expression::Value(Value::Variable("tmp".into())),
+            },
+            Statement::Let {
+                name: "apply".into(),
+                value: apply_member,
+                kind: VarKind::Const,
+            },
+            Statement::If {
+                condition: Expression::Binary {
+                    op: BinaryOp::StrictEq,
+                    left: Box::new(typeof_apply),
+                    right: Box::new(Expression::Value(Value::Constant(Constant::String(
+                        "unknown".into(),
+                    )))),
+                },
+                then_body: vec![Statement::Let {
+                    name: "applyArgumentsResult".into(),
+                    value: Expression::Call {
+                        callee: Box::new(Expression::Member {
+                            object: Box::new(Expression::Value(Value::Variable(
+                                "HermesBuiltin".into(),
+                            ))),
+                            property: PropertyKey::Ident("applyArguments".into()),
+                            optional: false,
+                        }),
+                        arguments: vec![Expression::Value(Value::Variable("self".into()))],
+                    },
+                    kind: VarKind::Let,
+                }],
+                else_body: vec![Statement::Assign {
+                    target: AssignTarget::Variable("applyArgumentsResult".into()),
+                    value: Expression::Call {
+                        callee: Box::new(Expression::Value(Value::Variable("apply".into()))),
+                        arguments: vec![
+                            Expression::Value(Value::Variable("self".into())),
+                            Expression::Value(Value::Arguments),
+                        ],
+                    },
+                }],
+            },
+            Statement::Return(Some(Expression::Value(Value::Variable(
+                "applyArgumentsResult".into(),
+            )))),
+        ];
+        assert_eq!(detect_async_wrapper_pattern(&stmts), Some(42));
+    }
 }

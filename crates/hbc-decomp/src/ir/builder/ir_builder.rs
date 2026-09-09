@@ -121,6 +121,20 @@ impl<'a> IRBuilder<'a> {
         let mut current_stmts: Vec<Statement> = Vec::new();
         // Flow-insensitive last-write map: env register → nesting level.
         let mut env_map = EnvRegMap::new();
+        // Whether the function creates the environment it runs in. An additional
+        // environment built later (CreateTopLevelEnvironment) does not count: the
+        // function still runs in the enclosing one.
+        let owns_current_env = instructions.iter().any(|inst| {
+            let name = self
+                .format
+                .definitions
+                .get(inst.opcode as usize)
+                .map(|d| d.name.as_str())
+                .unwrap_or("");
+            name == "CreateFunctionEnvironment"
+                || (name == "CreateEnvironment" && inst.operands.len() < 3)
+        });
+        env_map.set_borrows_current_env(!owns_current_env);
 
         for inst in instructions {
             if let Some(&block_id) = offset_to_block.get(&inst.offset) {

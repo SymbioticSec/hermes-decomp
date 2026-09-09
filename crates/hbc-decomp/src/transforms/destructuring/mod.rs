@@ -1,4 +1,5 @@
 mod arrays;
+mod babel;
 mod iterator;
 mod transformer;
 mod utils;
@@ -6,6 +7,7 @@ mod v98;
 
 use crate::ir::Statement;
 
+pub use babel::reconstruct_babel_array_destructuring;
 pub use v98::reconstruct_v98_array_destructuring;
 use arrays::transform_rest_destructuring;
 pub use iterator::detect_iterator_destructuring;

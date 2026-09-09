@@ -43,6 +43,7 @@ impl HermesService {
             path: params.path,
             bytes,
             pipeline_ctx: None,
+            pipeline_deep: false,
         });
         Ok(CallToolResult::success(vec![ContentBlock::text(info)]))
     }
@@ -77,6 +78,8 @@ impl HermesService {
                 simplify: params.simplify,
                 recover_structures: params.recover_structures,
                 assembly_mode: params.assembly,
+                deep: false,
+                stable: false,
             };
             let code = if params.resolve_closures {
                 let closure_ctx =
@@ -111,7 +114,7 @@ impl HermesService {
         Parameters(params): Parameters<FunctionIdParams>,
     ) -> Result<CallToolResult, McpError> {
         self.with_file_mut(|loaded| {
-            loaded.ensure_pipeline()?;
+            loaded.ensure_pipeline(params.deep)?;
             let pipeline = loaded.pipeline_ctx.as_ref().unwrap();
             let code = pipeline.generate_function_code(&loaded.file, params.function_id);
             Ok(CallToolResult::success(vec![ContentBlock::text(code)]))
@@ -121,9 +124,15 @@ impl HermesService {
     #[tool(
         description = "Decompile all functions with full pipeline (IPA, closures, ESM). Groups output by Metro module. May take several seconds for large bundles."
     )]
-    fn decompile_all(&self) -> Result<CallToolResult, McpError> {
+    fn decompile_all(
+        &self,
+        Parameters(params): Parameters<DecompileAllParams>,
+    ) -> Result<CallToolResult, McpError> {
         self.with_file(|loaded| {
-            let opts = DecompileOptionsV2::optimized();
+            let opts = DecompileOptionsV2 {
+                deep: params.deep,
+                ..DecompileOptionsV2::optimized()
+            };
             let code = hbc_decomp::decompile_all_v2_with_closures(
                 &loaded.file,
                 &loaded.format,
@@ -224,7 +233,7 @@ impl HermesService {
         self.with_file_mut(|loaded| {
             // Use the full pipeline so module names and exports are populated
             // (the lightweight registry only runs detection, no naming/exports).
-            loaded.ensure_pipeline()?;
+            loaded.ensure_pipeline(false)?;
             let registry = &loaded.pipeline_ctx.as_ref().unwrap().registry;
             let mut modules: Vec<_> = registry.modules.values().collect();
             modules.sort_by_key(|m| m.module_id);
@@ -254,7 +263,7 @@ impl HermesService {
     ) -> Result<CallToolResult, McpError> {
         self.with_file_mut(|loaded| {
             // Full pipeline so the tree carries real module names.
-            loaded.ensure_pipeline()?;
+            loaded.ensure_pipeline(false)?;
             let registry = &loaded.pipeline_ctx.as_ref().unwrap().registry;
             let tree = registry.get_dependency_tree(params.module_id, params.depth);
             Ok(CallToolResult::success(vec![ContentBlock::text(tree.format(0))]))
@@ -553,7 +562,7 @@ impl HermesService {
         Parameters(params): Parameters<DecompileModuleParams>,
     ) -> Result<CallToolResult, McpError> {
         self.with_file_mut(|loaded| {
-            loaded.ensure_pipeline()?;
+            loaded.ensure_pipeline(false)?;
             let pipeline = loaded.pipeline_ctx.as_ref().unwrap();
             let module = pipeline
                 .registry
@@ -579,7 +588,7 @@ impl HermesService {
         self.with_file_mut(|loaded| {
             // Use the full pipeline for exports (basic registry may have empty exports
             // since export analysis needs full IR)
-            loaded.ensure_pipeline()?;
+            loaded.ensure_pipeline(false)?;
             let pipeline = loaded.pipeline_ctx.as_ref().unwrap();
             let module = pipeline
                 .registry

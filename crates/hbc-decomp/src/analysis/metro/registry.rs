@@ -122,15 +122,43 @@ impl FactoryRoles {
     }
 
     pub fn is_deps_param(&self, name: &str) -> bool {
-        if let Some(idx) = self.deps_idx {
-            self.param_name_matches_idx(name, idx)
-        } else {
-            // Heuristic: if param index >= exports_idx + 1, it could be deps
-            if let Some(p_idx) = Self::extract_param_index(name) {
-                return p_idx > self.exports_idx;
-            }
-            false
+        match self.deps_idx {
+            Some(idx) => self.param_name_matches_idx(name, idx),
+            None => false,
         }
+    }
+
+    // True for `exports` / `_exports` / `arg3` (classic) / `arg5` (modern 7-param).
+    pub fn matches_exports_name(name: &str) -> bool {
+        Self::standard().is_exports_param(name) || Self::from_param_count(7).is_exports_param(name)
+    }
+
+    // True for `module` / `_module` / `arg2` (classic) / `arg4` (modern).
+    pub fn matches_module_name(name: &str) -> bool {
+        Self::standard().is_module_param(name) || Self::from_param_count(7).is_module_param(name)
+    }
+
+    // Require is always index 1. Also treat Metro interop loaders as require-like
+    // so `importDefault(id)` / `importAll(id)` resolve the same way.
+    pub fn matches_require_loader_name(name: &str) -> bool {
+        let modern = Self::from_param_count(7);
+        Self::standard().is_require_param(name)
+            || modern.is_import_default_param(name)
+            || modern.is_import_all_param(name)
+    }
+
+    pub fn is_exports_idx(idx: u32) -> bool {
+        idx == Self::standard().exports_idx || idx == Self::from_param_count(7).exports_idx
+    }
+
+    pub fn is_module_idx(idx: u32) -> bool {
+        idx == Self::standard().module_idx || idx == Self::from_param_count(7).module_idx
+    }
+
+    // Classic 5-param deps at 4, modern 7-param deps at 6. Never 5 (modern exports).
+    pub fn is_deps_idx(idx: u32) -> bool {
+        Self::from_param_count(5).deps_idx == Some(idx)
+            || Self::from_param_count(7).deps_idx == Some(idx)
     }
 
     // Handles canonical role names ("require", "exports", "module", "global",
@@ -151,6 +179,14 @@ impl FactoryRoles {
         };
         if let Some(lit) = literal {
             if name == lit {
+                return true;
+            }
+            // Reserved-word / builtin collision escaped form: register naming
+            // prefixes a `_` when a factory role name collides (`require` ->
+            // `_require`, `exports` -> `_exports`, ...). Still the same role, so
+            // require/exports resolution must recognize it, otherwise a captured
+            // `_require(id)` is never resolved to its module.
+            if name.strip_prefix('_') == Some(lit) {
                 return true;
             }
         }
@@ -269,6 +305,25 @@ mod tests {
         assert_eq!((r.module_idx, r.exports_idx), (2, 3));
         assert_eq!(r.deps_idx, Some(4));
         assert!(r.is_deps_param("arg4"));
+    }
+
+    #[test]
+    fn dual_layout_name_matchers() {
+        assert!(FactoryRoles::matches_exports_name("arg3"));
+        assert!(FactoryRoles::matches_exports_name("arg5"));
+        assert!(FactoryRoles::matches_exports_name("exports"));
+        assert!(!FactoryRoles::matches_exports_name("arg4"));
+        assert!(FactoryRoles::matches_module_name("arg2"));
+        assert!(FactoryRoles::matches_module_name("arg4"));
+        assert!(!FactoryRoles::matches_module_name("arg5"));
+        assert!(FactoryRoles::matches_require_loader_name("require"));
+        assert!(FactoryRoles::matches_require_loader_name("arg1"));
+        assert!(FactoryRoles::matches_require_loader_name("importDefault"));
+        assert!(FactoryRoles::matches_require_loader_name("importAll"));
+        assert!(FactoryRoles::is_deps_idx(4));
+        assert!(FactoryRoles::is_deps_idx(6));
+        assert!(!FactoryRoles::is_deps_idx(5));
+        assert!(!FactoryRoles::from_param_count(7).is_deps_param("arg4"));
     }
 
     #[test]

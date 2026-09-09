@@ -19,7 +19,8 @@ use std::collections::HashMap;
 use std::collections::BTreeMap;
 
 use inference::infer_module_name_from_stmts;
-use phases::{propagate_module_names_to_closures, propagate_reexport_names, reverse_require_naming};
+use phases::{propagate_reexport_names, reverse_require_naming};
+pub(crate) use phases::propagate_module_names_to_closures;
 use require_resolution::resolve_require_module;
 
 // Maximum iterations for dependency-chain module naming.
@@ -32,22 +33,10 @@ const MAX_PARENT_CHAIN_DEPTH: usize = 10;
 pub(super) fn is_dep_array_name(name: &str, roles: &FactoryRoles) -> bool {
     roles.is_deps_param(name)
         || name == "dependencyMap"
+        || name == "_dependencyMap"
         || name == "deps"
-        || name.starts_with("dep")
-}
-
-pub(super) fn is_dep_array_param_idx(p_idx: u32, roles: &FactoryRoles) -> bool {
-    if let Some(deps_idx) = roles.deps_idx {
-        p_idx == deps_idx
-    } else {
-        // Fallback: anything above exports (index 3) is likely deps
-        p_idx > roles.exports_idx
-    }
-}
-
-// Default factory roles (used when we don't have a specific module context).
-pub(super) fn default_roles() -> FactoryRoles {
-    FactoryRoles::standard()
+        || (name.starts_with("dependencyMap") && name["dependencyMap".len()..].chars().all(|c| c.is_ascii_digit()))
+        || (name.starts_with("deps") && name[4..].chars().all(|c| c.is_ascii_digit()))
 }
 
 pub(super) fn is_meaningful_require_name(name: &str) -> bool {
@@ -93,7 +82,17 @@ pub fn propagate_module_names(
     let inferred_count = inferred_names.len();
     for (mod_id, name) in &inferred_names {
         if let Some(module) = registry.modules.get_mut(mod_id) {
-            if module.name.is_none() && is_meaningful_name(name) {
+            // A name that describes an action names one of the module's functions,
+            // not the module. Inference reaches a module through whatever single
+            // export it managed to see, so `exports.getAndroidId = ...` handed that
+            // key to all of expo-application and captures printed
+            // `getAndroidId.nativeApplicationVersion`, naming a function and asking
+            // it for a field it does not have. This runs before names reach closure
+            // slots, so the honest id is what gets propagated.
+            if module.name.is_none()
+                && is_meaningful_name(name)
+                && !crate::analysis::metro::names_an_action(name)
+            {
                 module.name = Some(name.clone());
             }
         }
@@ -156,6 +155,32 @@ pub fn propagate_module_names(
     let named_total = registry.modules.values().filter(|m| m.name.is_some()).count();
     let total = registry.modules.len();
     log::debug!("[pipeline] module naming: {named_total}/{total} named ({inferred_count} inferred, {reexport_count} re-export)");
+
+    // Per-module trace: for each module, its resolved name (or UNNAMED) plus the
+    // signals available to name it (dependencies, export keys). This makes it clear
+    // WHY a given id stayed `module_N` (no meaningful export, anonymous factory,
+    // deps all unnamed, ...). Enable with `--log modname=trace`.
+    if log::log_enabled!(target: "modname", log::Level::Trace) {
+        let mut ids: Vec<_> = registry.modules.keys().copied().collect();
+        ids.sort();
+        for id in ids {
+            let m = &registry.modules[&id];
+            let mut exports: Vec<&String> = m.exports.keys().collect();
+            exports.sort();
+            match &m.name {
+                Some(name) => log::trace!(
+                    target: "modname",
+                    "module {id}: NAMED {name:?} (fn {}, {} deps, exports {:?})",
+                    m.function_id, m.dependencies.len(), exports
+                ),
+                None => log::trace!(
+                    target: "modname",
+                    "module {id}: UNNAMED (fn {}, deps {:?}, exports {:?})",
+                    m.function_id, m.dependencies, exports
+                ),
+            }
+        }
+    }
 
     // PHASE 1: Detect closure_N = require(id) and propagate module names to closure slots
     propagate_module_names_to_closures(functions, registry, closure_ctx);

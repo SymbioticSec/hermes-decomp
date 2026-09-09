@@ -108,9 +108,45 @@ pub fn handle_create_class(
 pub const EXTENDS_MARKER: &str = "__hermes_class_extends__";
 
 // Handle NewObjectWithParent opcode → `Object.create(parent)`.
-pub fn handle_new_object_with_parent(inst: &Instruction) -> Option<Statement> {
+pub fn handle_new_object_with_parent(
+    inst: &Instruction,
+    file: &BytecodeFile,
+) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
     let parent = reg_expr(&inst.operands, 1)?;
+
+    // NewObjectWithBufferAndParent carries the same shape id and value buffer
+    // offset as NewObjectWithBuffer, plus the parent: `Arg3 is the index in the
+    // object shape table, Arg4 is the offset in the object val buffer table`.
+    // Reading only the parent dropped every literal property the object was born
+    // with, so the properties are rebuilt and copied onto the new object.
+    if inst.operands.len() >= 4 {
+        if let Some(properties) = buffer_object_properties(inst, file, 2, 3) {
+            if !properties.is_empty() {
+                let object_create = Expression::member(
+                    Expression::member(Expression::Value(crate::ir::Value::Global), "Object"),
+                    "create",
+                );
+                let assign = Expression::member(
+                    Expression::member(Expression::Value(crate::ir::Value::Global), "Object"),
+                    "assign",
+                );
+                return Some(Statement::Assign {
+                    target: AssignTarget::Register(dst),
+                    value: Expression::Call {
+                        callee: Box::new(assign),
+                        arguments: vec![
+                            Expression::Call {
+                                callee: Box::new(object_create),
+                                arguments: vec![parent],
+                            },
+                            Expression::Object { properties },
+                        ],
+                    },
+                });
+            }
+        }
+    }
 
     // `Object.create(parent)`, a single genuine argument, NOT the Hermes call
     // ABI (no `this` receiver: NewObjectWithParent is its own opcode, not a Call).
@@ -129,6 +165,35 @@ pub fn handle_new_object_with_parent(inst: &Instruction) -> Option<Statement> {
             arguments: vec![parent],
         },
     })
+}
+
+// Read the (key, value) pairs an object-with-buffer opcode was built from:
+// `shape_op` indexes the object shape table (key buffer offset plus property
+// count) and `val_op` is the offset into the literal value buffer.
+fn buffer_object_properties(
+    inst: &Instruction,
+    file: &BytecodeFile,
+    shape_op: usize,
+    val_op: usize,
+) -> Option<Vec<ObjectProperty>> {
+    let shape_id = inst.operands.get(shape_op)?.value.as_u32()?;
+    let val_offset = inst.operands.get(val_op)?.value.as_u32()?;
+    let shape = file.shape_at(shape_id)?;
+    let keys = file
+        .read_key_buffer_series(shape.key_buffer_offset, shape.num_props)
+        .ok()?;
+    let vals = file
+        .read_value_buffer_series(val_offset, shape.num_props)
+        .ok()?;
+    Some(
+        keys.into_iter()
+            .zip(vals)
+            .map(|(key, val)| ObjectProperty {
+                key: literal_to_property_key(&key),
+                value: literal_to_expression(&val),
+            })
+            .collect(),
+    )
 }
 
 // Handle NewObjectWithBuffer opcode.
@@ -167,7 +232,7 @@ pub fn handle_new_object_with_buffer(
             file.read_key_buffer_series(key_offset, num_props),
             file.read_value_buffer_series(val_offset, num_props),
         ) {
-            for (key, val) in keys.into_iter().zip(vals.into_iter()) {
+            for (key, val) in keys.into_iter().zip(vals) {
                 properties.push(ObjectProperty {
                     key: literal_to_property_key(&key),
                     value: literal_to_expression(&val),
@@ -552,5 +617,17 @@ pub fn handle_put_own_getter_setter_by_val(inst: &Instruction) -> Option<Stateme
                 ],
             },
         ],
+    }))
+}
+
+// FastArrayAppend rDst, rSrc: append one fast array onto another. The JS this
+// lowers from is a spread push, so it is reconstructed as one.
+pub fn handle_fast_array_append(inst: &Instruction) -> Option<Statement> {
+    let dst = reg_expr(&inst.operands, 0)?;
+    let src = reg_expr(&inst.operands, 1)?;
+
+    Some(Statement::Expr(Expression::Call {
+        callee: Box::new(Expression::member(dst, "push")),
+        arguments: vec![Expression::Spread(Box::new(src))],
     }))
 }

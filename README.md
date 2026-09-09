@@ -34,6 +34,7 @@ cd hermes-decomp && cargo build --release
 hermes-decomp info app.hbc
 hermes-decomp disasm app.hbc --function 5 --info --show-offsets
 hermes-decomp decompile app.hbc -o out.js          # progress on stderr
+hermes-decomp decompile app.hbc --deep -o out.js   # recover more names, slower
 hermes-decomp decompile app.hbc --function 42
 hermes-decomp tui app.hbc
 hermes-decomp xref app.hbc --query "loginWithToken"

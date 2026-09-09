@@ -64,7 +64,10 @@ pub fn binary_fingerprint() -> [u8; 32] {
 
 // Only these options actually change the built context (see build_with_options).
 fn options_key(options: &DecompileOptionsV2) -> u32 {
-    (options.assembly_mode as u32) | ((options.include_offsets as u32) << 1)
+    (options.assembly_mode as u32)
+        | ((options.include_offsets as u32) << 1)
+        | ((options.deep as u32) << 2)
+        | ((options.stable as u32) << 3)
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

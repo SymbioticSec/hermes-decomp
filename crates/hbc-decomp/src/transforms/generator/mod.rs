@@ -10,7 +10,7 @@ pub mod transform;
 pub use analysis::*;
 pub use cleanup::cleanup_generator_comments;
 pub use state_machine::simplify_state_machine;
-pub use state_machine_v98::reconstruct_generator_v98;
+pub use state_machine_v98::{reconstruct_generator_v98, try_reconstruct_generator_v98};
 
 use transform::*;
 

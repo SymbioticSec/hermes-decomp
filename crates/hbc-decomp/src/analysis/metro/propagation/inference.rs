@@ -1,6 +1,7 @@
-use super::{default_roles, is_meaningful_require_name};
+use super::is_meaningful_require_name;
 use super::define_property::{infer_name_from_all_define_properties, infer_name_from_define_property};
 use crate::analysis::metro::detection::is_meaningful_name;
+use crate::analysis::metro::registry::FactoryRoles;
 use crate::ir::{target_to_key, Expression, PropertyKey, Statement, Value};
 use std::collections::HashMap;
 use std::collections::BTreeMap;
@@ -30,15 +31,13 @@ pub(super) fn infer_module_name_from_stmts(
         match stmt {
             Statement::Assign { target, value } => {
                 let is_export = match target {
-                    crate::ir::AssignTarget::Variable(n) => default_roles().is_exports_param(n),
+                    crate::ir::AssignTarget::Variable(n) => FactoryRoles::matches_exports_name(n),
                     crate::ir::AssignTarget::Member { object, .. } => match object {
                         Expression::Value(Value::Variable(n)) => {
-                            default_roles().is_module_param(n) || default_roles().is_exports_param(n)
+                            FactoryRoles::matches_module_name(n) || FactoryRoles::matches_exports_name(n)
                         }
                         Expression::Value(Value::Parameter(idx)) => {
-                            *idx == default_roles().module_idx
-                                || *idx == default_roles().exports_idx
-                                || *idx == 2
+                            FactoryRoles::is_module_idx(*idx) || FactoryRoles::is_exports_idx(*idx)
                         }
                         _ => false,
                     },
@@ -114,7 +113,7 @@ pub(super) fn infer_module_name_from_stmts(
             let is_default_export = match target {
                 crate::ir::AssignTarget::Member { object, property } => {
                     property == "default" && match object {
-                        Expression::Value(Value::Variable(n)) => default_roles().is_exports_param(n),
+                        Expression::Value(Value::Variable(n)) => FactoryRoles::matches_exports_name(n),
                         _ => false,
                     }
                 }
@@ -196,10 +195,10 @@ pub(super) fn infer_module_name_from_stmts(
             if let crate::ir::AssignTarget::Member { object, property } = target {
                 let is_exports = match object {
                     Expression::Value(Value::Variable(obj_name)) => {
-                        default_roles().is_exports_param(obj_name)
+                        FactoryRoles::matches_exports_name(obj_name)
                     }
                     Expression::Value(Value::Parameter(idx)) => {
-                        *idx == default_roles().exports_idx || *idx == 2
+                        FactoryRoles::is_exports_idx(*idx) || FactoryRoles::is_module_idx(*idx)
                     }
                     _ => false,
                 };

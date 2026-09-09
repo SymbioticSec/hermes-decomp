@@ -1,3 +1,4 @@
+mod arg_hints;
 mod body_hints;
 mod error_string_hints;
 mod graph;
@@ -126,7 +127,17 @@ pub fn run_ipa(
             .entry(func_id)
             .or_insert_with(|| vec![None; structural.len()]);
         for (i, name) in structural.into_iter().enumerate() {
-            if i < existing.len() && existing[i].is_none() {
+            if i >= existing.len() {
+                continue;
+            }
+            // A body-derived name fills an empty slot, and also overrides a callback
+            // role guess (item, result, ...) from the call sites when the body found
+            // a real name: the parameter's own usage is a better source than the
+            // method that received it.
+            let override_role = matches!(&name, Some(n) if !inference::is_callback_role_name(n))
+                && matches!(&existing[i], Some(e) if inference::is_callback_role_name(e));
+            let existing_placeholder = matches!(&existing[i], Some(e) if is_generic_name(e));
+            if existing[i].is_none() || override_role || existing_placeholder {
                 existing[i] = name;
             }
         }
@@ -281,5 +292,66 @@ pub fn run_ipa(
     let all_funcs: HashSet<u32> = functions.keys().cloned().collect();
     analysis.dead_code = all_funcs.difference(&reachable).cloned().collect();
 
+    // Diagnostics: report unresolved parameter slots so `--log ipa=trace` shows
+    // where naming stopped. An unresolved slot is NOT automatically a bug: Hermes
+    // stores parameter names only in `-g3` debug scope descriptors, which stripped
+    // production bundles omit, so a parameter with no data-flow anchor (a property
+    // key, string literal, or resolvable call site) has no name source in the
+    // bytecode at all. For those, argN is correct, exactly as the reference
+    // decompiler emits raw registers. We separate the slots by whether the
+    // parameter is even referenced, but a referenced-yet-unresolved slot may be
+    // either a missed anchor OR a genuinely anchorless value; distinguishing the
+    // two needs the debug info / a full chain-walk, not available here.
+    if log::log_enabled!(target: "ipa", log::Level::Trace) {
+        let (mut resolved, mut used_unresolved, mut unreferenced) = (0usize, 0usize, 0usize);
+        for (fid, names) in &analysis.param_names {
+            let body = functions.get(fid);
+            for (i, n) in names.iter().enumerate() {
+                if n.is_some() {
+                    resolved += 1;
+                    continue;
+                }
+                let used = body.is_some_and(|stmts| param_is_referenced(stmts, i as u32));
+                if used {
+                    used_unresolved += 1;
+                    log::trace!(target: "ipa", "unresolved param {i} of fn{fid}: used in body, no name source recovered (missed anchor or genuinely anchorless)");
+                } else {
+                    unreferenced += 1;
+                    log::trace!(target: "ipa", "unresolved param {i} of fn{fid}: never referenced, argN is correct");
+                }
+            }
+        }
+        log::trace!(
+            target: "ipa",
+            "param naming summary: {resolved} named, {used_unresolved} used but unresolved (no recovered name source), {unreferenced} unreferenced"
+        );
+    }
+
     analysis
+}
+
+// Whether parameter `idx` is referenced anywhere in a function body. Used only by
+// the `--log ipa=trace` diagnostics to tell a broken naming chain (the parameter
+// is used, so a name should have reached it) from an exhausted one (never used).
+fn param_is_referenced(stmts: &[Statement], idx: u32) -> bool {
+    use crate::ir::{Expression, Value, Visitor};
+    struct Find {
+        idx: u32,
+        found: bool,
+    }
+    impl<'a> Visitor<'a> for Find {
+        fn visit_expression(&mut self, e: &'a Expression) {
+            if let Expression::Value(Value::Parameter(i)) = e {
+                if *i == self.idx {
+                    self.found = true;
+                }
+            }
+            self.walk_expression(e);
+        }
+    }
+    let mut f = Find { idx, found: false };
+    for s in stmts {
+        f.visit_statement(s);
+    }
+    f.found
 }

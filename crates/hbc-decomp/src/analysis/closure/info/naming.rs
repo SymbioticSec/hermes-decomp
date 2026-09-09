@@ -23,10 +23,10 @@ impl ClosureInfo {
     /// `registry.function_to_module`). Applying this to arbitrary functions
     /// renames their `arg1` captures to `require` (e.g. Babel
     /// `_createForOfIteratorHelperLoose` → `let require = Symbol_iterator`).
-    pub fn apply_metro_param_roles(&mut self) {
+    pub fn apply_metro_param_roles(&mut self, roles: &FactoryRoles) {
         for value in self.slots.values_mut() {
             if let ClosureSlotValue::Variable(v) = value {
-                if let Some(role) = metro_param_role_name(v) {
+                if let Some(role) = metro_param_role_name(v, roles) {
                     *v = role.to_string();
                 }
             }
@@ -82,21 +82,36 @@ impl ClosureInfo {
 // Modern:  + importDefault/importAll → arg0..arg6
 //
 // Only invoked from `apply_metro_param_roles` on verified Metro factories.
-fn metro_param_role_name(name: &str) -> Option<&'static str> {
+//
+// Uses the factory's actual `FactoryRoles` so the index maps to the right role
+// for both classic (module at 2) and modern (module at 4, exports at 5, deps at
+// 6, importDefault/importAll at 2/3) layouts. The previous positional mapping
+// hardcoded idx 4 as dependencyMap, which mislabeled `module` as `dependencyMap`
+// on every modern 7-param factory and broke export detection for those modules.
+fn metro_param_role_name(name: &str, roles: &FactoryRoles) -> Option<&'static str> {
     let idx = FactoryRoles::extract_param_index(name)?;
-    Some(match idx {
-        0 => "global",
-        1 => "require",
-        2 => "module", // classic; modern with helpers: importDefault, still better than closure_N
-        3 => "exports", // classic; modern: importAll
-        4 => "dependencyMap", // classic deps / modern module, see below
-        5 => "exports", // modern 7-param: exports
-        6 => "dependencyMap", // modern deps
-        _ => return None,
-    })
-    // Note: for modern 7-param factories arg2/arg3 are importDefault/importAll
-    // and arg4 is module. Mislabeling those as module/exports is still far
-    // more readable than closure_N, and depmap rewrite accepts idx>=4.
+    if idx == roles.global_idx {
+        return Some("global");
+    }
+    if idx == roles.require_idx {
+        return Some("require");
+    }
+    if roles.import_default_idx == Some(idx) {
+        return Some("importDefault");
+    }
+    if roles.import_all_idx == Some(idx) {
+        return Some("importAll");
+    }
+    if idx == roles.module_idx {
+        return Some("module");
+    }
+    if idx == roles.exports_idx {
+        return Some("exports");
+    }
+    if roles.deps_idx == Some(idx) {
+        return Some("dependencyMap");
+    }
+    None
 }
 
 // Derive a JS identifier from a constant's display text (e.g. `"foo"` → `foo`).

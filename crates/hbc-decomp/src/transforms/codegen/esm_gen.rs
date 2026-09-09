@@ -1,5 +1,5 @@
 use super::{Codegen, DescriptorInfo, EsmClassification, sanitize_import_name, replace_whole_word};
-use super::esm_imports::consolidate_imports;
+use super::esm_imports::{consolidate_imports, fold_redundant_imports};
 use crate::ir::Statement;
 
 impl Codegen {
@@ -27,6 +27,57 @@ impl Codegen {
             output.push('\n');
             return output;
         }
+
+        // Pre-pass: rename a generic import binding (`closure_3 = require(id)`) to
+        // its module's name, so it renders as `import _slicedToArray from
+        // "_slicedToArray"` instead of `import closure_3 from "_slicedToArray"`, and
+        // several captures of one module collapse to a single binding (which import
+        // consolidation then folds into one line).
+        let import_renames = self.import_binding_renames(statements);
+        let renamed_owned: Vec<Statement>;
+        let statements: &[Statement] = if import_renames.is_empty() {
+            statements
+        } else {
+            let mut s = statements.to_vec();
+            crate::analysis::naming::rename_variables_in_stmts(&mut s, &import_renames);
+            renamed_owned = s;
+            &renamed_owned
+        };
+
+        // Pre-pass: names the module writes to more than once at top level. The
+        // first write may look like a module load and become an import, but an ESM
+        // import binding is immutable, so any later write to the same name has to
+        // land on a local instead.
+        // Counting reaches nested blocks and bodies, not just the top level, because
+        // a write buried in a branch invalidates the import just as surely. Counting
+        // one name too many only costs a local alias that is still correct JS, while
+        // missing one emits an assignment to an import, which is not.
+        let rebound: HashSet<String> = {
+            use crate::ir::{AssignTarget, Visitor};
+            struct W<'a>(&'a mut HashMap<String, u32>);
+            impl<'b> Visitor<'b> for W<'_> {
+                fn visit_statement(&mut self, s: &'b Statement) {
+                    if let Statement::Let { name, .. } = s {
+                        *self.0.entry(name.clone()).or_insert(0) += 1;
+                    }
+                    self.walk_statement(s);
+                }
+                fn visit_assign_target(&mut self, t: &'b AssignTarget) {
+                    if let AssignTarget::Variable(name) = t {
+                        *self.0.entry(name.clone()).or_insert(0) += 1;
+                    }
+                    self.walk_assign_target(t);
+                }
+            }
+            let mut writes: HashMap<String, u32> = HashMap::new();
+            {
+                let mut w = W(&mut writes);
+                for stmt in statements {
+                    w.visit_statement(stmt);
+                }
+            }
+            writes.into_iter().filter(|(_, c)| *c > 1).map(|(n, _)| n).collect()
+        };
 
         // Pre-pass: collect descriptor variables (objects with get/value used in defineProperty)
         let mut descriptor_vars: HashMap<String, DescriptorInfo> = HashMap::new();
@@ -171,7 +222,7 @@ impl Codegen {
                 _ => false,
             };
 
-            match self.classify_esm_stmt_with_descriptors(stmt, &descriptor_vars) {
+            match self.classify_esm_stmt_with_descriptors(stmt, &descriptor_vars, &rebound) {
                 EsmClassification::Import(line) => {
                     // Skip import for re-exported modules
                     if is_reexport_import {
@@ -183,6 +234,12 @@ impl Codegen {
                 EsmClassification::ImportAndExport(imp, exp) => {
                     imports.push(imp);
                     exports.push(exp);
+                }
+                EsmClassification::ImportAndBody(imp, line) => {
+                    if !is_reexport_import {
+                        imports.push(imp);
+                    }
+                    body_stmts.push(line);
                 }
                 EsmClassification::Skip => {}
                 EsmClassification::Body => body_stmts.push(self.generate_stmt(stmt)),
@@ -267,6 +324,8 @@ impl Codegen {
         // from "_curry2";` x65), and merge distinct named imports of the same module
         // into one `import { a, b } from "M";`.
         let imports = consolidate_imports(imports);
+        let (imports, mut extra_consts) =
+            fold_redundant_imports(imports, &mut body_stmts, &mut exports);
 
         // Deduplicate exports (e.g. multiple export * from same module)
         {
@@ -276,6 +335,16 @@ impl Codegen {
 
         // `function name(){…}` + `export const name = …` → `export function name`
         dedupe_function_export_collisions(&mut body_stmts, &mut exports);
+
+        // A module that still calls `require` needs it bound. Metro keeps some
+        // dependencies lazy, most visibly in the React Native index where every
+        // export is a getter closing over `require(...)`, and turning those into
+        // static imports would load eagerly and change what the module does. The
+        // call is therefore kept as written, and the binding it needs is declared
+        // here: Metro publishes its loader on the global as `__r`.
+        if body_calls_require(&body_stmts) || body_calls_require(&exports) {
+            extra_consts.insert(0, "const require = globalThis.__r;".to_string());
+        }
 
         // Build output
         let mut output = String::new();
@@ -291,6 +360,18 @@ impl Codegen {
         if !imports.is_empty() {
             for imp in &imports {
                 output.push_str(imp);
+                output.push('\n');
+            }
+            if extra_consts.is_empty() {
+                output.push('\n');
+            }
+        }
+        if !extra_consts.is_empty() {
+            if !imports.is_empty() {
+                output.push('\n');
+            }
+            for c in &extra_consts {
+                output.push_str(c);
                 output.push('\n');
             }
             output.push('\n');
@@ -388,4 +469,138 @@ fn dedupe_function_export_collisions(body_stmts: &mut [String], exports: &mut Ve
             *body = body.replace("export export ", "export ");
         }
     }
+}
+
+impl Codegen {
+    // Map each generic import binding (`closure_3 = require(id)`) to its module's
+    // name so it renders as `import <module> from "<module>"`. Multiple captures of
+    // the same module map to the same name (they hold the same value, so merging is
+    // correct). A target that collides with an unrelated existing binding, or a
+    // module whose inferred name is generic, is skipped.
+    fn import_binding_renames(&self, statements: &[Statement]) -> std::collections::BTreeMap<String, String> {
+        use crate::ir::{AssignTarget, Expression, Value, Visitor};
+        use std::collections::{BTreeMap, HashSet};
+
+        // Every variable name referenced in the body (collision guard).
+        let mut body_vars: HashSet<String> = HashSet::new();
+        struct V<'a>(&'a mut HashSet<String>);
+        impl<'a> Visitor<'a> for V<'_> {
+            fn visit_expression(&mut self, e: &'a Expression) {
+                if let Expression::Value(Value::Variable(n)) = e {
+                    self.0.insert(n.clone());
+                }
+                self.walk_expression(e);
+            }
+        }
+        {
+            let mut v = V(&mut body_vars);
+            for s in statements {
+                v.visit_statement(s);
+            }
+        }
+
+        let mut renames: BTreeMap<String, String> = BTreeMap::new();
+        // One binding per distinct module id, so two captures of the SAME module
+        // merge but two DIFFERENT modules that inferred the same name never collapse.
+        let mut id_to_binding: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+        let mut used_targets: HashSet<String> = HashSet::new();
+
+        for stmt in statements {
+            let (name, value) = match stmt {
+                Statement::Let { name, value, .. } => (name, value),
+                Statement::Assign { target: AssignTarget::Variable(name), value } => (name, value),
+                _ => continue,
+            };
+            if !is_generic_import_binding(name) {
+                continue;
+            }
+            // Resolve (module name, absolute id) from `require(id)` or
+            // `wrapper(require(id))`.
+            let resolved = self.resolve_require_module_id(value).or_else(|| {
+                if let Expression::Call { arguments, .. } = value {
+                    Self::effective_args(arguments)
+                        .iter()
+                        .find_map(|a| self.resolve_require_module_id(a))
+                } else {
+                    None
+                }
+            });
+            let Some((mod_name, id)) = resolved else { continue };
+            let base = super::sanitize_import_name(&mod_name);
+            if !crate::util::is_valid_identifier(&base) || is_bad_module_binding(&base) {
+                continue;
+            }
+
+            let target = if let Some(existing) = id_to_binding.get(&id) {
+                existing.clone()
+            } else {
+                // Uniquify against other assigned bindings and any unrelated body
+                // variable of the same name (sources are `closure_N`, never a module
+                // name, so a base colliding with body_vars is a genuine other var).
+                let mut cand = base.clone();
+                let mut i = 2u32;
+                while used_targets.contains(&cand) || body_vars.contains(&cand) {
+                    cand = format!("{base}{i}");
+                    i += 1;
+                }
+                used_targets.insert(cand.clone());
+                id_to_binding.insert(id, cand.clone());
+                cand
+            };
+            renames.insert(name.clone(), target);
+        }
+        renames
+    }
+}
+
+// A binding whose name is a decompiler placeholder that should take its module's
+// name when it is an import.
+fn is_generic_import_binding(name: &str) -> bool {
+    if name.starts_with("closure_") {
+        return true;
+    }
+    let result_stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
+    if result_stem.ends_with("Result") {
+        return true;
+    }
+    let digit_suffix = |prefix: &str| {
+        name.strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit()))
+    };
+    digit_suffix("tmp")
+        || (name.starts_with('r') && name.len() > 1 && name[1..].chars().all(|c| c.is_ascii_digit()))
+        || digit_suffix("obj")
+        || digit_suffix("arr")
+}
+
+// Module names too generic to become a binding (would not read better than the
+// placeholder).
+fn is_bad_module_binding(name: &str) -> bool {
+    crate::analysis::metro::is_generic_module_specifier(name)
+        || matches!(name, "module" | "exports" | "default" | "require")
+}
+
+// Whether the rendered lines call `require` without binding it first. A property
+// access (`x.require(...)`) or a longer identifier ending in `require` is not a
+// call to the module loader.
+fn body_calls_require(lines: &[String]) -> bool {
+    let mut calls = false;
+    for line in lines {
+        for (idx, _) in line.match_indices("require") {
+            let before = line[..idx].chars().next_back();
+            if matches!(before, Some(c) if c == '.' || c == '_' || c.is_alphanumeric()) {
+                continue;
+            }
+            let after = line[idx + "require".len()..].trim_start();
+            if after.starts_with('(') {
+                calls = true;
+            }
+            // `const require = ...`, `let require = ...`, `require = ...` or a
+            // parameter list entry all bind the name, so nothing is dangling.
+            if after.starts_with('=') && !after.starts_with("==") {
+                return false;
+            }
+        }
+    }
+    calls
 }

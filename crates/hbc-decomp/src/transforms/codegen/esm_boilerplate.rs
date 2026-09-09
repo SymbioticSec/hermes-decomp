@@ -40,6 +40,36 @@ impl Codegen {
     }
 
     // Try to resolve a require(N) or arg1(dependencyMap[N]) call to a module name.
+    // Whether a callee can be the Metro module loader. The factory receives it as
+    // a parameter, so it appears under its role name, under the positional name
+    // when naming did not reach it, or as a member of one of those.
+    pub(super) fn callee_is_require_loader(callee: &crate::ir::Expression) -> bool {
+        use crate::analysis::metro::registry::FactoryRoles;
+        use crate::ir::{Expression, PropertyKey, Value};
+
+        match callee {
+            Expression::Value(Value::Variable(name)) => {
+                FactoryRoles::matches_require_loader_name(name)
+            }
+            Expression::Value(Value::Parameter(idx)) => {
+                let standard = FactoryRoles::standard();
+                let modern = FactoryRoles::from_param_count(7);
+                *idx == standard.require_idx
+                    || *idx == modern.require_idx
+                    || Some(*idx) == modern.import_default_idx
+                    || Some(*idx) == modern.import_all_idx
+            }
+            Expression::Member {
+                object,
+                property: PropertyKey::Ident(p) | PropertyKey::String(p),
+                ..
+            } => {
+                FactoryRoles::matches_require_loader_name(p) || Self::callee_is_require_loader(object)
+            }
+            _ => false,
+        }
+    }
+
     pub(super) fn resolve_require_module(&self, expr: &crate::ir::Expression) -> Option<String> {
         use crate::ir::{Expression, Value, Constant};
 
@@ -48,14 +78,12 @@ impl Codegen {
             _ => return None,
         };
 
-        // In ESM mode, accept ANY callee as a potential require function
-        // (factory params may not be renamed from arg1/arg2/etc.)
-        if !self.esm_mode {
-            let callee_str = self.generate_expr(callee);
-            let roles = crate::analysis::metro::registry::FactoryRoles::standard();
-            if !roles.is_require_param(&callee_str) {
-                return None;
-            }
+        // The callee has to look like the module loader. Accepting any callee
+        // turned every call whose argument happened to be an integer or an
+        // indexed member into a require: `atob(jwt.split(".")[1])` was printed as
+        // `require("module_1977")`, naming a dependency the program never loads.
+        if !Self::callee_is_require_loader(callee) {
+            return None;
         }
 
         // Get effective args (skip undefined this-binding)
@@ -87,12 +115,8 @@ impl Codegen {
             _ => return None,
         };
 
-        if !self.esm_mode {
-            let callee_str = self.generate_expr(callee);
-            let roles = crate::analysis::metro::registry::FactoryRoles::standard();
-            if !roles.is_require_param(&callee_str) {
-                return None;
-            }
+        if !Self::callee_is_require_loader(callee) {
+            return None;
         }
 
         let args = Self::effective_args(arguments);
@@ -142,7 +166,9 @@ impl Codegen {
             // Index-based lookup via dep_names
             if let Some(ref dep_map) = self.dep_names {
                 if let Some(name) = dep_map.get(&id) {
-                    return Some(name.clone());
+                    if crate::analysis::metro::is_usable_module_specifier(name) {
+                        return Some(name.clone());
+                    }
                 }
             }
             return None;
@@ -154,11 +180,13 @@ impl Codegen {
         // any absId that collides with a small dep index.
         if let Some(ref imp_map) = self.import_map {
             if let Some(name) = imp_map.get(&id) {
-                return Some(name.clone());
+                if crate::analysis::metro::is_usable_module_specifier(name) {
+                    return Some(name.clone());
+                }
             }
         }
 
-        // Last resort: generic name
+        // Honest fallback: not a recovered name.
         Some(format!("module_{id}"))
     }
 

@@ -169,6 +169,58 @@ pub fn decompile_filtered_v2_cached(
     Ok(render_bundle(&pipeline, file, filter))
 }
 
+// Order modules so a module's dependencies are emitted before it (definitions
+// before uses). Iterative post-order DFS over the Metro dependency graph, cycle
+// safe via a visited set, deterministic (roots and dependencies visited in id
+// order). Modules never reached are appended in id order.
+fn topological_module_order(
+    module_ids: &[u32],
+    registry: &crate::analysis::MetroRegistry,
+) -> Vec<u32> {
+    use std::collections::HashSet;
+    let present: HashSet<u32> = module_ids.iter().copied().collect();
+    let mut visited: HashSet<u32> = HashSet::new();
+    let mut order: Vec<u32> = Vec::with_capacity(module_ids.len());
+    let mut roots = module_ids.to_vec();
+    roots.sort();
+    for &root in &roots {
+        if visited.contains(&root) {
+            continue;
+        }
+        // `false` = pre-visit (expand dependencies), `true` = emit after deps.
+        let mut stack: Vec<(u32, bool)> = vec![(root, false)];
+        while let Some((id, emit)) = stack.pop() {
+            if emit {
+                order.push(id);
+                continue;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            stack.push((id, true));
+            if let Some(m) = registry.get_module(id) {
+                let mut deps: Vec<u32> = m
+                    .dependencies
+                    .iter()
+                    .copied()
+                    .filter(|d| present.contains(d) && !visited.contains(d))
+                    .collect();
+                deps.sort();
+                // Push in reverse so the smallest dependency is emitted first.
+                for &d in deps.iter().rev() {
+                    stack.push((d, false));
+                }
+            }
+        }
+    }
+    for &id in &roots {
+        if !visited.contains(&id) {
+            order.push(id);
+        }
+    }
+    order
+}
+
 // Render a (possibly filtered) bundle from an already-built pipeline context.
 fn render_bundle(
     pipeline: &PipelineContext,
@@ -231,12 +283,15 @@ fn render_bundle(
         }
     }
 
-    let mut sorted_modules: Vec<_> = module_functions
+    let module_ids: Vec<u32> = module_functions
         .keys()
         .cloned()
         .filter(|m| allowed.as_ref().is_none_or(|set| set.contains(m)))
         .collect();
-    sorted_modules.sort();
+    // Emit modules in dependency order (a module's dependencies come before it), so
+    // everything a module uses is already defined above it. Falls back to id order
+    // among independent modules, and is cycle safe for Metro's circular graphs.
+    let sorted_modules = topological_module_order(&module_ids, &pipeline.registry);
 
     // Print Modules
     for mod_id in sorted_modules {
