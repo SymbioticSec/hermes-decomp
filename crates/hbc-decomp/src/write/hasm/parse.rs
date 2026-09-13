@@ -60,7 +60,7 @@ pub fn parse_hasm_function(
 
         let mut rest = line;
         // Optional hex offset prefix "0000  " or "0x0000 "
-        if let Some(after) = strip_offset_prefix(rest) {
+        if let Some(after) = strip_offset_prefix(rest, &name_to_op) {
             rest = after;
         }
 
@@ -258,47 +258,39 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
-fn strip_offset_prefix(line: &str) -> Option<&str> {
+fn strip_offset_prefix<'a>(line: &'a str, known: &HashMap<String, u8>) -> Option<&'a str> {
     let t = line.trim_start();
-    // 0000  Mnemonic  or  0x0000
-    let mut chars = t.char_indices();
-    let mut hex_end = 0;
-    let mut saw_hex = false;
-    if t.starts_with("0x") || t.starts_with("0X") {
-        hex_end = 2;
-        saw_hex = true;
-        for (i, c) in t[2..].char_indices() {
-            if c.is_ascii_hexdigit() {
-                hex_end = 2 + i + 1;
-            } else {
-                break;
-            }
+    // An offset prefix is a token of its own: `0000  Mnemonic` or `0x0000 Mnemonic`.
+    let (run, rest) = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        Some(body) => {
+            let end = body.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(body.len());
+            (&body[..end], &body[end..])
         }
-    } else {
-        for (i, c) in chars.by_ref() {
-            if c.is_ascii_hexdigit() {
-                hex_end = i + 1;
-                saw_hex = true;
-            } else {
-                break;
-            }
+        None => {
+            let end = t.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(t.len());
+            (&t[..end], &t[end..])
         }
-    }
-    if !saw_hex || hex_end == 0 {
+    };
+    if run.is_empty() {
         return None;
     }
-    let rest = t[hex_end..].trim_start();
-    // Must look like a mnemonic after offset
-    if rest
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_alphabetic())
-        .unwrap_or(false)
-    {
-        Some(rest)
-    } else {
-        None
+    // The run has to end the token. `A` through `F` are hex digits just as much as
+    // `0` through `9`, so without this check a mnemonic that starts with one lost
+    // its opening letters: `CreateEnvironment` was read as `reateEnvironment` and
+    // `Call1` as `ll1`, which hit 83 of the 290 mnemonics.
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
     }
+    // `Add`, `Add32` and `Dec` are spelled entirely with hex digits, so a line
+    // opening with one of them is an instruction rather than an offset.
+    if known.contains_key(run) {
+        return None;
+    }
+    let rest = rest.trim_start();
+    rest.chars()
+        .next()
+        .filter(|c| c.is_ascii_alphabetic())
+        .map(|_| rest)
 }
 
 fn split_mnemonic_operands(line: &str) -> Vec<String> {
@@ -459,5 +451,65 @@ fn unquote(tok: &str) -> Result<String> {
         Ok(out)
     } else {
         Err(Error::Write(format!("expected quoted string, got {tok}")))
+    }
+}
+
+#[cfg(test)]
+mod offset_prefix_tests {
+    use super::strip_offset_prefix;
+    use std::collections::HashMap;
+
+    fn known() -> HashMap<String, u8> {
+        ["Add", "Add32", "Dec", "Call1", "CreateEnvironment", "Ret"]
+            .iter()
+            .enumerate()
+            .map(|(i, n)| ((*n).to_string(), i as u8))
+            .collect()
+    }
+
+    #[test]
+    fn a_mnemonic_starting_with_hex_letters_is_left_whole() {
+        // `A` through `F` are hex digits just as much as `0` through `9`, so the
+        // opening letters of these were consumed as if they were an offset.
+        for line in [
+            "CreateEnvironment    Reg8:1",
+            "Call1 r1, r2",
+            "BitAnd r0, r1, r2",
+            "Catch r0",
+            "DeclareGlobalVar \"x\"",
+            "AddEmptyString r0, r1",
+        ] {
+            assert_eq!(
+                strip_offset_prefix(line, &known()),
+                None,
+                "no offset should be stripped from {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_real_offset_prefix_is_still_stripped() {
+        // The disassembler writes offsets as four zero padded hex digits, so a
+        // large one legitimately starts with a letter.
+        assert_eq!(strip_offset_prefix("0000  Ret r0", &known()), Some("Ret r0"));
+        assert_eq!(strip_offset_prefix("01a4  Ret r0", &known()), Some("Ret r0"));
+        assert_eq!(strip_offset_prefix("abcd  Ret r0", &known()), Some("Ret r0"));
+        assert_eq!(strip_offset_prefix("0x1f Ret r0", &known()), Some("Ret r0"));
+    }
+
+    #[test]
+    fn a_mnemonic_spelled_entirely_in_hex_digits_is_not_an_offset() {
+        // These three are the only mnemonics made up solely of hex digits, so the
+        // whitespace rule alone would read them as an offset.
+        assert_eq!(strip_offset_prefix("Add r0, r1, r2", &known()), None);
+        assert_eq!(strip_offset_prefix("Add32 r0, r1, r2", &known()), None);
+        assert_eq!(strip_offset_prefix("Dec r0, r1", &known()), None);
+    }
+
+    #[test]
+    fn lines_without_an_offset_or_a_mnemonic_are_untouched() {
+        assert_eq!(strip_offset_prefix("0000", &known()), None);
+        assert_eq!(strip_offset_prefix("", &known()), None);
+        assert_eq!(strip_offset_prefix("0000  ", &known()), None);
     }
 }
