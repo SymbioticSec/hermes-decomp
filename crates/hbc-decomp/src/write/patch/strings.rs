@@ -333,7 +333,7 @@ fn patch_string_resize(
     let storage_size = new_storage.len() as u32;
     let overflow_count = new_overflow.len() as u32;
     region.extend_from_slice(&new_storage);
-    while region.len() % 4 != 0 {
+    while !region.len().is_multiple_of(4) {
         region.push(0);
     }
 

@@ -550,10 +550,7 @@ fn is_var(e: &Expression) -> bool {
 // terminal/done case (given a sentinel label).
 fn collect_label_cases(mut s: &Statement) -> Option<Vec<(i32, Vec<Statement>)>> {
     let mut cases = Vec::new();
-    loop {
-        let Statement::If { condition, then_body, else_body } = s else {
-            break;
-        };
+    while let Statement::If { condition, then_body, else_body } = s {
         let Some(k) = label_of_condition(condition) else {
             break;
         };

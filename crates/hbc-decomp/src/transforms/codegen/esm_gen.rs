@@ -301,7 +301,7 @@ impl Codegen {
         // Sort renames by key for deterministic output
         if !closure_renames.is_empty() {
             let mut sorted_renames: Vec<_> = closure_renames.iter().collect();
-            sorted_renames.sort_by(|(a, _), (b, _)| a.cmp(b));
+            sorted_renames.sort_by_key(|(a, _)| *a);
             for imp in imports.iter_mut() {
                 for (old, new_name) in &sorted_renames {
                     *imp = replace_whole_word(imp, old, new_name);

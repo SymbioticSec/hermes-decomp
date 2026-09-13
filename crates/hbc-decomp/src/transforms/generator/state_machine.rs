@@ -176,7 +176,7 @@ fn collect_state_cases(stmt: &Statement, cases: &mut Vec<(i32, Vec<Statement>)>)
 
 // Flatten an if-else chain that looks like a state machine.
 fn flatten_state_if_chain(stmt: &Statement) -> Option<Vec<Statement>> {
-    flatten_state_switch(&[stmt.clone()])
+    flatten_state_switch(std::slice::from_ref(stmt))
 }
 
 // Check if a statement is a state assignment (state = N).
