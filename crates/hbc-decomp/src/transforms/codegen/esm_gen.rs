@@ -950,7 +950,7 @@ fn alias_line_once(line: String, declared: &mut std::collections::HashSet<String
 //
 // Only top level lines count. A `let X;` nested inside a function is a different
 // binding and shadowing there is legal.
-fn drop_hoists_shadowed_by_declarations(body: &mut Vec<String>) {
+fn drop_hoists_shadowed_by_declarations(body: &mut [String]) {
     use std::collections::HashSet;
     let mut declared: HashSet<&str> = HashSet::new();
     for chunk in body.iter() {
