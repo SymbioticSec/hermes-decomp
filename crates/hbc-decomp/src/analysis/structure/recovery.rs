@@ -179,7 +179,7 @@ pub(super) fn recover_structure_inner(
             // Check for loop continue/break, emit real Break/Continue statements
             // (not Comment markers). Comment("break")/Comment("continue") previously
             // leaked into codegen as `// break` / `// continue` instead of structured
-            // control flow (Discord HBC96: 1268 such comments).
+            // control flow (HBC96 reference bundle: 1268 such comments).
             for (i, loop_info) in loop_stack.iter().enumerate().rev() {
                 if target == loop_info.header && ctx.visited.contains(&target) {
                     let label = if i < loop_stack.len() - 1 {

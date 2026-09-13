@@ -12,7 +12,7 @@ fn rename_stmt(stmt: Statement, names: &BTreeMap<u32, String>) -> Statement {
             value: rename_expr(value, names),
         },
         // Without this, `delete r5[r4]` leaked Hermes register names into
-        // the final JS (Discord HBC96: 666+ register-name-leak hits).
+        // the final JS (HBC96 reference bundle: 666+ register-name-leak hits).
         Statement::Delete { target, result } => Statement::Delete {
             target: rename_expr(target, names),
             result,

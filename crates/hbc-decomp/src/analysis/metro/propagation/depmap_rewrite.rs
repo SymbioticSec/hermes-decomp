@@ -7,7 +7,7 @@
 // This pass MUST run AFTER `resolve_closures`: nested functions capture the
 // map as a ClosureVar, which only becomes `Variable("dependencyMap")` (or an
 // alias) once slots are resolved. Running earlier leaves ~half the references
-// unresolved (Discord HBC96 baseline: 162k → needs late rewrite).
+// unresolved (HBC96 reference baseline: 162k → needs late rewrite).
 
 use super::super::registry::{FactoryRoles, MetroRegistry};
 use super::is_dep_array_name;

@@ -82,7 +82,7 @@ pub fn handle_switch_imm(
 // Handle StringSwitchImm opcode.
 //
 // This is a string-switch variant present in the Hermes build React Native /
-// Discord ships (v98+); upstream Hermes has only the numeric `SwitchImm`, so the
+// shipped by v98+ bundles; upstream Hermes has only the numeric `SwitchImm`, so the
 // operand semantics and table layout below were recovered from the bytecode
 // itself, verified against the real notification-type dispatch it encodes.
 //

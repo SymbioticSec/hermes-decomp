@@ -183,7 +183,7 @@ fn parse_common_tables(
 //   → regExp… (regexp is parsed in parse_trailing_and_build).
 // Parsing BigInt *before* the array buffer shifts every subsequent section and
 // produces garbage string IDs (`<string:N>` placeholders) for array/object
-// literals, the root cause of ~93k unresolved-string-id hits on Discord HBC96.
+// literals, the root cause of ~93k unresolved-string-id hits on an HBC96 reference bundle.
 fn parse_legacy_buffers(
     reader: &mut ByteReader<'_>,
     header: &BytecodeHeader,

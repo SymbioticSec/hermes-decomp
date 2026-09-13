@@ -1,6 +1,6 @@
 // Reconstruct ES6 array destructuring from the form Babel lowers it to.
 //
-// Discord and most React Native apps run Babel before Hermes, so `const [a, b] =
+// Most React Native apps run Babel before Hermes, so `const [a, b] =
 // src` never reaches the bytecode. What arrives instead is a call to a runtime
 // helper followed by one indexed read per binding:
 //

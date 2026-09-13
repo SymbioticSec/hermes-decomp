@@ -16,7 +16,7 @@ impl PipelineContext {
         stable: bool,
     ) -> crate::analysis::GlobalAnalysis {
         // STAGE W4a: name modules from `fileFinishedImporting("…/Foo.tsx")`.
-        // Discord (and some other apps) record the source path as a string
+        // Some apps record the source path as a string
         // literal in the factory. That path is ground truth and overwrites a
         // heuristic factory/export name such as `clear`.
         let mut gt_named = std::collections::HashSet::new();
@@ -752,7 +752,7 @@ mod file_path_naming_tests {
     fn stem_strips_path_and_platform_suffix() {
         assert_eq!(
             stem_from_source_path(
-                "../discord_common/js/packages/logger/LoggerPIIRestrictedObjects.tsx"
+                "../app_common/js/packages/logger/LoggerPIIRestrictedObjects.tsx"
             )
             .as_deref(),
             Some("LoggerPIIRestrictedObjects")
@@ -774,11 +774,11 @@ mod file_path_naming_tests {
     #[test]
     fn finds_file_finished_importing_string() {
         let stmts = vec![ffi_stmt(
-            "../discord_common/js/packages/logger/Logger.tsx",
+            "../app_common/js/packages/logger/Logger.tsx",
         )];
         assert_eq!(
             find_file_finished_importing_path(&stmts).as_deref(),
-            Some("../discord_common/js/packages/logger/Logger.tsx")
+            Some("../app_common/js/packages/logger/Logger.tsx")
         );
         let assign = Statement::Assign {
             target: crate::ir::AssignTarget::Member {

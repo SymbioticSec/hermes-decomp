@@ -187,6 +187,8 @@ impl Codegen {
 
         let mut imports = Vec::new();
         let mut body_stmts = Vec::new();
+        // Local aliases already declared for a re-bound module load.
+        let mut declared_aliases: HashSet<String> = HashSet::new();
         let mut exports = Vec::new();
 
         for (i, stmt) in statements.iter().enumerate() {
@@ -239,7 +241,11 @@ impl Codegen {
                     if !is_reexport_import {
                         imports.push(imp);
                     }
-                    body_stmts.push(line);
+                    // A module can load the same dependency from several places, and
+                    // each load asks for the same local alias. Declaring it every
+                    // time redeclares the binding, which is a syntax error, so only
+                    // the first one declares and the rest assign.
+                    body_stmts.push(alias_line_once(line, &mut declared_aliases));
                 }
                 EsmClassification::Skip => {}
                 EsmClassification::Body => body_stmts.push(self.generate_stmt(stmt)),
@@ -335,6 +341,13 @@ impl Codegen {
 
         // `function name(){…}` + `export const name = …` → `export function name`
         dedupe_function_export_collisions(&mut body_stmts, &mut exports);
+
+        // A hoisted `let X;` in front of a `class X` or `function X` redeclares it,
+        // which a parser rejects and takes the whole module down with it. The hoist
+        // is inserted per function, before the class reconstruction has turned the
+        // assignment into a declaration, so only the assembled module can see the
+        // pair.
+        drop_hoists_shadowed_by_declarations(&mut body_stmts);
 
         // A module that still calls `require` needs it bound. Metro keeps some
         // dependencies lazy, most visibly in the React Native index where every
@@ -723,6 +736,111 @@ fn undeclared_assignments(imports: &[String], body: &[String], exports: &[String
 }
 
 #[cfg(test)]
+mod hoist_tests {
+    use super::drop_hoists_shadowed_by_declarations;
+
+    fn run(v: &[&str]) -> Vec<String> {
+        let mut b: Vec<String> = v.iter().map(|x| (*x).to_string()).collect();
+        drop_hoists_shadowed_by_declarations(&mut b);
+        b
+    }
+
+    #[test]
+    fn a_hoist_in_front_of_a_class_is_dropped() {
+        // `let DOMRect;` then `class DOMRect ...` binds the name twice, which a
+        // parser rejects outright and the whole module stops parsing.
+        let out = run(&["let DOMRect;", "class DOMRect extends Base {
+}"]);
+        assert_eq!(out[0], "");
+        assert!(out[1].starts_with("class DOMRect"));
+    }
+
+    #[test]
+    fn a_hoist_in_front_of_a_function_is_dropped() {
+        for decl in [
+            "function handler(a) {
+}",
+            "export function handler(a) {
+}",
+            "function* handler(a) {
+}",
+        ] {
+            let out = run(&["let handler;", decl]);
+            assert_eq!(out[0], "", "hoist should go for {decl}");
+        }
+    }
+
+    #[test]
+    fn a_hoist_with_no_matching_declaration_stays() {
+        let out = run(&["let counter;", "counter = 1;"]);
+        assert_eq!(out[0], "let counter;");
+    }
+
+    #[test]
+    fn a_hoist_of_a_different_name_stays() {
+        let out = run(&["let other;", "class DOMRect extends Base {
+}"]);
+        assert_eq!(out[0], "let other;");
+    }
+
+    #[test]
+    fn an_initialised_declaration_is_never_touched() {
+        // Only a bare hoist is redundant. `let x = 1;` carries a value.
+        let out = run(&["let DOMRect = 1;", "class DOMRect extends Base {
+}"]);
+        assert_eq!(out[0], "let DOMRect = 1;");
+    }
+
+    #[test]
+    fn a_nested_hoist_inside_a_body_is_removed_only_when_it_matches() {
+        // The hoist can be one line of a larger rendered chunk.
+        let out = run(&["let DOMRect;
+const p = DOMRect.prototype;", "class DOMRect {
+}"]);
+        assert_eq!(out[0], "const p = DOMRect.prototype;");
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::alias_line_once;
+    use std::collections::HashSet;
+
+    #[test]
+    fn the_first_load_declares_and_the_rest_assign() {
+        // A module loading the same dependency twice asked for the same alias
+        // twice, and two `let size = size_mod;` lines are a syntax error that
+        // stops the whole module from parsing.
+        let mut seen = HashSet::new();
+        let line = "let size = size_mod;\n".to_string();
+        assert_eq!(alias_line_once(line.clone(), &mut seen), "let size = size_mod;\n");
+        assert_eq!(alias_line_once(line.clone(), &mut seen), "size = size_mod;\n");
+        assert_eq!(alias_line_once(line, &mut seen), "size = size_mod;\n");
+    }
+
+    #[test]
+    fn two_different_aliases_each_keep_their_declaration() {
+        let mut seen = HashSet::new();
+        assert_eq!(
+            alias_line_once("let a = a_mod;\n".to_string(), &mut seen),
+            "let a = a_mod;\n"
+        );
+        assert_eq!(
+            alias_line_once("let b = b_mod;\n".to_string(), &mut seen),
+            "let b = b_mod;\n"
+        );
+    }
+
+    #[test]
+    fn a_line_that_is_not_a_declaration_is_passed_through() {
+        let mut seen = HashSet::new();
+        let line = "size = size_mod;\n".to_string();
+        assert_eq!(alias_line_once(line.clone(), &mut seen), line);
+        assert_eq!(alias_line_once(line.clone(), &mut seen), line);
+    }
+}
+
+#[cfg(test)]
 mod undeclared_tests {
     use super::undeclared_assignments;
 
@@ -806,5 +924,70 @@ mod undeclared_tests {
     fn comparisons_and_arrows_are_not_assignments() {
         let body = s(&["if (a === 1) {}", "const f = a => a;", "b == 2;"]);
         assert!(undeclared_assignments(&[], &body, &[]).is_empty());
+    }
+}
+
+// The local alias for a re-bound module load, declared once per module.
+//
+// A module can load the same dependency from several places, and every load
+// asks for the same alias. Declaring it each time redeclares the binding, which
+// a parser rejects outright, so the first occurrence declares and the rest
+// assign to what it declared.
+fn alias_line_once(line: String, declared: &mut std::collections::HashSet<String>) -> String {
+    if declared.insert(line.clone()) {
+        return line;
+    }
+    match line.strip_prefix("let ") {
+        Some(rest) => rest.to_string(),
+        None => line,
+    }
+}
+
+// Remove a top level `let X;` when the module also declares `X` as a class or a
+// function at that level. Both bind the same name in the same scope, and two
+// bindings of one name is a syntax error, so the hoist is the one to go: the
+// declaration it was reserving a slot for arrived in a stronger form.
+//
+// Only top level lines count. A `let X;` nested inside a function is a different
+// binding and shadowing there is legal.
+fn drop_hoists_shadowed_by_declarations(body: &mut Vec<String>) {
+    use std::collections::HashSet;
+    let mut declared: HashSet<&str> = HashSet::new();
+    for chunk in body.iter() {
+        for line in chunk.lines() {
+            let rest = line.strip_prefix("export ").unwrap_or(line);
+            let rest = match rest.strip_prefix("class ") {
+                Some(r) => r,
+                None => match rest.strip_prefix("function") {
+                    // `function name`, `function* name` and `function *name`
+                    Some(r) => r.trim_start().strip_prefix('*').unwrap_or(r).trim_start(),
+                    None => continue,
+                },
+            };
+            let name: &str = rest
+                .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                .next()
+                .unwrap_or("");
+            if !name.is_empty() {
+                declared.insert(name);
+            }
+        }
+    }
+    if declared.is_empty() {
+        return;
+    }
+    let shadowed: HashSet<String> = declared.iter().map(|n| format!("let {n};")).collect();
+    for chunk in body.iter_mut() {
+        if chunk.lines().any(|l| shadowed.contains(l.trim_end())) {
+            let kept: Vec<&str> = chunk
+                .lines()
+                .filter(|l| !shadowed.contains(l.trim_end()))
+                .collect();
+            let mut rebuilt = kept.join("\n");
+            if chunk.ends_with('\n') && !rebuilt.is_empty() {
+                rebuilt.push('\n');
+            }
+            *chunk = rebuilt;
+        }
     }
 }

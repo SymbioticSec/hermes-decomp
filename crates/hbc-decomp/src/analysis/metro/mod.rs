@@ -34,7 +34,7 @@ pub(crate) const GENERIC_EXACT_NAMES: &[&str] = &[
 ];
 
 // Extra placeholders rejected as import specifiers even when they can still be
-// a meaningful *binding* in other passes. `size` is the next export on Discord
+// a meaningful *binding* in other passes. `size` is the next export on one reference bundle
 // module 2 after `clear`; `index` is the stem of many `index.tsx` files.
 const SPECIFIER_PLACEHOLDERS: &[&str] = &["size", "index"];
 
@@ -234,7 +234,7 @@ fn meaningful_path_segments(path: &str) -> Vec<String> {
 }
 
 // Increasingly specific suffixes of the GT path: `flux/Dispatcher`, then
-// `discord_common/flux/Dispatcher`, … Never emits the bare stem (that is the
+// `app_common/flux/Dispatcher`, … Never emits the bare stem (that is the
 // winner's specifier).
 fn path_disambiguators(path: &str, stem: &str) -> Vec<String> {
     let mut segs = meaningful_path_segments(path);
@@ -455,10 +455,10 @@ mod generic_name_tests {
 
         assert_eq!(
             path_disambiguators(
-                "../discord_common/js/packages/flux/Dispatcher.tsx",
+                "../app_common/js/packages/flux/Dispatcher.tsx",
                 "Dispatcher"
             ),
-            vec!["flux/Dispatcher".to_string(), "discord_common/flux/Dispatcher".to_string()]
+            vec!["flux/Dispatcher".to_string(), "app_common/flux/Dispatcher".to_string()]
         );
         assert!(path_disambiguators("Dispatcher.tsx", "Dispatcher").is_empty());
 
@@ -475,7 +475,7 @@ mod generic_name_tests {
         registry.modules.insert(709, mk(709, Some("Dispatcher")));
         let locked = HashSet::from([650u32, 709]);
         let paths = HashMap::from([
-            (650u32, "../discord_common/js/packages/flux/Dispatcher.tsx".to_string()),
+            (650u32, "../app_common/js/packages/flux/Dispatcher.tsx".to_string()),
             (709u32, "Dispatcher.tsx".to_string()),
         ]);
         finalize_module_specifiers(&mut registry, &locked, &paths);
