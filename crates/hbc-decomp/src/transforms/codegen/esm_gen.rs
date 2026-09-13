@@ -346,6 +346,18 @@ impl Codegen {
             extra_consts.insert(0, "const require = globalThis.__r;".to_string());
         }
 
+        // Names the module writes without ever binding. Hermes shares one
+        // environment slot between a function and the closures inside it, and the
+        // pass that inserts declarations runs per function, so a slot owned by a
+        // function that renders as an inline body is written by everyone and
+        // declared by nobody. A module is always strict, so those writes throw
+        // instead of quietly making a global. The module is the only scope that
+        // sees every rendered body, so the binding is declared here.
+        let dangling = undeclared_assignments(&imports, &body_stmts, &exports);
+        if !dangling.is_empty() {
+            extra_consts.push(format!("let {};", dangling.join(", ")));
+        }
+
         // Build output
         let mut output = String::new();
 
@@ -603,4 +615,196 @@ fn body_calls_require(lines: &[String]) -> bool {
         }
     }
     calls
+}
+
+// Every name the rendered module assigns to without binding it anywhere.
+//
+// Deliberately one sided: a name is reported only when no binding form for it
+// appears anywhere in the module, so a missed binding form costs a redundant
+// declaration rather than a wrong one. Builtin globals are never reported, since
+// writing to one is the module's own business.
+fn undeclared_assignments(imports: &[String], body: &[String], exports: &[String]) -> Vec<String> {
+    use std::collections::HashSet;
+    use std::sync::OnceLock;
+    static PATS: OnceLock<(Vec<regex::Regex>, regex::Regex, regex::Regex)> = OnceLock::new();
+    let (binders, assign, method) = PATS.get_or_init(|| {
+        let binders = [
+            // let / const / var, including a comma list and a destructuring head
+            r"\b(?:let|const|var)\s+([A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)",
+            r"\b(?:let|const|var)\s*[\[{]([^\]}]*)[\]}]",
+            // function name and parameter list, arrow parameters, catch binding
+            r"\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)?\s*\(([^)]*)\)",
+            r"\(([^)]*)\)\s*=>",
+            r"(?:^|[^.\w$])([A-Za-z_$][\w$]*)\s*=>",
+            r"\bcatch\s*\(\s*([A-Za-z_$][\w$]*)",
+            r"\bclass\s+([A-Za-z_$][\w$]*)",
+            // import default and named list
+            r"^\s*import\s+(?:\{([^}]*)\}|([A-Za-z_$][\w$]*))",
+        ]
+        .iter()
+        .map(|p| regex::Regex::new(p).expect("static pattern"))
+        .collect::<Vec<_>>();
+        let assign = regex::Regex::new(
+            r"^\s*([A-Za-z_$][\w$]*)\s*(?:=[^=>]|\+=|-=|\*=|/=|%=|&=|\^=|\|=|\+\+|--)",
+        )
+        .expect("static pattern");
+        // A method shorthand head binds its parameters, but `if (x === 2) {` has
+        // the very same shape, so the head word is checked against the statement
+        // keywords before its parentheses are read as a parameter list.
+        let method = regex::Regex::new(r"^\s*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{")
+            .expect("static pattern");
+        (binders, assign, method)
+    });
+
+    let mut bound: HashSet<&str> = HashSet::new();
+    let mut assigned: Vec<&str> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+
+    // Each rendered statement can span many lines, and the anchored patterns match
+    // the start of the haystack, so the scan has to see one real line at a time.
+    for chunk in imports.iter().chain(body).chain(exports) {
+        for line in chunk.lines() {
+        for rx in binders {
+            for caps in rx.captures_iter(line) {
+                for group in caps.iter().skip(1).flatten() {
+                    for part in group.as_str().split([',', ' ', '\t']) {
+                        let name = part.trim().trim_start_matches("...");
+                        // `a as b` binds b, `a = 1` binds a
+                        let name = name.rsplit(" as ").next().unwrap_or(name);
+                        let name = name.split('=').next().unwrap_or(name).trim();
+                        if !name.is_empty() {
+                            bound.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(caps) = method.captures(line) {
+            let head = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let is_keyword = matches!(
+                head,
+                "if" | "while" | "for" | "switch" | "catch" | "do" | "else" | "try"
+                    | "return" | "with" | "function" | "typeof" | "in" | "of" | "new"
+            );
+            if !is_keyword {
+                if let Some(params) = caps.get(2) {
+                    for part in params.as_str().split([',', ' ', '\t']) {
+                        let name = part.trim().trim_start_matches("...");
+                        let name = name.split('=').next().unwrap_or(name).trim();
+                        if !name.is_empty() {
+                            bound.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(caps) = assign.captures(line) {
+            if let Some(m) = caps.get(1) {
+                if seen.insert(m.as_str()) {
+                    assigned.push(m.as_str());
+                }
+            }
+        }
+        }
+    }
+
+    let mut out: Vec<String> = assigned
+        .into_iter()
+        .filter(|n| {
+            !bound.contains(n)
+                && !crate::ir::expr::display::is_builtin_global(n)
+                && crate::util::is_valid_identifier(n)
+        })
+        .map(str::to_string)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[cfg(test)]
+mod undeclared_tests {
+    use super::undeclared_assignments;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| (*x).to_string()).collect()
+    }
+
+    #[test]
+    fn a_name_written_but_never_bound_is_reported() {
+        let body = s(&["closure_0 = arg0;\nclosure_1 = arguments;"]);
+        assert_eq!(
+            undeclared_assignments(&[], &body, &[]),
+            vec!["closure_0".to_string(), "closure_1".to_string()]
+        );
+    }
+
+    #[test]
+    fn every_binding_form_counts_as_bound() {
+        for bound in [
+            "let a;",
+            "const a = 1;",
+            "var a;",
+            "function f(a) {}",
+            "const g = (a) => a;",
+            "const h = a => a;",
+            "try {} catch (a) {}",
+            "class a {}",
+            "import a from \"m\";",
+            "import { a } from \"m\";",
+            "let x, a, y;",
+        ] {
+            let body = s(&[bound, "a = 1;"]);
+            assert!(
+                undeclared_assignments(&[], &body, &[]).is_empty(),
+                "{bound} should bind `a`"
+            );
+        }
+    }
+
+    #[test]
+    fn writing_to_a_builtin_global_is_the_modules_own_business() {
+        let body = s(&["console = 1;", "Object = 2;"]);
+        assert!(undeclared_assignments(&[], &body, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_write_nested_inside_a_rendered_statement_is_seen() {
+        // A rendered statement spans many lines, so the scan has to look at each
+        // one rather than only the start of the chunk.
+        let body = s(&["function outer() {\n  deep = 1;\n}"]);
+        assert_eq!(undeclared_assignments(&[], &body, &[]), vec!["deep".to_string()]);
+    }
+
+    #[test]
+    fn a_statement_head_is_not_a_method_binding_its_parameters() {
+        // `if (c3 === 2) {` has the shape of a method shorthand head, so its
+        // condition was read as a parameter list and every name in it counted as
+        // bound. That alone hid 7746 unbound writes on the reference bundle.
+        for head in [
+            "if (c3 === 2) {",
+            "while (c3 < 2) {",
+            "switch (c3) {",
+            "for (c3 = 0; c3 < 2; c3++) {",
+        ] {
+            let body = s(&[head, "c3 = 3;"]);
+            assert_eq!(
+                undeclared_assignments(&[], &body, &[]),
+                vec!["c3".to_string()],
+                "{head} must not bind c3"
+            );
+        }
+    }
+
+    #[test]
+    fn a_real_method_shorthand_still_binds_its_parameters() {
+        let body = s(&["render(item) {\n  item = 1;\n}"]);
+        assert!(undeclared_assignments(&[], &body, &[]).is_empty());
+    }
+
+    #[test]
+    fn comparisons_and_arrows_are_not_assignments() {
+        let body = s(&["if (a === 1) {}", "const f = a => a;", "b == 2;"]);
+        assert!(undeclared_assignments(&[], &body, &[]).is_empty());
+    }
 }
