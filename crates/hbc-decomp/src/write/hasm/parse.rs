@@ -287,6 +287,13 @@ fn strip_offset_prefix(line: &str) -> Option<&str> {
     if !saw_hex || hex_end == 0 {
         return None;
     }
+    // An offset prefix must be separated from what follows by whitespace. Without this
+    // check, a bare mnemonic that happens to start with characters which are also valid
+    // hex digits (A-F, 0-9) - e.g. "CreateEnvironment", "Call1", "CreateClosure", "Eq" -
+    // got misread as an offset and had its leading letters silently stripped (see #21).
+    if !t[hex_end..].starts_with(|c: char| c.is_whitespace()) {
+        return None;
+    }
     let rest = t[hex_end..].trim_start();
     // Must look like a mnemonic after offset
     if rest
@@ -298,6 +305,41 @@ fn strip_offset_prefix(line: &str) -> Option<&str> {
         Some(rest)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod strip_offset_prefix_tests {
+    use super::strip_offset_prefix;
+
+    // Regression test for #21: mnemonics that start with letters which are also valid
+    // ASCII hex digits (A-F) must not be mistaken for a numeric offset prefix when there
+    // is no whitespace-separated offset actually present.
+    #[test]
+    fn does_not_strip_mnemonics_that_look_like_hex_offsets() {
+        assert_eq!(strip_offset_prefix("CreateEnvironment Reg8:1"), None);
+        assert_eq!(strip_offset_prefix("Call1 Reg8:1"), None);
+        assert_eq!(strip_offset_prefix("Call2 Reg8:1"), None);
+        assert_eq!(strip_offset_prefix("CreateClosure Reg8:1"), None);
+        assert_eq!(strip_offset_prefix("Eq Reg8:1"), None);
+    }
+
+    #[test]
+    fn still_strips_a_real_offset_prefix() {
+        assert_eq!(
+            strip_offset_prefix("0000  LoadConstUndefined r0"),
+            Some("LoadConstUndefined r0")
+        );
+        assert_eq!(
+            strip_offset_prefix("0x001A  Ret r0"),
+            Some("Ret r0")
+        );
+    }
+
+    #[test]
+    fn returns_none_for_offset_only_line() {
+        // No mnemonic at all after the digits - must not panic or misparse.
+        assert_eq!(strip_offset_prefix("0000"), None);
     }
 }
 
