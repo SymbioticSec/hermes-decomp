@@ -220,7 +220,7 @@ fn rename_expr(
              }
         }
         Expression::Assignment { target, value } => {
-             rename_expr(target, reg_map, var_map);
+             crate::ir::for_each_target_expression_mut(target, &mut |e| rename_expr(e, reg_map, var_map));
              rename_expr(value, reg_map, var_map);
         }
         Expression::Spread(e) => rename_expr(e, reg_map, var_map),

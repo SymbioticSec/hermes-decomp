@@ -58,8 +58,12 @@ pub enum Expression {
         is_async: bool,
         is_generator: bool,
     },
+    // An assignment used as an expression (`a = b` inside a larger expression).
+    // The target is an `AssignTarget` and not an `Expression`, so a pass cannot
+    // build a write to something that is not a place. The statement form uses the
+    // same type, which is what lets one visitor hook see every write.
     Assignment {
-        target: Box<Expression>,
+        target: Box<crate::ir::AssignTarget>,
         value: Box<Expression>,
     },
     Spread(Box<Expression>),

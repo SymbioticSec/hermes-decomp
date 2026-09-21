@@ -128,7 +128,7 @@ fn subst_jsx_props_in_expr(expr: &mut Expression, objects: &BTreeMap<String, Exp
             }
         }
         Expression::Assignment { target, value } => {
-            subst_jsx_props_in_expr(target, objects);
+            crate::ir::for_each_target_expression_mut(target, &mut |e| subst_jsx_props_in_expr(e, objects));
             subst_jsx_props_in_expr(value, objects);
         }
         Expression::JSXElement {

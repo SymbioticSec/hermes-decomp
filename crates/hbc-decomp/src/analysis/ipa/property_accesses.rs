@@ -110,7 +110,7 @@ fn collect_param_props_expr(
             for p in properties { collect_param_props_expr(&p.value, accesses); }
         }
         Expression::Assignment { target, value } => {
-            collect_param_props_expr(target, accesses);
+            crate::ir::for_each_target_expression(target, &mut |e| collect_param_props_expr(e, accesses));
             collect_param_props_expr(value, accesses);
         }
         Expression::Spread(inner) | Expression::Await(inner) => collect_param_props_expr(inner, accesses),

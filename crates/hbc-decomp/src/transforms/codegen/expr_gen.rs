@@ -321,7 +321,7 @@ impl Codegen {
                 // in JS, but we still parenthesize lower-precedence forms for safety.
                 format!(
                     "{} = {}",
-                    self.generate_expr(target),
+                    self.generate_assign_target(target),
                     self.generate_expr(value)
                 )
             }

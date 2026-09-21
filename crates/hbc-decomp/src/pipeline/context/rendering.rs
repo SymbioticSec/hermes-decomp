@@ -388,7 +388,11 @@ fn expr_uses_this(expr: &crate::ir::Expression) -> bool {
         }
         Expression::Array { elements } => elements.iter().flatten().any(expr_uses_this),
         Expression::Object { properties } => properties.iter().any(|p| expr_uses_this(&p.value)),
-        Expression::Assignment { target, value } => expr_uses_this(target) || expr_uses_this(value),
+        Expression::Assignment { target, value } => {
+            let mut hit = false;
+            crate::ir::for_each_target_expression(target, &mut |e| hit |= expr_uses_this(e));
+            hit || expr_uses_this(value)
+        }
         Expression::Spread(inner) | Expression::Await(inner) => expr_uses_this(inner),
         Expression::Yield { value, .. } => expr_uses_this(value),
         Expression::TemplateLiteral { expressions, .. } => expressions.iter().any(expr_uses_this),

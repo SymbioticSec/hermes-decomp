@@ -129,7 +129,7 @@ fn inline_in_expr(expr: Expression, to_inline: &BTreeMap<u32, Expression>) -> Ex
             else_expr: Box::new(inline_in_expr(*else_expr, to_inline)),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(inline_in_expr(*target, to_inline)),
+            target: Box::new(inline_in_target(*target, to_inline)),
             value: Box::new(inline_in_expr(*value, to_inline)),
         },
         Expression::Spread(inner) => {

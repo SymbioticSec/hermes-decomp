@@ -258,7 +258,7 @@ impl ClosureContext {
                 self.track_nested_functions(parent_fn, else_expr);
             }
             Expression::Assignment { target, value } => {
-                self.track_nested_functions(parent_fn, target);
+                crate::ir::for_each_target_expression(target, &mut |e| self.track_nested_functions(parent_fn, e));
                 self.track_nested_functions(parent_fn, value);
             }
             Expression::Array { elements } => {

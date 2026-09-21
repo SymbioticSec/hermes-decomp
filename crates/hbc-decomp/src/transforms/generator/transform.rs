@@ -275,7 +275,7 @@ fn transform_expr(expr: Expression, is_async: bool) -> Expression {
                 .collect(),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(transform_expr(*target, is_async)),
+            target: Box::new(crate::ir::map_target_expressions(*target, &mut |e| transform_expr(e, is_async))),
             value: Box::new(transform_expr(*value, is_async)),
         },
         Expression::Spread(inner) => Expression::Spread(Box::new(transform_expr(*inner, is_async))),

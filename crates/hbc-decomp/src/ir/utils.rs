@@ -171,6 +171,123 @@ pub fn exprs_equal(a: &Expression, b: &Expression) -> bool {
 // Apply a transformation function to all nested statement bodies in a statement.
 // Handles If, While, DoWhile, For, ForIn, ForOf, TryCatch, Switch, and Block.
 // Non-body fields (conditions, expressions) are preserved unchanged.
+// Hand every expression an assignment target contains to `f`.
+//
+// A target is a place, not a value, but the places that are not plain bindings
+// are built out of expressions: the object of a member access, the key of an
+// index, the default of a destructuring slot. A pass that used to recurse into a
+// target as though it were an expression uses this instead, and keeps seeing the
+// same sub-expressions it always did.
+pub fn for_each_target_expression(target: &AssignTarget, f: &mut impl FnMut(&Expression)) {
+    match target {
+        AssignTarget::Binding(_) => {}
+        AssignTarget::Member { object, .. } => f(object),
+        AssignTarget::Index { object, key } => {
+            f(object);
+            f(key);
+        }
+        AssignTarget::DestructuringArray(items) => {
+            for (slot, default) in items.iter().flatten() {
+                for_each_target_expression(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+        }
+        AssignTarget::DestructuringArrayRest { elements, rest } => {
+            for (slot, default) in elements.iter().flatten() {
+                for_each_target_expression(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+            for_each_target_expression(rest, f);
+        }
+        AssignTarget::DestructuringObject(props) => {
+            for (_, slot, default) in props {
+                for_each_target_expression(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+        }
+        AssignTarget::DestructuringObjectRest { properties, rest } => {
+            for (_, slot, default) in properties {
+                for_each_target_expression(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+            for_each_target_expression(rest, f);
+        }
+        AssignTarget::Rest(inner) => for_each_target_expression(inner, f),
+    }
+}
+
+// Rebuild a target, mapping every expression it contains. The owned counterpart
+// of `for_each_target_expression`, for the passes that transform by value.
+pub fn map_target_expressions(
+    target: AssignTarget,
+    f: &mut impl FnMut(Expression) -> Expression,
+) -> AssignTarget {
+    let mut target = target;
+    for_each_target_expression_mut(&mut target, &mut |e| {
+        let taken = std::mem::replace(e, Expression::Value(Value::Constant(Constant::Undefined)));
+        *e = f(taken);
+    });
+    target
+}
+
+// The mutable counterpart, same coverage.
+pub fn for_each_target_expression_mut(
+    target: &mut AssignTarget,
+    f: &mut impl FnMut(&mut Expression),
+) {
+    match target {
+        AssignTarget::Binding(_) => {}
+        AssignTarget::Member { object, .. } => f(object),
+        AssignTarget::Index { object, key } => {
+            f(object);
+            f(key);
+        }
+        AssignTarget::DestructuringArray(items) => {
+            for (slot, default) in items.iter_mut().flatten() {
+                for_each_target_expression_mut(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+        }
+        AssignTarget::DestructuringArrayRest { elements, rest } => {
+            for (slot, default) in elements.iter_mut().flatten() {
+                for_each_target_expression_mut(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+            for_each_target_expression_mut(rest, f);
+        }
+        AssignTarget::DestructuringObject(props) => {
+            for (_, slot, default) in props {
+                for_each_target_expression_mut(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+        }
+        AssignTarget::DestructuringObjectRest { properties, rest } => {
+            for (_, slot, default) in properties {
+                for_each_target_expression_mut(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+            for_each_target_expression_mut(rest, f);
+        }
+        AssignTarget::Rest(inner) => for_each_target_expression_mut(inner, f),
+    }
+}
+
 // The read only counterpart of `map_nested_bodies`: hand every statement body a
 // control structure owns to `f`, without rebuilding the statement. Same coverage,
 // so a reader and a rewriter never disagree about what counts as a nested body.

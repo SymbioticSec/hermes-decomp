@@ -282,7 +282,7 @@ pub fn format_expr(expr: &Expression) -> String {
             }
         }
         Expression::Assignment { target, value } => {
-            format!("{} = {}", format_expr(target), format_expr(value))
+            format!("{target} = {}", format_expr(value))
         }
         Expression::Spread(inner) => format!("...{}", format_expr(inner)),
         Expression::TemplateLiteral { quasis, expressions } => {

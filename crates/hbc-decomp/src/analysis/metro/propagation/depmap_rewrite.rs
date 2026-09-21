@@ -437,7 +437,9 @@ fn rewrite_expr(
                 + rewrite_expr(else_expr, deps, aliases, roles)
         }
         Expression::Assignment { target, value } => {
-            rewrite_expr(target, deps, aliases, roles) + rewrite_expr(value, deps, aliases, roles)
+            let mut n = 0u64;
+            crate::ir::for_each_target_expression_mut(target, &mut |e| n += rewrite_expr(e, deps, aliases, roles));
+            n + rewrite_expr(value, deps, aliases, roles)
         }
         Expression::TemplateLiteral { expressions, .. } => {
             let mut c = 0u64;

@@ -223,7 +223,7 @@ fn rename_expr(namer: &VariableNamer, expr: Expression) -> Expression {
             else_expr: Box::new(rename_expr(namer, *else_expr)),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(rename_expr(namer, *target)),
+            target: Box::new(rename_target(namer, *target)),
             value: Box::new(rename_expr(namer, *value)),
         },
         Expression::Spread(inner) => Expression::Spread(Box::new(rename_expr(namer, *inner))),

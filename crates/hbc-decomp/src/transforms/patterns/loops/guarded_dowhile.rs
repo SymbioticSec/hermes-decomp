@@ -248,7 +248,7 @@ fn expr_mentions_var(expr: &Expression, var: &str) -> bool {
                 || expr_mentions_var(else_expr, var)
         }
         Expression::Assignment { target, value } => {
-            expr_mentions_var(target, var) || expr_mentions_var(value, var)
+            assign_target_mentions(target, var) || expr_mentions_var(value, var)
         }
         Expression::Array { elements } => elements.iter().flatten().any(|e| expr_mentions_var(e, var)),
         Expression::Object { properties } => properties.iter().any(|p| expr_mentions_var(&p.value, var)),

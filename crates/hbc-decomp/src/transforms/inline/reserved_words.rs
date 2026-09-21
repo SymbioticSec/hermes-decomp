@@ -128,7 +128,7 @@ fn rename_reserved_in_expr(expr: &mut Expression) {
             for p in properties { rename_reserved_in_expr(&mut p.value); }
         }
         Expression::Assignment { target, value } => {
-            rename_reserved_in_expr(target);
+            crate::ir::for_each_target_expression_mut(target, &mut rename_reserved_in_expr);
             rename_reserved_in_expr(value);
         }
         Expression::Spread(inner) => rename_reserved_in_expr(inner),

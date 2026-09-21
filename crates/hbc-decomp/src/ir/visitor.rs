@@ -170,7 +170,7 @@ pub trait Visitor<'a> {
                 }
             }
             Expression::Assignment { target, value } => {
-                self.visit_expression(target);
+                self.visit_assign_target(target);
                 self.visit_expression(value);
             }
             Expression::Spread(e) | Expression::Await(e) => {
@@ -247,7 +247,10 @@ pub trait Visitor<'a> {
                 self.visit_assign_target(rest);
             }
             AssignTarget::Rest(t) => self.visit_assign_target(t),
-            _ => {}
+            // A binding is a leaf, there is nothing under it to walk. Spelt out
+            // rather than swallowed by a catch all, so a variant added later is a
+            // compile error here instead of a silently unvisited place.
+            AssignTarget::Binding(_) => {}
         }
     }
 }
@@ -411,7 +414,7 @@ pub trait MutVisitor {
                 }
             }
             Expression::Assignment { target, value } => {
-                self.visit_expression(target);
+                self.visit_assign_target(target);
                 self.visit_expression(value);
             }
             Expression::Spread(e) | Expression::Await(e) => {
@@ -488,7 +491,83 @@ pub trait MutVisitor {
                 self.visit_assign_target(rest);
             }
             AssignTarget::Rest(t) => self.visit_assign_target(t),
-            _ => {}
+            AssignTarget::Binding(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod write_target_tests {
+    use super::{MutVisitor, Visitor};
+    use crate::ir::{AssignTarget, Binding, Constant, Expression, Statement, Value};
+
+    fn assignment_expression() -> Expression {
+        Expression::Assignment {
+            target: Box::new(AssignTarget::Binding(Binding::Register(3))),
+            value: Box::new(Expression::constant(Constant::Integer(1))),
+        }
+    }
+
+    // An assignment used as an expression is still a write. Routing its target
+    // through `visit_assign_target` is what lets one hook see every write in a
+    // body: before this, three separate passes each carried their own copy of the
+    // unwrap to count those definitions.
+    #[test]
+    fn a_write_in_expression_position_reaches_the_target_hook() {
+        struct Count {
+            targets: Vec<Binding>,
+        }
+        impl<'a> Visitor<'a> for Count {
+            fn visit_assign_target(&mut self, t: &'a AssignTarget) {
+                if let AssignTarget::Binding(b) = t {
+                    self.targets.push(b.clone());
+                }
+                self.walk_assign_target(t);
+            }
+        }
+        let mut count = Count {
+            targets: Vec::new(),
+        };
+        count.visit_statement(&Statement::Expr(assignment_expression()));
+        assert_eq!(count.targets, vec![Binding::Register(3)]);
+    }
+
+    #[test]
+    fn the_mutable_walk_reaches_it_too() {
+        struct Bump;
+        impl MutVisitor for Bump {
+            fn visit_assign_target(&mut self, t: &mut AssignTarget) {
+                if let AssignTarget::Binding(Binding::Register(r)) = t {
+                    *r += 1;
+                }
+                self.walk_assign_target(t);
+            }
+        }
+        let mut stmt = Statement::Expr(assignment_expression());
+        Bump.visit_statement(&mut stmt);
+        match &stmt {
+            Statement::Expr(Expression::Assignment { target, .. }) => {
+                assert_eq!(**target, AssignTarget::Binding(Binding::Register(4)));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    // The target of an expression assignment is not an expression, so the
+    // expression hook must not see it as a value being read.
+    #[test]
+    fn the_target_is_not_reported_as_a_read() {
+        struct Reads(Vec<String>);
+        impl<'a> Visitor<'a> for Reads {
+            fn visit_expression(&mut self, e: &'a Expression) {
+                if let Expression::Value(Value::Binding(b)) = e {
+                    self.0.push(b.to_string());
+                }
+                self.walk_expression(e);
+            }
+        }
+        let mut reads = Reads(Vec::new());
+        reads.visit_statement(&Statement::Expr(assignment_expression()));
+        assert!(reads.0.is_empty(), "a place is not a value: {:?}", reads.0);
     }
 }

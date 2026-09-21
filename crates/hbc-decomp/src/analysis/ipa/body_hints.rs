@@ -210,7 +210,7 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
             }
         }
         Expression::Assignment { target, value } => {
-            collect_body_param_hints_expr(target, hints);
+            crate::ir::for_each_target_expression(target, &mut |e| collect_body_param_hints_expr(e, hints));
             collect_body_param_hints_expr(value, hints);
         }
         Expression::Spread(inner) | Expression::Await(inner) => collect_body_param_hints_expr(inner, hints),

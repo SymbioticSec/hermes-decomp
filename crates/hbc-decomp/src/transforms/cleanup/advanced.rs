@@ -276,11 +276,6 @@ impl<'a> Visitor<'a> for DefCounter<'a> {
         self.walk_assign_target(target);
     }
     fn visit_expression(&mut self, expr: &'a Expression) {
-        if let Expression::Assignment { target, .. } = expr {
-            if let Expression::Value(Value::Binding(Binding::Register(r))) = &**target {
-                *self.counts.entry(*r).or_insert(0) += 1;
-            }
-        }
         self.walk_expression(expr);
     }
 }

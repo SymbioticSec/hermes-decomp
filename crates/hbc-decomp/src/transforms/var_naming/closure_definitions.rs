@@ -730,7 +730,7 @@ fn collect_names_in_expr(expr: &Expression, names: &mut std::collections::HashSe
             collect_names_in_expr(operand, names);
         }
         Expression::Assignment { target, value } => {
-            collect_names_in_expr(target, names);
+            crate::ir::for_each_target_expression(target, &mut |e| collect_names_in_expr(e, names));
             collect_names_in_expr(value, names);
         }
         _ => {}

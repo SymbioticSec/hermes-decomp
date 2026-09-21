@@ -98,7 +98,7 @@ fn collect_async_generators_from_expr(expr: &crate::ir::Expression, results: &mu
             collect_async_generators_from_expr(object, results);
         }
         Expression::Assignment { target, value } => {
-            collect_async_generators_from_expr(target, results);
+            crate::ir::for_each_target_expression(target, &mut |e| collect_async_generators_from_expr(e, results));
             collect_async_generators_from_expr(value, results);
         }
         Expression::Array { elements } => {

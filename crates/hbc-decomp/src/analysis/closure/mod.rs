@@ -285,7 +285,7 @@ fn resolve_expr(expr: Expression, info: &ClosureInfo) -> Expression {
                 .collect(),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(resolve_expr(*target, info)),
+            target: Box::new(resolve_target(*target, info)),
             value: Box::new(resolve_expr(*value, info)),
         },
         Expression::Spread(e) => Expression::Spread(Box::new(resolve_expr(*e, info))),

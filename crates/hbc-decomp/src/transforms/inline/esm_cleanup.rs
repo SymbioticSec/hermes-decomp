@@ -227,7 +227,7 @@ fn apply_hoisted_aliases_to_expr(expr: &mut Expression, aliases: &BTreeMap<Strin
             for prop in properties.iter_mut() { apply_hoisted_aliases_to_expr(&mut prop.value, aliases); }
         }
         Expression::Assignment { target, value } => {
-            apply_hoisted_aliases_to_expr(target, aliases);
+            crate::ir::for_each_target_expression_mut(target, &mut |e| apply_hoisted_aliases_to_expr(e, aliases));
             apply_hoisted_aliases_to_expr(value, aliases);
         }
         Expression::Spread(inner) => apply_hoisted_aliases_to_expr(inner, aliases),

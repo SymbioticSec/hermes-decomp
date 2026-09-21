@@ -127,7 +127,7 @@ fn substitute_expr(expr: &Expression, copies: &BTreeMap<u32, Expression>) -> Exp
             else_expr: Box::new(substitute_expr(else_expr, copies)),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(substitute_expr(target, copies)),
+            target: Box::new(substitute_target(target, copies)),
             value: Box::new(substitute_expr(value, copies)),
         },
         Expression::Spread(inner) => Expression::Spread(Box::new(substitute_expr(inner, copies))),

@@ -26,12 +26,6 @@ impl<'a, 'c> Visitor<'a> for DefCounter<'c> {
         self.walk_assign_target(target);
     }
     fn visit_expression(&mut self, expr: &'a Expression) {
-        // A compound write target (e.g. inside Expression::Assignment) is a def.
-        if let Expression::Assignment { target, .. } = expr {
-            if let Expression::Value(Value::Binding(Binding::Register(r))) = &**target {
-                *self.counts.entry(*r).or_insert(0) += 1;
-            }
-        }
         self.walk_expression(expr);
     }
 }

@@ -403,14 +403,10 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
             }
         }
         Expression::Assignment { target, value } => {
-            if let Expression::Member {
-                property: PropertyKey::Ident(key) | PropertyKey::String(key),
-                ..
-            } = target.as_ref()
-            {
-                record_object_key_for_value(key, value, usage);
+            if let crate::ir::AssignTarget::Member { property, .. } = target.as_ref() {
+                record_object_key_for_value(property, value, usage);
             }
-            collect_closure_usage_in_expr(target, usage);
+            collect_closure_usage_in_target(target, usage);
             collect_closure_usage_in_expr(value, usage);
         }
         Expression::Spread(inner) => {

@@ -55,7 +55,7 @@ pub fn simplify_expr(expr: Expression) -> Expression {
                 .collect(),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(simplify_expr(*target)),
+            target: Box::new(crate::ir::map_target_expressions(*target, &mut simplify_expr)),
             value: Box::new(simplify_expr(*value)),
         },
         Expression::Spread(inner) => Expression::Spread(Box::new(simplify_expr(*inner))),

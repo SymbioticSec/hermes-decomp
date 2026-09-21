@@ -115,7 +115,9 @@ fn expr_references_var(expr: &Expression, var_name: &str) -> bool {
             properties.iter().any(|p| expr_references_var(&p.value, var_name))
         }
         Expression::Assignment { target, value } => {
-            expr_references_var(target, var_name) || expr_references_var(value, var_name)
+            let mut hit = false;
+            crate::ir::for_each_target_expression(target, &mut |e| hit |= expr_references_var(e, var_name));
+            hit || expr_references_var(value, var_name)
         }
         Expression::Spread(inner) => expr_references_var(inner, var_name),
         _ => false,

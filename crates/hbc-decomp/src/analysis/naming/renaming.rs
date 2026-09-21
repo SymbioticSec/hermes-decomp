@@ -234,7 +234,7 @@ fn rename_expr(expr: Expression, names: &BTreeMap<u32, String>) -> Expression {
                 .collect(),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(rename_expr(*target, names)),
+            target: Box::new(rename_target(*target, names)),
             value: Box::new(rename_expr(*value, names)),
         },
         Expression::Spread(inner) => Expression::Spread(Box::new(rename_expr(*inner, names))),
@@ -435,7 +435,7 @@ fn rename_variables_in_expr(expr: &mut Expression, renames: &BTreeMap<String, St
             }
         }
         Expression::Assignment { target, value } => {
-            rename_variables_in_expr(target, renames);
+            rename_variables_in_target(target, renames);
             rename_variables_in_expr(value, renames);
         }
         _ => {}

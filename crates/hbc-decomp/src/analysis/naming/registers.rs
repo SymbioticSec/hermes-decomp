@@ -267,7 +267,7 @@ fn analyze_expr(expr: &Expression, info: &mut BTreeMap<u32, RegisterInfo>) {
             analyze_expr(else_expr, info);
         }
         Expression::Assignment { target, value } => {
-            analyze_expr(target, info);
+            crate::ir::for_each_target_expression(target, &mut |e| analyze_expr(e, info));
             analyze_expr(value, info);
         }
         Expression::Spread(inner) => analyze_expr(inner, info),

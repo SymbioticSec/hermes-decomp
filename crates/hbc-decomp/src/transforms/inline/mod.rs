@@ -57,12 +57,6 @@ impl<'a> Visitor<'a> for UseCounter {
         if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             *self.use_count.entry(*r).or_insert(0) += 1;
         }
-        // A compound write target (e.g. inside Expression::Assignment) is a def.
-        if let Expression::Assignment { target, .. } = expr {
-            if let Expression::Value(Value::Binding(Binding::Register(r))) = &**target {
-                *self.def_count.entry(*r).or_insert(0) += 1;
-            }
-        }
         self.walk_expression(expr);
     }
 
@@ -234,13 +228,6 @@ fn stmt_redefines_source(stmt: &Statement, value: &Expression) -> bool {
             self.walk_assign_target(target);
         }
         fn visit_expression(&mut self, expr: &'a Expression) {
-            if let Expression::Assignment { target, .. } = expr {
-                if let Expression::Value(Value::Binding(Binding::Register(r))) = &**target {
-                    if self.reads.contains(r) {
-                        self.found = true;
-                    }
-                }
-            }
             self.walk_expression(expr);
         }
     }

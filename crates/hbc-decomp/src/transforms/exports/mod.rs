@@ -86,7 +86,7 @@ fn collect_expr_signals(
         }
         Expression::Unary { operand, .. } => collect_expr_signals(operand, param_map, sig),
         Expression::Assignment { target, value } => {
-            collect_expr_signals(target, param_map, sig);
+            crate::ir::for_each_target_expression(target, &mut |e| collect_expr_signals(e, param_map, sig));
             collect_expr_signals(value, param_map, sig);
         }
         Expression::Conditional { condition, then_expr, else_expr } => {

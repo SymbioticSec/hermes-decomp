@@ -199,7 +199,7 @@ fn strip_this_in_expr(expr: &mut Expression) {
             for p in properties.iter_mut() { strip_this_in_expr(&mut p.value); }
         }
         Expression::Assignment { target, value } => {
-            strip_this_in_expr(target);
+            crate::ir::for_each_target_expression_mut(target, &mut strip_this_in_expr);
             strip_this_in_expr(value);
         }
         Expression::Spread(inner) => strip_this_in_expr(inner),
