@@ -435,12 +435,19 @@ fn module_content_hash(stmts: &[Statement], dep_count: usize, file: &BytecodeFil
 // typically 2-3 passes; the cap is a backstop.
 const MAX_DEEP_NAMING_ITERATIONS: usize = 6;
 
-// Fill empty parameter-name slots in `dst` from `src` (a later IPA pass), never
-// overwriting a name already found. Returns how many new names were filled.
+// Fill parameter-name slots in `dst` from `src`, a later IPA pass. An empty slot
+// takes the new name, and so does a slot holding a generic placeholder: the first
+// pass often has no resolved call site for a function and falls back to what the
+// body looks like (`arr`, `str`), while a later pass, reading an IR whose closures
+// are now named, resolves the call site and recovers the real name. Keeping the
+// placeholder would throw that away. A name that is not a placeholder is never
+// overwritten, and a placeholder is only ever replaced by a real name, so the
+// merge cannot oscillate. Returns how many slots changed.
 fn merge_param_names(
     dst: &mut BTreeMap<u32, Vec<Option<String>>>,
     src: BTreeMap<u32, Vec<Option<String>>>,
 ) -> usize {
+    use crate::analysis::ipa::inference::is_generic_name;
     let mut added = 0;
     for (fid, names) in src {
         let entry = dst.entry(fid).or_default();
@@ -449,7 +456,9 @@ fn merge_param_names(
         }
         for (i, name) in names.into_iter().enumerate() {
             if let Some(name) = name {
-                if entry[i].is_none() {
+                let replaces_placeholder = matches!(&entry[i], Some(e) if is_generic_name(e))
+                    && !is_generic_name(&name);
+                if entry[i].is_none() || replaces_placeholder {
                     entry[i] = Some(name);
                     added += 1;
                 }

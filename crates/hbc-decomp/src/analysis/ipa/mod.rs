@@ -3,7 +3,7 @@ mod body_hints;
 mod error_string_hints;
 mod graph;
 mod hints_tables;
-mod inference;
+pub(crate) mod inference;
 mod property_accesses;
 pub(crate) mod resolution;
 mod structs;
