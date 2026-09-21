@@ -66,6 +66,7 @@ THIRD_PARTY_NOTICES.md
 !/scripts/build/*.sh
 !/scripts/build/*.mjs
 !/scripts/build/*.cpp
+!/scripts/build/*.tsv
 # IDE / AI tooling
 .claude/
 .cursor/

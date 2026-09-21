@@ -1,0 +1,6 @@
+# Per bundle ceiling on modules that fail to parse, checked by gates.sh.
+# Columns: bundle path (relative to the repo root), decompile flags, ceiling.
+# A bundle that is not on this machine is skipped, not failed: the large
+# inputs are local. Lower a ceiling whenever the real number drops, so a
+# regression cannot hide under an old allowance.
+morning.index.android.bundle	--stable --deep	251

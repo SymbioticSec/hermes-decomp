@@ -1,0 +1,16 @@
+# Round trip entries known to fail, checked by roundtrip.sh.
+# Columns: version directory, snippet name, reason.
+#
+# The list is exact in both directions. A failure that is not here fails the
+# gate, and an entry here that starts passing fails it too, so the list cannot
+# quietly go stale. Shrinking this file is the point.
+#
+# All seven surfaced the first time these snippets were ever compiled. They are
+# defects that predate the list, not regressions.
+v59	nested_destr	nested array destructuring on the legacy iterator protocol: the inner pattern is never rebuilt and the value binding escapes its if
+v60	nested_destr	same as v59
+v62	nested_destr	same as v59
+v71	nested_destr	same as v59
+v98	gen_resume	generator body is correct apart from one dead store to an undefined temporary (closure_0 = tmp2)
+v98	async_deep	same dead store, plus the awaited call reads a closure slot where it should read the parameter
+v98	async_loop	the state machine is not recombined at all, the raw switch on state is emitted (state_machine_v98 bails)
