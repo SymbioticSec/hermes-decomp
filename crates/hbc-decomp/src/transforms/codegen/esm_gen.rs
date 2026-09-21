@@ -1,5 +1,5 @@
 use super::{Codegen, DescriptorInfo, EsmClassification, sanitize_import_name, replace_whole_word};
-use super::esm_imports::{consolidate_imports, fold_redundant_imports};
+use super::esm_imports::{consolidate_imports, fold_redundant_imports, make_default_imports_distinct};
 use crate::ir::Statement;
 
 impl Codegen {
@@ -329,7 +329,11 @@ impl Codegen {
         // it requires the same dependency from many functions (e.g. `import _curry2
         // from "_curry2";` x65), and merge distinct named imports of the same module
         // into one `import { a, b } from "M";`.
-        let imports = consolidate_imports(imports);
+        let mut imports = consolidate_imports(imports);
+        // Consolidation collapses the same dependency imported twice. Two
+        // different dependencies that inferred one name are still two lines
+        // binding it, so they are separated here, body included.
+        make_default_imports_distinct(&mut imports, &mut body_stmts, &mut exports);
         let (imports, mut extra_consts) =
             fold_redundant_imports(imports, &mut body_stmts, &mut exports);
 
