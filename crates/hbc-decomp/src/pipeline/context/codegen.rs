@@ -215,6 +215,7 @@ impl PipelineContext {
                 .with_esm_module_meta(dep_ids);
             let extra = self.extra_writes_for_function(function_id);
             transforms::insert_declarations_with_extra_writes(&mut statements, &params, &extra);
+            codegen = codegen.with_nested_writes(extra);
             codegen.generate_esm_module(
                 &statements,
                 module.module_id,

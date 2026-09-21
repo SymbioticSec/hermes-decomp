@@ -211,6 +211,12 @@ pub struct Codegen {
     pub(super) dep_ids: Option<BTreeMap<u32, u32>>,
     // Pre-rendered inline function bodies (function_id -> complete function expression string).
     pub(super) inline_bodies: Arc<BTreeMap<u32, String>>,
+    // Names written by the function bodies that get inlined into this module, with
+    // the child's own `let` declarations already excluded. Those bodies are only
+    // available here as rendered strings, so the ESM pass cannot see their writes
+    // on its own, and a write buried in one of them invalidates an import binding
+    // just as surely as a write at the top level.
+    pub(super) nested_writes: BTreeMap<String, usize>,
 }
 
 impl Codegen {
@@ -223,6 +229,7 @@ impl Codegen {
             dep_names: None,
             dep_ids: None,
             inline_bodies: Arc::new(BTreeMap::new()),
+            nested_writes: BTreeMap::new(),
         }
     }
 
@@ -246,6 +253,12 @@ impl Codegen {
 
     pub fn with_inline_bodies(mut self, bodies: Arc<BTreeMap<u32, String>>) -> Self {
         self.inline_bodies = bodies;
+        self
+    }
+
+    // Writes performed by the descendant bodies rendered inside this module.
+    pub fn with_nested_writes(mut self, writes: BTreeMap<String, usize>) -> Self {
+        self.nested_writes = writes;
         self
     }
 

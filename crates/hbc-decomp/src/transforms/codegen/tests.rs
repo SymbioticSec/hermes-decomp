@@ -291,3 +291,74 @@ fn test_esm_named_export() {
     let output = codegen.generate_esm_module(&stmts, 5, Some("auth"));
     assert!(output.contains("export const loginWithToken = fn42"), "Expected named export, got: {}", output);
 }
+
+// A module factory's own IR is only its top level: the functions rendered inside
+// it are inlined as strings by the time ESM generation runs. Their writes still
+// land on the module's bindings, and an ESM import binding cannot be written to,
+// so the pipeline hands those write counts over and they must invalidate the
+// import exactly like a top-level write does.
+mod nested_write_import_tests {
+    use super::super::{Codegen, CodegenOptions};
+    use crate::ir::{Binding, Constant, Expression, Statement, Value};
+    use std::collections::BTreeMap;
+
+    fn require_module(id: i32) -> Expression {
+        Expression::call(
+            Expression::Value(Value::Binding(Binding::Variable("require".into()))),
+            vec![
+                Expression::constant(Constant::Undefined),
+                Expression::constant(Constant::Integer(id)),
+            ],
+        )
+    }
+
+    fn generate(nested: &[(&str, usize)]) -> String {
+        let stmts = vec![Statement::let_stmt("React", require_module(0))];
+        let mut import_map = BTreeMap::new();
+        import_map.insert(0u32, "react".to_string());
+        let mut writes = BTreeMap::new();
+        for (name, count) in nested {
+            writes.insert((*name).to_string(), *count);
+        }
+        Codegen::new(CodegenOptions::new())
+            .with_imports(import_map)
+            .with_esm_mode(BTreeMap::new())
+            .with_nested_writes(writes)
+            .generate_esm_module(&stmts, 7, Some("m"))
+    }
+
+    #[test]
+    fn a_name_no_nested_body_writes_stays_a_plain_import() {
+        let out = generate(&[]);
+        assert!(
+            out.contains("import React from \"react\""),
+            "expected a plain import, got: {out}"
+        );
+        assert!(
+            !out.contains("React_mod"),
+            "nothing forced an alias, got: {out}"
+        );
+    }
+
+    #[test]
+    fn a_name_written_by_an_inlined_body_gets_its_own_binding() {
+        let out = generate(&[("React", 1)]);
+        assert!(
+            out.contains("import React_mod from \"react\""),
+            "expected the import to move to its own binding, got: {out}"
+        );
+        assert!(
+            out.contains("let React = React_mod;"),
+            "expected a writable local alias, got: {out}"
+        );
+    }
+
+    #[test]
+    fn a_nested_write_to_another_name_leaves_the_import_alone() {
+        let out = generate(&[("somethingElse", 4)]);
+        assert!(
+            out.contains("import React from \"react\""),
+            "an unrelated name must not disturb the import, got: {out}"
+        );
+    }
+}

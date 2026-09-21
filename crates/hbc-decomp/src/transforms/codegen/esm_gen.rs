@@ -76,6 +76,12 @@ impl Codegen {
                     w.visit_statement(stmt);
                 }
             }
+            // Bodies inlined into this module are rendered strings by now, so their
+            // writes are folded in from the count the pipeline took over the IR of
+            // every descendant function.
+            for (name, count) in &self.nested_writes {
+                *writes.entry(name.clone()).or_insert(0) += *count as u32;
+            }
             writes.into_iter().filter(|(_, c)| *c > 1).map(|(n, _)| n).collect()
         };
 
