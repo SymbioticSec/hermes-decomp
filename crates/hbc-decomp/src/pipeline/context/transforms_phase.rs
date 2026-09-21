@@ -136,6 +136,135 @@ impl PipelineContext {
         }
     }
 
+    // The wrapper statements that must survive its body being replaced: the
+    // stores that hand a parameter to an environment slot. Everything else a
+    // wrapper does is bookkeeping (zeroing the status and label slots) or the
+    // return of the generator object itself, both of which the replacement
+    // supersedes.
+    fn parameter_captures(body: &[Statement]) -> Vec<Statement> {
+        use crate::ir::{AssignTarget, Expression, Value};
+        body.iter()
+            .filter(|stmt| {
+                matches!(
+                    stmt,
+                    Statement::Assign {
+                        target: AssignTarget::Binding(_),
+                        value: Expression::Value(Value::Parameter(_)),
+                    }
+                )
+            })
+            .cloned()
+            .collect()
+    }
+
+    // Whether `body` ever reads `binding`. A capture the replacement body never
+    // looks at is not a link between the two, it is a store to a name the output
+    // does not otherwise mention, so keeping it would add the very kind of line
+    // this change exists to remove.
+    fn body_reads_binding(body: &[Statement], binding: &crate::ir::Binding) -> bool {
+        use crate::ir::{Expression, Value, Visitor};
+        struct Find<'a> {
+            want: &'a crate::ir::Binding,
+            found: bool,
+        }
+        impl<'a, 'b> Visitor<'b> for Find<'a> {
+            fn visit_expression(&mut self, expr: &'b Expression) {
+                if let Expression::Value(Value::Binding(b)) = expr {
+                    if b == self.want {
+                        self.found = true;
+                    }
+                }
+                self.walk_expression(expr);
+            }
+        }
+        let mut find = Find {
+            want: binding,
+            found: false,
+        };
+        for stmt in body {
+            find.visit_statement(stmt);
+        }
+        find.found
+    }
+
+    // Drop a store whose source is a name this body never writes and never
+    // mentions again.
+    //
+    // A generator carries its scope in an environment, and capturing one reads
+    // `StoreToEnvironment parent, slot, thisEnv`. The environment creation itself
+    // has no JavaScript form and emits nothing, so the register naming it is never
+    // defined and the store came out as `closure_0 = tmp2`, which stops the module
+    // at that line. Suppressing the store in the builder was tried and removed 64
+    // string literals and 629 property accesses from the reference bundle: later
+    // passes read it. Removing it here, once the body is rebuilt and self
+    // contained, is the narrow form.
+    //
+    // The condition is structural rather than by name, and it has to hold at both
+    // ends. The source is never assigned in this body and is mentioned nowhere
+    // else in it, and the target is never read in it either. Testing only the
+    // source deleted the resume value of an await, because a parameter is written
+    // by the call and not by a statement: `closure_130_3 = value` looked like a
+    // read of nothing and was in fact the blob id the next line returns.
+    fn drop_stores_from_undefined_sources(body: Vec<Statement>) -> Vec<Statement> {
+        use crate::ir::{AssignTarget, Binding, Expression, Value, Visitor};
+        use std::collections::{HashMap, HashSet};
+
+        struct Scan {
+            assigned: HashSet<Binding>,
+            reads: HashMap<Binding, usize>,
+        }
+        impl<'b> Visitor<'b> for Scan {
+            fn visit_assign_target(&mut self, t: &'b AssignTarget) {
+                if let AssignTarget::Binding(b) = t {
+                    self.assigned.insert(b.clone());
+                }
+                self.walk_assign_target(t);
+            }
+            fn visit_statement(&mut self, st: &'b Statement) {
+                if let Statement::Let { name, .. } = st {
+                    self.assigned.insert(Binding::Variable(name.clone()));
+                }
+                self.walk_statement(st);
+            }
+            fn visit_expression(&mut self, e: &'b Expression) {
+                if let Expression::Value(Value::Binding(b)) = e {
+                    *self.reads.entry(b.clone()).or_insert(0) += 1;
+                }
+                self.walk_expression(e);
+            }
+        }
+
+        let mut scan = Scan {
+            assigned: HashSet::new(),
+            reads: HashMap::new(),
+        };
+        for st in &body {
+            scan.visit_statement(st);
+        }
+
+        let doomed = |st: &Statement| -> bool {
+            let Statement::Assign {
+                target: AssignTarget::Binding(dst),
+                value: Expression::Value(Value::Binding(src)),
+            } = st
+            else {
+                return false;
+            };
+            let source_is_undefined =
+                !scan.assigned.contains(src) && scan.reads.get(src).copied().unwrap_or(0) == 1;
+            let target_is_unread = scan.reads.get(dst).copied().unwrap_or(0) == 0;
+            source_is_undefined && target_is_unread
+        };
+
+        fn strip(body: Vec<Statement>, doomed: &impl Fn(&Statement) -> bool) -> Vec<Statement> {
+            body.into_iter()
+                .filter(|st| !doomed(st))
+                .map(|st| crate::ir::map_nested_bodies(st, |inner| strip(inner, doomed)))
+                .collect()
+        }
+        strip(body, &doomed)
+    }
+
     // See STAGE W16b. Replace each generator wrapper's body with the inner
     // generator body it merely creates and returns.
     pub(super) fn collapse_generator_wrappers(
@@ -149,16 +278,40 @@ impl PipelineContext {
         // shape, not by the is_generator flag on the wrapper, is required.
         // `generator_wrapper_target` only matches Function{is_generator:true}, so
         // the inner is a generator even if analysis missed marking it earlier.
-        let mut replacements: Vec<(u32, u32)> = Vec::new();
+        let mut replacements: Vec<(u32, u32, Vec<Statement>)> = Vec::new();
         for (&fid, body) in all_ir.iter() {
             if let Some(inner) = generator_wrapper_target(body) {
                 if inner != fid && all_ir.contains_key(&inner) {
-                    replacements.push((fid, inner));
+                    replacements.push((fid, inner, Self::parameter_captures(body)));
                 }
             }
         }
-        for (fid, inner) in replacements {
+        // Parameter captures held back from each collapsed wrapper, re-attached
+        // once the state machine has been lifted.
+        let mut wrapper_captures: BTreeMap<u32, Vec<Statement>> = BTreeMap::new();
+        for (fid, inner, captures) in replacements {
             if let Some(inner_body) = all_ir.get(&inner).cloned() {
+                // The wrapper's body goes away, but the stores that put its
+                // parameters into the environment the generator reads are the only
+                // link between the two. Dropping them left the body awaiting a slot
+                // nothing ever wrote (`Promise.resolve(closure_0)` for a parameter
+                // named `x`), which is a lost argument, not just a lost name.
+                // Keep only what the replacement body actually reads. The
+                // reconstruction below rebuilds the body from the state machine
+                // dispatch, so these are re-attached there rather than here.
+                let captures: Vec<Statement> = captures
+                    .into_iter()
+                    .filter(|stmt| match stmt {
+                        Statement::Assign {
+                            target: crate::ir::AssignTarget::Binding(b),
+                            ..
+                        } => Self::body_reads_binding(&inner_body, b),
+                        _ => false,
+                    })
+                    .collect();
+                if !captures.is_empty() {
+                    wrapper_captures.insert(fid, captures);
+                }
                 all_ir.insert(fid, inner_body);
                 // Both ends are generators: wrapper becomes the callable function*,
                 // inner was the CreateGenerator body (state machine / yields).
@@ -186,6 +339,20 @@ impl PipelineContext {
             .collect();
         for fid in gen_ids {
             if let Some(body) = all_ir.remove(&fid) {
+                // A wrapper that was collapsed into this body held the stores
+                // that hand its parameters to the environment the machine reads.
+                // They go back on the front here, after the lift, because the
+                // lift rebuilds the body from the dispatch and would drop
+                // anything sitting in front of it.
+                let captures = wrapper_captures.remove(&fid).unwrap_or_default();
+                let prepend = |body: Vec<Statement>| -> Vec<Statement> {
+                    if captures.is_empty() {
+                        return body;
+                    }
+                    let mut merged = captures.clone();
+                    merged.extend(body);
+                    merged
+                };
                 let Some(lifted) = transforms::try_reconstruct_generator_v98(&body) else {
                     // The machine did not lift, so it stays exactly as decoded.
                     // The cleanup below reads data flow to decide what is dead,
@@ -195,10 +362,10 @@ impl PipelineContext {
                     // `piloteAuthHeaders`, `Bearer ` and `x-refresh-token`
                     // included, disappeared from the output while still being
                     // present in the per function decompile of the same body.
-                    all_ir.insert(fid, body);
+                    all_ir.insert(fid, prepend(body));
                     continue;
                 };
-                let mut body = lifted;
+                let mut body = prepend(lifted);
                 // Reconstruct runs after the W14 yield→await pass, so a v98
                 // machine that just became `yield` still needs the async rewrite.
                 if closure_ctx.is_async(fid) {
@@ -214,6 +381,7 @@ impl PipelineContext {
                 body = transforms::remove_dead_temp_bindings(body);
                 body = transforms::eliminate_dead_stores(body);
                 body = drop_unread_bookkeeping(body);
+                body = Self::drop_stores_from_undefined_sources(body);
                 body = drop_duplicate_bare_requires(body);
                 all_ir.insert(fid, body);
             }
@@ -407,4 +575,124 @@ fn is_trivial_bookkeeping_value(e: &crate::ir::Expression) -> bool {
                 Constant::Integer(_) | Constant::Null | Constant::Undefined | Constant::Bool(_)
             ))
     )
+}
+
+#[cfg(test)]
+mod generator_wrapper_tests {
+    use super::PipelineContext;
+    use crate::ir::{AssignTarget, Binding, Constant, Expression, Statement, Value};
+
+    fn assign(target: &str, value: Expression) -> Statement {
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(target.to_string())),
+            value,
+        }
+    }
+
+    fn read(name: &str) -> Expression {
+        Expression::Value(Value::Binding(Binding::Variable(name.to_string())))
+    }
+
+    fn drop_stores(body: Vec<Statement>) -> Vec<Statement> {
+        PipelineContext::drop_stores_from_undefined_sources(body)
+    }
+
+    // A generator captures its scope with a store of a freshly created
+    // environment. The creation has no JavaScript form and emits nothing, so the
+    // register naming it is never defined and the store reads a name that does not
+    // exist. Nothing else in the body mentions either side.
+    #[test]
+    fn a_store_from_a_name_nothing_defines_is_dropped() {
+        let body = vec![
+            assign("closure_0", read("tmp2")),
+            assign("closure_1", Expression::constant(Constant::Integer(1))),
+            Statement::Return(Some(read("closure_1"))),
+        ];
+        let out = drop_stores(body);
+        assert_eq!(out.len(), 2, "only the undefined read goes: {out:?}");
+        assert!(matches!(&out[0], Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), .. } if n == "closure_1"));
+    }
+
+    // The resume value of an await arrives as a parameter, which no statement
+    // assigns. Testing only the source made that look like a read of nothing, and
+    // deleting it lost the value the next line returns.
+    #[test]
+    fn a_store_whose_target_is_read_is_kept() {
+        let body = vec![
+            assign("closure_3", read("value")),
+            Statement::Return(Some(read("closure_3"))),
+        ];
+        let out = drop_stores(body.clone());
+        assert_eq!(out, body, "the target is read, so the store carries data");
+    }
+
+    #[test]
+    fn a_source_mentioned_more_than_once_is_kept() {
+        let body = vec![
+            assign("closure_0", read("shared")),
+            assign("closure_1", read("shared")),
+        ];
+        let out = drop_stores(body.clone());
+        assert_eq!(out, body, "a name used twice is not a one off artefact");
+    }
+
+    #[test]
+    fn a_store_from_a_name_the_body_assigns_is_kept() {
+        let body = vec![
+            assign("real", Expression::constant(Constant::Integer(7))),
+            assign("closure_0", read("real")),
+        ];
+        let out = drop_stores(body.clone());
+        assert_eq!(out, body, "the source is defined right above");
+    }
+
+    #[test]
+    fn the_rule_reaches_into_nested_bodies() {
+        let body = vec![Statement::If {
+            condition: Expression::constant(Constant::Bool(true)),
+            then_body: vec![assign("closure_0", read("tmp2"))],
+            else_body: vec![],
+        }];
+        let out = drop_stores(body);
+        match &out[0] {
+            Statement::If { then_body, .. } => assert!(then_body.is_empty(), "{out:?}"),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    // What the wrapper hands to the generator is the store of its parameter into
+    // the environment the machine reads. It is the only link between the two.
+    #[test]
+    fn a_parameter_capture_is_picked_out_of_a_wrapper_body() {
+        let body = vec![
+            assign("closure_0", Expression::Value(Value::Parameter(0))),
+            assign("c2", Expression::constant(Constant::Integer(0))),
+            Statement::Return(None),
+        ];
+        let caps = PipelineContext::parameter_captures(&body);
+        assert_eq!(caps.len(), 1, "only the parameter store: {caps:?}");
+        assert_eq!(caps[0], body[0]);
+    }
+
+    #[test]
+    fn a_wrapper_with_no_parameter_stores_yields_nothing() {
+        let body = vec![
+            assign("c2", Expression::constant(Constant::Integer(0))),
+            Statement::Return(None),
+        ];
+        assert!(PipelineContext::parameter_captures(&body).is_empty());
+    }
+
+    #[test]
+    fn a_capture_the_replacement_body_never_reads_is_not_a_link() {
+        let inner = vec![Statement::Return(Some(read("closure_9")))];
+        assert!(!PipelineContext::body_reads_binding(
+            &inner,
+            &Binding::Variable("closure_0".to_string())
+        ));
+        assert!(PipelineContext::body_reads_binding(
+            &inner,
+            &Binding::Variable("closure_9".to_string())
+        ));
+    }
 }
