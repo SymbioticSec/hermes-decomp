@@ -2,7 +2,7 @@ use crate::analysis::metro::registry::MetroRegistry;
 use crate::ir::{Expression, PropertyKey, Value};
 use std::collections::HashMap;
 
-use super::traversal::Definition;
+use super::traversal::{DefLookup, Definition};
 
 // Index of function names to candidate function IDs.
 // We keep all IDs because names are often duplicated in production bundles.
@@ -10,7 +10,7 @@ pub type FunctionNameIndex = HashMap<String, Vec<u32>>;
 
 pub(super) fn resolve_callee(
     callee: &Expression,
-    defs: &HashMap<String, Definition>,
+    defs: DefLookup<'_>,
     metro_registry: &MetroRegistry,
     func_name_index: &FunctionNameIndex,
 ) -> Option<u32> {
@@ -37,14 +37,14 @@ pub(super) fn resolve_callee(
         } => {
             // First try to resolve via module registry
             if let Some(base_name) = get_base_name(object) {
-                if let Some(def) = defs.get(&base_name) {
+                if let Some(def) = defs(&base_name) {
                     if let Definition::Module(mod_id) = def {
                         let prop_name = match property {
                             PropertyKey::String(s) | PropertyKey::Ident(s) => Some(s.as_str()),
                             _ => None,
                         };
                         if let Some(prop_name) = prop_name {
-                            if let Some(module) = metro_registry.get_module(*mod_id) {
+                            if let Some(module) = metro_registry.get_module(mod_id) {
                                 if let Some(fid) = module.exports.get(prop_name) {
                                     return Some(*fid);
                                 }
@@ -74,17 +74,17 @@ pub(super) fn resolve_callee(
 // name is unique in the bundle.
 fn resolve_named_definition(
     key: &str,
-    defs: &HashMap<String, Definition>,
+    defs: DefLookup<'_>,
     metro_registry: &MetroRegistry,
     func_name_index: &FunctionNameIndex,
 ) -> Option<u32> {
-    match defs.get(key)? {
-        Definition::Function(fid) => Some(*fid),
+    match defs(key)? {
+        Definition::Function(fid) => Some(fid),
         Definition::Module(mod_id) => metro_registry
-            .get_module(*mod_id)
+            .get_module(mod_id)
             .and_then(|m| m.exports.get("default"))
             .copied(),
-        Definition::GlobalMember(prop) => resolve_unique_by_name(prop, func_name_index),
+        Definition::GlobalMember(prop) => resolve_unique_by_name(&prop, func_name_index),
         _ => None,
     }
 }

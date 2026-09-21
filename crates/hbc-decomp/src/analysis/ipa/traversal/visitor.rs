@@ -10,21 +10,25 @@ use super::super::resolution::{
     resolve_callee, FunctionNameIndex,
 };
 use super::super::structs::ParamLink;
-use super::{CollectContext, Definition};
+use super::{CollectContext, DefLookup, Definition};
 use crate::analysis::ipa::graph::CallGraph;
 use crate::analysis::metro::registry::MetroRegistry;
 use crate::ir::{extract_function_id, Expression, PropertyKey, Value};
 
 // Build the visitor for one function and walk its statements. Kept here so the
 // `IpaVisitor` type and its fields stay private to this module.
-pub(super) fn run(
+// Walk one statement with the definitions that hold on entry to it. The dataflow
+// engine decomposes control structures itself and reports each of their statements
+// separately, so only the head expressions of a control structure are read here:
+// walking its bodies too would count every call site inside them twice.
+pub(super) fn run_on(
     caller_id: u32,
-    stmts: &[crate::ir::Statement],
-    defs: &HashMap<String, Definition>,
+    stmt: &crate::ir::Statement,
+    defs: DefLookup<'_>,
     value_defs: &HashMap<String, Expression>,
     ctx: &mut CollectContext<'_>,
 ) {
-    use crate::ir::Visitor;
+    use crate::ir::{Statement, Visitor};
     let mut visitor = IpaVisitor {
         caller_id,
         defs,
@@ -36,8 +40,25 @@ pub(super) fn run(
         metro_registry: ctx.metro_registry,
         func_name_index: ctx.func_name_index,
     };
-    for stmt in stmts {
-        visitor.visit_statement(stmt);
+    match stmt {
+        Statement::If { condition, .. }
+        | Statement::While { condition, .. }
+        | Statement::DoWhile { condition, .. } => visitor.visit_expression(condition),
+        Statement::For { condition, .. } => {
+            if let Some(condition) = condition {
+                visitor.visit_expression(condition);
+            }
+        }
+        Statement::ForOf { iterable, .. } => visitor.visit_expression(iterable),
+        Statement::ForIn { object, .. } => visitor.visit_expression(object),
+        Statement::Switch { discriminant, cases, .. } => {
+            visitor.visit_expression(discriminant);
+            for (label, _) in cases {
+                visitor.visit_expression(label);
+            }
+        }
+        Statement::TryCatch { .. } | Statement::Block(_) => {}
+        other => visitor.visit_statement(other),
     }
 }
 
@@ -46,7 +67,7 @@ pub(super) fn run(
 // transformation such as `f(first.join(""))` would name the callee parameter after
 // the source array, which is not what the parameter actually holds. Those
 // transformed cases are handled later by data-flow grounding, not by a raw link.
-fn param_forwarded_by_arg(arg: &Expression, defs: &HashMap<String, Definition>) -> Option<u32> {
+fn param_forwarded_by_arg(arg: &Expression, defs: DefLookup<'_>) -> Option<u32> {
     match arg {
         Expression::Value(Value::Parameter(idx)) => Some(*idx),
         Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => param_index_of(name, defs),
@@ -55,9 +76,9 @@ fn param_forwarded_by_arg(arg: &Expression, defs: &HashMap<String, Definition>) 
     }
 }
 
-fn param_index_of(key: &str, defs: &HashMap<String, Definition>) -> Option<u32> {
-    match defs.get(key) {
-        Some(Definition::Parameter(idx)) => Some(*idx),
+fn param_index_of(key: &str, defs: DefLookup<'_>) -> Option<u32> {
+    match defs(key) {
+        Some(Definition::Parameter(idx)) => Some(idx),
         _ => None,
     }
 }
@@ -67,7 +88,7 @@ use super::{callback_param_hints, callee_trace_name};
 struct IpaVisitor<'a> {
     value_defs: &'a HashMap<String, Expression>,
     caller_id: u32,
-    defs: &'a HashMap<String, Definition>,
+    defs: DefLookup<'a>,
     graph: &'a mut CallGraph,
     call_sites: &'a mut BTreeMap<u32, Vec<Vec<Option<String>>>>,
     self_param_names: &'a mut BTreeMap<u32, Vec<Vec<Option<String>>>>,
@@ -85,14 +106,14 @@ impl IpaVisitor<'_> {
         }
         // Variable reference to a known function
         if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = expr {
-            if let Some(Definition::Function(fid)) = self.defs.get(name) {
-                return Some(*fid);
+            if let Some(Definition::Function(fid)) = (self.defs)(name) {
+                return Some(fid);
             }
         }
         // Register reference to a known function
         if let Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) = expr {
-            if let Some(Definition::Function(fid)) = self.defs.get(&format!("r{r}")) {
-                return Some(*fid);
+            if let Some(Definition::Function(fid)) = (self.defs)(&format!("r{r}")) {
+                return Some(fid);
             }
         }
         None
@@ -219,15 +240,15 @@ impl IpaVisitor<'_> {
 
             match arg {
                 Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
-                    if let Some(Definition::Parameter(idx)) = self.defs.get(name) {
-                        resolved_param = Some(*idx);
+                    if let Some(Definition::Parameter(idx)) = (self.defs)(name) {
+                        resolved_param = Some(idx);
                     }
                     arg_names.push(Some(name.clone()));
                 }
                 Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
                     let r_name = format!("r{r}");
-                    if let Some(Definition::Parameter(idx)) = self.defs.get(&r_name) {
-                        resolved_param = Some(*idx);
+                    if let Some(Definition::Parameter(idx)) = (self.defs)(&r_name) {
+                        resolved_param = Some(idx);
                     }
                     arg_names.push(Some(r_name));
                 }

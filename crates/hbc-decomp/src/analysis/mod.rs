@@ -1,4 +1,5 @@
 pub mod closure;
+pub mod dataflow;
 pub mod ipa;
 pub mod liveness;
 pub mod loops;

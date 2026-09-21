@@ -171,6 +171,38 @@ pub fn exprs_equal(a: &Expression, b: &Expression) -> bool {
 // Apply a transformation function to all nested statement bodies in a statement.
 // Handles If, While, DoWhile, For, ForIn, ForOf, TryCatch, Switch, and Block.
 // Non-body fields (conditions, expressions) are preserved unchanged.
+// The read only counterpart of `map_nested_bodies`: hand every statement body a
+// control structure owns to `f`, without rebuilding the statement. Same coverage,
+// so a reader and a rewriter never disagree about what counts as a nested body.
+pub fn for_each_nested_body(stmt: &Statement, f: &mut impl FnMut(&[Statement])) {
+    match stmt {
+        Statement::If { then_body, else_body, .. } => {
+            f(then_body);
+            f(else_body);
+        }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::For { body, .. }
+        | Statement::ForIn { body, .. }
+        | Statement::ForOf { body, .. } => f(body),
+        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+            f(try_body);
+            f(catch_body);
+            f(finally_body);
+        }
+        Statement::Switch { cases, default, .. } => {
+            for (_, body) in cases {
+                f(body);
+            }
+            if let Some(body) = default {
+                f(body);
+            }
+        }
+        Statement::Block(stmts) => f(stmts),
+        _ => {}
+    }
+}
+
 pub fn map_nested_bodies(stmt: Statement, mut f: impl FnMut(Vec<Statement>) -> Vec<Statement>) -> Statement {
     match stmt {
         Statement::If { condition, then_body, else_body } => Statement::If {
