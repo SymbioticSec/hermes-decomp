@@ -176,7 +176,7 @@ fn collect_existing_var_names(
     statements: &[crate::ir::Statement],
     out: &mut std::collections::HashSet<String>,
 ) {
-    use crate::ir::{AssignTarget, Expression, Value, Visitor};
+    use crate::ir::{Binding, AssignTarget, Expression, Value, Visitor};
     struct C<'a>(&'a mut std::collections::HashSet<String>);
     impl<'a, 'b> Visitor<'b> for C<'a> {
         fn visit_expression(&mut self, e: &'b Expression) {
@@ -192,7 +192,7 @@ fn collect_existing_var_names(
     }
     fn collect_target_names(t: &AssignTarget, out: &mut std::collections::HashSet<String>) {
         match t {
-            AssignTarget::Variable(n) => {
+            AssignTarget::Binding(Binding::Variable(n)) => {
                 out.insert(n.clone());
             }
             AssignTarget::DestructuringArray(elems) => {

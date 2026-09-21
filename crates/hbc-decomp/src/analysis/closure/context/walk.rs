@@ -1,6 +1,6 @@
 // Statement/expression walk for env stores and nested Function edges.
 use std::collections::BTreeMap;
-use crate::ir::{AssignTarget, Expression, Statement};
+use crate::ir::{Binding, AssignTarget, Expression, Statement};
 use super::super::info::{ClosureInfo, ClosureSlotValue};
 use super::ClosureContext;
 
@@ -19,7 +19,7 @@ impl ClosureContext {
                 self.track_nested_functions(current_fn, value);
 
                 if let Expression::Function { id, name, .. } = value {
-                    if let AssignTarget::Register(r) = target {
+                    if let AssignTarget::Binding(Binding::Register(r)) = target {
                         reg_values.insert(
                             *r,
                             ClosureSlotValue::Function {
@@ -28,7 +28,7 @@ impl ClosureContext {
                             },
                         );
                     }
-                    if let AssignTarget::Variable(vname) = target {
+                    if let AssignTarget::Binding(Binding::Variable(vname)) = target {
                         named_values.insert(
                             vname.clone(),
                             ClosureSlotValue::Function {
@@ -41,19 +41,19 @@ impl ClosureContext {
 
                 // Track through register copies (r5 = r3) so later env stores see
                 // the origin (require / function / named binding).
-                if let AssignTarget::Register(r) = target {
+                if let AssignTarget::Binding(Binding::Register(r)) = target {
                     if let Some(val) = Self::resolve_store_value(value, reg_values, named_values) {
                         reg_values.insert(*r, val);
                     }
                 }
 
-                if let AssignTarget::Variable(name) = target {
+                if let AssignTarget::Binding(Binding::Variable(name)) = target {
                     if let Some(val) = Self::resolve_store_value(value, reg_values, named_values) {
                         named_values.insert(name.clone(), val);
                     }
                 }
 
-                if let AssignTarget::ClosureVar { slot, level } = target {
+                if let AssignTarget::Binding(Binding::ClosureVar{ slot, level }) = target {
                     if let Some(val) = Self::resolve_store_value(value, reg_values, named_values) {
                         if *level == 0 {
                             info.store_slot(*slot, val);

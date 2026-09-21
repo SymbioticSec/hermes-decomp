@@ -1,7 +1,7 @@
 // Infer `const` vs `let` from reassignment analysis.
 // Hermes bytecode does not distinguish them, this is a post-hoc readability pass.
 
-use crate::ir::{map_nested_bodies_mut, AssignTarget, Statement, VarKind};
+use crate::ir::{Binding, map_nested_bodies_mut, AssignTarget, Statement, VarKind};
 use std::collections::HashSet;
 
 /// Promote `let` bindings that are never reassigned to `const`.
@@ -15,7 +15,7 @@ fn collect_assignments(stmts: &[Statement], assigned: &mut HashSet<String>) {
     for stmt in stmts {
         match stmt {
             Statement::Assign {
-                target: AssignTarget::Variable(name),
+                target: AssignTarget::Binding(Binding::Variable(name)),
                 ..
             } => {
                 assigned.insert(name.clone());
@@ -83,7 +83,7 @@ fn collect_assignments(stmts: &[Statement], assigned: &mut HashSet<String>) {
 
 fn collect_assign_target(target: &AssignTarget, assigned: &mut HashSet<String>) {
     match target {
-        AssignTarget::Variable(n) => {
+        AssignTarget::Binding(Binding::Variable(n)) => {
             assigned.insert(n.clone());
         }
         AssignTarget::DestructuringObject(props) => {
@@ -138,7 +138,7 @@ mod tests {
                 kind: VarKind::Let,
             },
             Statement::Assign {
-                target: AssignTarget::Variable("y".into()),
+                target: AssignTarget::Binding(Binding::Variable("y".into())),
                 value: Expression::Value(Value::Constant(Constant::Integer(3))),
             },
         ];

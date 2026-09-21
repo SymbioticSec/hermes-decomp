@@ -166,9 +166,9 @@ fn template_quasi_escapes_inner_backticks() {
 fn test_assign_target_destructuring_array() {
     let codegen = Codegen::new(CodegenOptions::new());
     let target = crate::ir::AssignTarget::DestructuringArray(vec![
-        Some((crate::ir::AssignTarget::Variable("a".into()), None)),
+        Some((crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable("a".into())), None)),
         None,
-        Some((crate::ir::AssignTarget::Variable("b".into()), None)),
+        Some((crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable("b".into())), None)),
     ]);
     let result = codegen.generate_assign_target(&target);
     assert_eq!(result, "[a, , b]");

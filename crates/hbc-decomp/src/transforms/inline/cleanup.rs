@@ -1,4 +1,4 @@
-use crate::ir::{is_nan_check, is_undefined_expr, AssignTarget, Expression, Statement, Value};
+use crate::ir::{Binding, is_nan_check, is_undefined_expr, AssignTarget, Expression, Statement, Value};
 
 use super::esm_cleanup::{inline_hoisted_aliases_and_trim, remove_esm_boilerplate};
 
@@ -36,7 +36,7 @@ pub fn cleanup_noise(stmts: Vec<Statement>) -> Vec<Statement> {
     for (i, stmt) in stmts.iter().enumerate() {
         match stmt {
             // Remove self-assignments: `x = x;` and `x = globalThis.x;` (Babel global captures)
-            Statement::Assign { target: AssignTarget::Variable(name), value } => {
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
                 if is_self_assign_value(name, value) {
                     continue;
                 }

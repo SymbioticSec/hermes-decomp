@@ -19,7 +19,7 @@
 // and emit `[TARGET0, TARGET1, , ...] = SRC`. Conservative: any deviation leaves
 // the statements untouched.
 
-use crate::ir::{
+use crate::ir::{Binding, 
     map_nested_bodies, AssignTarget, Expression, PropertyKey, Statement, Value,
 };
 
@@ -59,10 +59,10 @@ pub fn reconstruct_v98_array_destructuring(stmts: Vec<Statement>) -> Vec<Stateme
 // `iter = SRC[Symbol.iterator]()` → (iter l-value as expression, SRC).
 fn iterator_anchor(stmt: &Statement) -> Option<(Expression, Expression)> {
     let (target, value) = match stmt {
-        Statement::Assign { target: AssignTarget::Register(r), value } => {
+        Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } => {
             (Expression::Value(Value::Register(*r)), value)
         }
-        Statement::Assign { target: AssignTarget::Variable(n), value } => {
+        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), value } => {
             (Expression::Value(Value::Variable(n.clone())), value)
         }
         Statement::Let { name, value, .. } => {
@@ -139,10 +139,10 @@ fn collect(stmts: &[Statement], start: usize, iter: &Expression) -> Option<(Elem
 // into if/block bodies since the advance is guarded.
 fn advance_result(stmt: &Statement, iter: &Expression) -> Option<Option<Expression>> {
     match stmt {
-        Statement::Assign { target: AssignTarget::Register(r), value } if is_iter_next(value, iter) => {
+        Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } if is_iter_next(value, iter) => {
             Some(Some(Expression::Value(Value::Register(*r))))
         }
-        Statement::Assign { target: AssignTarget::Variable(n), value } if is_iter_next(value, iter) => {
+        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), value } if is_iter_next(value, iter) => {
             Some(Some(Expression::Value(Value::Variable(n.clone()))))
         }
         Statement::Let { name, value, .. } if is_iter_next(value, iter) => {
@@ -207,8 +207,8 @@ fn is_iter_return(stmt: &Statement, iter: &Expression) -> bool {
 // A scratch register/tmp l-value is bookkeeping, not a destructuring target.
 fn is_scratch_target(t: &AssignTarget) -> bool {
     match t {
-        AssignTarget::Register(_) => true,
-        AssignTarget::Variable(n) => n.starts_with("tmp") || n.starts_with('r') && n[1..].chars().all(|c| c.is_ascii_digit()),
+        AssignTarget::Binding(Binding::Register(_)) => true,
+        AssignTarget::Binding(Binding::Variable(n)) => n.starts_with("tmp") || n.starts_with('r') && n[1..].chars().all(|c| c.is_ascii_digit()),
         _ => false,
     }
 }

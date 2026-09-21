@@ -7,7 +7,7 @@ use super::require_resolution::{extract_require_module_id, resolve_require_modul
 use crate::analysis::metro::detection::is_meaningful_name;
 use crate::analysis::metro::registry::{FactoryRoles, MetroRegistry};
 use crate::analysis::ClosureContext;
-use crate::ir::{target_to_key, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, target_to_key, Expression, PropertyKey, Statement, Value};
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 
@@ -209,7 +209,7 @@ pub(super) fn propagate_reexport_names(
             for stmt in stmts {
                 if let Statement::Assign { target, value } = stmt {
                     let is_export = match target {
-                        crate::ir::AssignTarget::Variable(n) => FactoryRoles::matches_exports_name(n),
+                        crate::ir::AssignTarget::Binding(Binding::Variable(n)) => FactoryRoles::matches_exports_name(n),
                         crate::ir::AssignTarget::Member { object, .. } => {
                             
                             match object {
@@ -444,10 +444,10 @@ pub(crate) fn propagate_module_names_to_closures(
 // Extract closure slot index from an assignment target.
 fn extract_closure_slot(target: &crate::ir::AssignTarget) -> Option<u32> {
     match target {
-        crate::ir::AssignTarget::Variable(name) => name
+        crate::ir::AssignTarget::Binding(Binding::Variable(name)) => name
             .strip_prefix("closure_")
             .and_then(|s| s.parse::<u32>().ok()),
-        crate::ir::AssignTarget::ClosureVar { slot, level } if *level == 0 => Some(*slot),
+        crate::ir::AssignTarget::Binding(Binding::ClosureVar{ slot, level }) if *level == 0 => Some(*slot),
         _ => None,
     }
 }

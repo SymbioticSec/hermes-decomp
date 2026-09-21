@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
 
 // Reconstruct spread syntax from the Hermes spread/apply protocol.
 //
@@ -193,7 +193,7 @@ fn resolve_array_elements(expr: &Expression, before: &[Statement]) -> Option<Vec
     }
     if let Expression::Value(Value::Register(r)) = expr {
         for stmt in before.iter().rev() {
-            if let Statement::Assign { target: AssignTarget::Register(tr), value } = stmt {
+            if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(tr)), value } = stmt {
                 if tr == r {
                     if let Expression::Array { elements } = value {
                         return Some(elements.iter().flatten().cloned().collect());
@@ -209,7 +209,7 @@ fn resolve_array_elements(expr: &Expression, before: &[Statement]) -> Option<Vec
 // `reg = [..]` / `reg = NewArray` -> the register, if the literal is empty or all
 // holes (a size hint to be filled by the following spreads/puts).
 fn array_literal_reg(stmt: &Statement) -> Option<u32> {
-    if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
+    if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
         if let Expression::Array { elements } = value {
             if elements.iter().all(|e| e.is_none()) {
                 return Some(*r);
@@ -253,7 +253,7 @@ fn put_into_array(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> Op
 // over while scanning for the array's spread/put statements (e.g. the source
 // register and zero index loaded into the arraySpread call frame).
 fn is_skippable_setup(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> bool {
-    if let Statement::Assign { target: AssignTarget::Register(dst), value } = stmt {
+    if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(dst)), value } = stmt {
         if arrs.contains(dst) || value.has_side_effects() {
             return false;
         }
@@ -267,7 +267,7 @@ fn is_skippable_setup(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -
 // `dst = <array-alias>` (register copy) -> Some(dst).
 fn alias_copy(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> Option<u32> {
     if let Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Value(Value::Register(src)),
     } = stmt
     {

@@ -21,7 +21,7 @@
 
 use super::{is_iterator_call, unwrap_iterator_body};
 use crate::analysis::rename_registers;
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
 use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 
@@ -31,7 +31,7 @@ pub fn detect_legacy_for_of(stmts: Vec<Statement>) -> Vec<Statement> {
     // Build a register -> defining-expression map for this statement level.
     let mut defs: HashMap<u32, Expression> = HashMap::new();
     for s in &stmts {
-        if let Statement::Assign { target: AssignTarget::Register(r), value } = s {
+        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = s {
             defs.insert(*r, value.clone());
         }
     }
@@ -70,7 +70,7 @@ pub fn detect_legacy_for_of(stmts: Vec<Statement>) -> Vec<Statement> {
             continue;
         }
         // Drop statements that define a protocol register.
-        if let Statement::Assign { target: AssignTarget::Register(r), .. } = &s {
+        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. } = &s {
             if m.protocol_regs.contains(r) {
                 continue;
             }
@@ -111,7 +111,7 @@ fn match_legacy_for_of(
     };
     // body[0]: value = result.value
     let (value_reg, rest) = match body.split_first()? {
-        (Statement::Assign { target: AssignTarget::Register(v), value }, rest) => {
+        (Statement::Assign { target: AssignTarget::Binding(Binding::Register(v)), value }, rest) => {
             match value {
                 Expression::Member { object, property: PropertyKey::Ident(p), .. }
                     if p == "value" && reg_of(object) == Some(result_reg) =>

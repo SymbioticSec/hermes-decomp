@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, Statement, Value, VarKind};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, VarKind};
 use std::collections::{BTreeMap, HashSet};
 
 mod patterns;
@@ -159,7 +159,7 @@ fn insert_decls_in_block(
 ) {
     for stmt in stmts.iter_mut() {
         match stmt {
-            Statement::Assign { target: AssignTarget::Variable(name), value } => {
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
                 // Skip invalid JS identifiers (numbers, strings, reserved words used as names)
                 if is_valid_js_identifier(name)
                     && !params.contains(name.as_str())
@@ -188,7 +188,7 @@ fn insert_decls_in_block(
                     };
                 }
             }
-            Statement::Assign { target: AssignTarget::Register(r), value } => {
+            Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } => {
                 let name = format!("r{r}");
                 if !params.contains(name.as_str())
                     && !let_declared.contains(&name)

@@ -1,4 +1,4 @@
-use crate::ir::{is_undefined_expr, map_nested_bodies, Statement, AssignTarget};
+use crate::ir::{Binding, is_undefined_expr, map_nested_bodies, Statement, AssignTarget};
 
 pub(super) fn remove_undefined_initializations(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut result = Vec::new();
@@ -7,7 +7,7 @@ pub(super) fn remove_undefined_initializations(stmts: Vec<Statement>) -> Vec<Sta
     while let Some(stmt) = iter.next() {
         // Check if this is `r = undefined`
         if let Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value,
         } = &stmt
         {
@@ -27,5 +27,5 @@ pub(super) fn remove_undefined_initializations(stmts: Vec<Statement>) -> Vec<Sta
 }
 
 fn assigns_to_register(stmt: &Statement, reg: u32) -> bool {
-    matches!(stmt, Statement::Assign { target: AssignTarget::Register(r), .. } if *r == reg)
+    matches!(stmt, Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. } if *r == reg)
 }

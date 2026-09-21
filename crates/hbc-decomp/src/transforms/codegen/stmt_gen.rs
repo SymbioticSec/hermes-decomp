@@ -1,5 +1,5 @@
 use super::{Codegen, sanitize_loop_var, replace_whole_word};
-use crate::ir::Statement;
+use crate::ir::{Binding, Statement};
 
 impl Codegen {
     pub(super) fn generate_stmt(&mut self, stmt: &Statement) -> String {
@@ -56,7 +56,7 @@ impl Codegen {
                     return format!("{indent}{} = {};\n", self.generate_assign_target(target), self.generate_expr(value));
                 }
                 // Skip assigns to invalid variable names (numeric constants like `0 = 0;`)
-                if let crate::ir::AssignTarget::Variable(name) = target {
+                if let crate::ir::AssignTarget::Binding(Binding::Variable(name)) = target {
                     let first_char = name.chars().next().unwrap_or('_');
                     if first_char.is_ascii_digit() || first_char == '"' || first_char == '\'' {
                         return String::new();

@@ -14,7 +14,7 @@
 // This makes the yield visible to structure recovery as a regular statement,
 // not a return that breaks the control flow.
 
-use crate::ir::{AssignTarget, BlockId, Expression, PropertyKey, Statement, Terminator, CFG};
+use crate::ir::{Binding, AssignTarget, BlockId, Expression, PropertyKey, Statement, Terminator, CFG};
 use std::collections::BTreeMap;
 
 pub fn transform_generator_cfg(cfg: &mut CFG) {
@@ -59,7 +59,7 @@ pub fn transform_generator_cfg(cfg: &mut CFG) {
         if let Some(block) = cfg.get(block_id) {
             if let Some(first_stmt) = block.statements.first() {
                 if let Statement::Assign {
-                    target: AssignTarget::Register(reg),
+                    target: AssignTarget::Binding(Binding::Register(reg)),
                     value,
                 } = first_stmt
                 {
@@ -95,7 +95,7 @@ pub fn transform_generator_cfg(cfg: &mut CFG) {
         // If there's a resume register, assign the yield result to it
         if let Some(&result_reg) = resume_registers.get(&resume_offset) {
             block.statements.push(Statement::Assign {
-                target: AssignTarget::Register(result_reg),
+                target: AssignTarget::Binding(Binding::Register(result_reg)),
                 value: yield_expr,
             });
         } else {

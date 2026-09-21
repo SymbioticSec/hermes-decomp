@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, Statement, Value, VarKind};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, VarKind};
 
 // Fold the guarded do-while shape Hermes emits for `for`/`while` loops back into a
 // natural `for`/`while`.
@@ -85,7 +85,7 @@ fn fold_sequence(stmts: Vec<Statement>) -> Vec<Statement> {
 fn loop_var_init(stmt: &Statement) -> Option<(String, Expression)> {
     match stmt {
         Statement::Let { name, value, .. } => Some((name.clone(), value.clone())),
-        Statement::Assign { target: AssignTarget::Variable(name), value } => {
+        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
             Some((name.clone(), value.clone()))
         }
         _ => None,
@@ -106,7 +106,7 @@ fn try_fold_for(
 
     // Body must end with an update to the loop variable (`v = v <op> …`).
     let last = body.last()?;
-    let Statement::Assign { target: AssignTarget::Variable(upd_name), value: upd_val } = last else {
+    let Statement::Assign { target: AssignTarget::Binding(Binding::Variable(upd_name)), value: upd_val } = last else {
         return None;
     };
     if upd_name != var || !expr_mentions_var(upd_val, var) {
@@ -290,7 +290,7 @@ fn stmt_mentions_var(stmt: &Statement, var: &str) -> bool {
 
 fn assign_target_mentions(t: &AssignTarget, var: &str) -> bool {
     match t {
-        AssignTarget::Variable(n) => n == var,
+        AssignTarget::Binding(Binding::Variable(n)) => n == var,
         AssignTarget::Member { object, .. } => expr_mentions_var(object, var),
         AssignTarget::Index { object, key } => expr_mentions_var(object, var) || expr_mentions_var(key, var),
         _ => false,
@@ -315,7 +315,7 @@ mod tests {
         Statement::Let { name: name.to_string(), value: v, kind: VarKind::Let }
     }
     fn assign(name: &str, v: Expression) -> Statement {
-        Statement::Assign { target: AssignTarget::Variable(name.to_string()), value: v }
+        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name.to_string())), value: v }
     }
     fn inc(name: &str) -> Statement {
         assign(name, Expression::Binary { op: BinaryOp::Add, left: Box::new(var(name)), right: Box::new(int(1)) })

@@ -1,6 +1,6 @@
 // ESM boilerplate removal and hoisted parameter alias inlining.
 
-use crate::ir::{AssignTarget, Expression, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value};
 use std::collections::BTreeMap;
 
 use super::inline_named::is_inlinable_name;
@@ -19,10 +19,10 @@ pub(super) fn remove_esm_boilerplate(stmts: Vec<Statement>) -> Vec<Statement> {
 
         // Pattern: `x = { value: true }` followed by x = { enumerable: ... } -> skip first
         if i + 1 < len {
-            if let Statement::Assign { target: AssignTarget::Variable(name), value } = stmt {
+            if let Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } = stmt {
                 if is_esmodule_marker_obj(value) {
                     // Check if next statement overwrites the same variable
-                    if let Statement::Assign { target: AssignTarget::Variable(name2), .. } = &stmts[i + 1] {
+                    if let Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name2)), .. } = &stmts[i + 1] {
                         if name == name2 {
                             i += 1;
                             continue;
@@ -106,7 +106,7 @@ pub(super) fn inline_hoisted_aliases_and_trim(stmts: Vec<Statement>) -> Vec<Stat
     for stmt in &stmts[term_idx + 1..] {
         match stmt {
             // const tmp = arg0; or tmp = arg0;
-            Statement::Assign { target: AssignTarget::Variable(name), value }
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value }
             | Statement::Let { name, value, .. } => {
                 if is_inlinable_name(name) {
                     match value {

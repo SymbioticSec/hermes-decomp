@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, Default)]
@@ -47,7 +47,7 @@ pub fn analyze_registers(stmts: &[Statement]) -> BTreeMap<u32, RegisterInfo> {
 fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
     match stmt {
         Statement::Assign { target, value } => {
-            if let AssignTarget::Register(r) = target {
+            if let AssignTarget::Binding(Binding::Register(r)) = target {
                 let entry = info.entry(*r).or_default();
                 infer_role_from_value(value, entry);
             }
@@ -158,7 +158,7 @@ fn analyze_target(target: &AssignTarget, info: &mut BTreeMap<u32, RegisterInfo>)
         AssignTarget::DestructuringObject(props) => {
             for (key, t, def) in props {
                 // Name register after its destructuring key
-                if let AssignTarget::Register(r) = t {
+                if let AssignTarget::Binding(Binding::Register(r)) = t {
                     let entry = info.entry(*r).or_default();
                     entry.destructuring_key = Some(key.clone());
                 }
@@ -168,7 +168,7 @@ fn analyze_target(target: &AssignTarget, info: &mut BTreeMap<u32, RegisterInfo>)
         }
         AssignTarget::DestructuringObjectRest { properties, rest } => {
             for (key, t, def) in properties {
-                if let AssignTarget::Register(r) = t {
+                if let AssignTarget::Binding(Binding::Register(r)) = t {
                     let entry = info.entry(*r).or_default();
                     entry.destructuring_key = Some(key.clone());
                 }

@@ -1,7 +1,7 @@
 // Opcode handlers for control flow operations.
 
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{BinaryOp, Expression, Statement};
+use crate::ir::{Binding, BinaryOp, Expression, Statement};
 use crate::opcode::OperandType;
 use crate::{BytecodeFile, BytecodeFormat, Instruction};
 
@@ -244,7 +244,7 @@ pub fn handle_select_object(inst: &Instruction) -> Option<FlowResult> {
     let ctor_return = reg_expr(&inst.operands, 2)?;
 
     Some(FlowResult::Statement(Statement::Assign {
-        target: crate::ir::AssignTarget::Register(dst),
+        target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
         value: ctor_return,
     }))
 }
@@ -270,7 +270,7 @@ pub fn handle_throw_if_undefined(inst: &Instruction) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
     let value = reg_expr(&inst.operands, 1)?;
     Some(FlowResult::Statement(Statement::Assign {
-        target: crate::ir::AssignTarget::Register(dst),
+        target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
         value,
     }))
 }
@@ -279,7 +279,7 @@ pub fn handle_throw_if_undefined(inst: &Instruction) -> Option<FlowResult> {
 pub fn handle_catch(inst: &Instruction) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
     Some(FlowResult::Statement(Statement::Assign {
-        target: crate::ir::AssignTarget::Register(dst),
+        target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Value(crate::ir::Value::Variable("__exception".to_string())),
     }))
 }
@@ -316,7 +316,7 @@ pub fn handle_get_next_pname(inst: &Instruction) -> Option<FlowResult> {
     let _size = reg_expr(&inst.operands, 4)?;
 
     Some(FlowResult::Statement(Statement::Assign {
-        target: crate::ir::AssignTarget::Register(dst),
+        target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(props),
             property: crate::ir::PropertyKey::Computed(Box::new(idx)),

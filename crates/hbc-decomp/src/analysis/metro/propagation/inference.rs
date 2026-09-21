@@ -2,7 +2,7 @@ use super::is_meaningful_require_name;
 use super::define_property::{infer_name_from_all_define_properties, infer_name_from_define_property};
 use crate::analysis::metro::detection::is_meaningful_name;
 use crate::analysis::metro::registry::FactoryRoles;
-use crate::ir::{target_to_key, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, target_to_key, Expression, PropertyKey, Statement, Value};
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 
@@ -31,7 +31,7 @@ pub(super) fn infer_module_name_from_stmts(
         match stmt {
             Statement::Assign { target, value } => {
                 let is_export = match target {
-                    crate::ir::AssignTarget::Variable(n) => FactoryRoles::matches_exports_name(n),
+                    crate::ir::AssignTarget::Binding(Binding::Variable(n)) => FactoryRoles::matches_exports_name(n),
                     crate::ir::AssignTarget::Member { object, .. } => match object {
                         Expression::Value(Value::Variable(n)) => {
                             FactoryRoles::matches_module_name(n) || FactoryRoles::matches_exports_name(n)
@@ -165,7 +165,7 @@ pub(super) fn infer_module_name_from_stmts(
                 }
             }
         }
-        if let Statement::Assign { target: crate::ir::AssignTarget::Variable(_), value } = stmt {
+        if let Statement::Assign { target: crate::ir::AssignTarget::Binding(Binding::Variable(_)), value } = stmt {
             if let Expression::Function { name: Some(fname), .. } = value {
                 if is_meaningful_name(fname) {
                     return Some(fname.clone());

@@ -1,6 +1,6 @@
 // Reserved for future constant propagation improvement, not yet used in the pipeline.
 
-use crate::ir::{AssignTarget, BlockId, Statement, CFG};
+use crate::ir::{Binding, AssignTarget, BlockId, Statement, CFG};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -88,7 +88,7 @@ fn compute_gen(cfg: &CFG, block_id: BlockId) -> HashSet<DefSite> {
     if let Some(block) = cfg.get(block_id) {
         for (i, stmt) in block.statements.iter().enumerate() {
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 ..
             } = stmt
             {
@@ -110,7 +110,7 @@ fn compute_kill(cfg: &CFG, block_id: BlockId, reaching: &HashSet<DefSite>) -> Ha
     if let Some(block) = cfg.get(block_id) {
         for stmt in &block.statements {
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 ..
             } = stmt
             {

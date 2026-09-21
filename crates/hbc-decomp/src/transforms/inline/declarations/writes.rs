@@ -1,5 +1,5 @@
 use super::patterns::destructuring_target_names;
-use crate::ir::{AssignTarget, Statement};
+use crate::ir::{Binding, AssignTarget, Statement};
 use std::collections::BTreeMap;
 
 pub(super) fn count_writes(
@@ -18,10 +18,10 @@ fn count_writes_stmt(
     let_declared: &mut std::collections::HashSet<String>,
 ) {
     match stmt {
-        Statement::Assign { target: AssignTarget::Variable(name), .. } => {
+        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), .. } => {
             *writes.entry(name.clone()).or_insert(0) += 1;
         }
-        Statement::Assign { target: AssignTarget::Register(r), .. } => {
+        Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. } => {
             *writes.entry(format!("r{r}")).or_insert(0) += 1;
         }
         // A destructuring assign (`let [a, b] = e`) is rendered as its own `let`

@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement};
 
 // Information about a yield point in the generator.
 #[derive(Debug, Clone)]
@@ -103,7 +103,7 @@ pub fn collect_resume_points(stmts: &[Statement]) -> Vec<ResumePoint> {
     for (i, stmt) in stmts.iter().enumerate() {
         match stmt {
             Statement::Assign {
-                target: AssignTarget::Register(reg),
+                target: AssignTarget::Binding(Binding::Register(reg)),
                 value,
             } => {
                 if is_resume_call(value) {

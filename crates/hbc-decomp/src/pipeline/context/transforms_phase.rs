@@ -290,7 +290,7 @@ impl PipelineContext {
 // Drop leftover state-machine bookkeeping that reconstruct no longer reads
 // (`c1 = tmp3`, `dependencyMap = 0`). Only unread trivial copies/scalars.
 fn drop_unread_bookkeeping(stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::Statement> {
-    use crate::ir::{AssignTarget, Expression, Statement, Value, Visitor};
+    use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
     use std::collections::HashMap;
 
     struct Reads<'a>(&'a mut HashMap<String, u32>);
@@ -313,7 +313,7 @@ fn drop_unread_bookkeeping(stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::S
         .into_iter()
         .filter(|stmt| match stmt {
             Statement::Let { name, value, .. } | Statement::Assign {
-                target: AssignTarget::Variable(name),
+                target: AssignTarget::Binding(Binding::Variable(name)),
                 value,
             } => {
                 if !is_bookkeeping_name(name) {

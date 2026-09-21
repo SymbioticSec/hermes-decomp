@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::{AssignTarget, Expression, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value};
 use std::collections::BTreeMap;
 
 // Variables whose first textual occurrence in the function is a READ (read
@@ -30,7 +30,7 @@ fn scan_first_use(stmts: &[Statement], first_seen: &mut BTreeMap<String, bool>) 
                 for r in expr_var_reads(value) {
                     first_seen.entry(r).or_insert(true);
                 }
-                if let AssignTarget::Variable(name) = target {
+                if let AssignTarget::Binding(Binding::Variable(name)) = target {
                     first_seen.entry(name.clone()).or_insert(false);
                 } else {
                     for r in target_var_reads(target) {
@@ -129,7 +129,7 @@ pub(super) fn collect_scope_info(
     use crate::ir::AssignTarget;
     for stmt in stmts {
         // Record assignment targets by scope.
-        if let Statement::Assign { target: AssignTarget::Variable(name), .. } = stmt {
+        if let Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), .. } = stmt {
             if in_loop {
                 assigned_in_loop.insert(name.clone());
             } else {
@@ -180,7 +180,7 @@ fn stmt_var_refs(stmt: &Statement) -> Vec<String> {
     let mut names = Vec::new();
     match stmt {
         Statement::Assign { target, value } => {
-            if let crate::ir::AssignTarget::Variable(n) = target {
+            if let crate::ir::AssignTarget::Binding(Binding::Variable(n)) = target {
                 names.push(n.clone());
             }
             collect_expr_vars(value, &mut names);

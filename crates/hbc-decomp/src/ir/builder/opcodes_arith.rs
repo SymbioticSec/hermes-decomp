@@ -1,7 +1,7 @@
 // Opcode handlers for arithmetic and binary operations.
 
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{AssignTarget, BinaryOp, Expression, Statement, UnaryOp};
+use crate::ir::{Binding, AssignTarget, BinaryOp, Expression, Statement, UnaryOp};
 use crate::Instruction;
 
 // Handle binary arithmetic opcodes.
@@ -26,7 +26,7 @@ pub fn handle_binary_op(name: &str, inst: &Instruction) -> Option<Statement> {
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::binary(op, left, right),
     })
 }
@@ -50,7 +50,7 @@ pub fn handle_comparison(name: &str, inst: &Instruction) -> Option<Statement> {
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::binary(op, left, right),
     })
 }
@@ -69,7 +69,7 @@ pub fn handle_unary_op(name: &str, inst: &Instruction) -> Option<Statement> {
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::unary(op, operand),
     })
 }
@@ -87,7 +87,7 @@ pub fn handle_inc_dec(name: &str, inst: &Instruction) -> Option<Statement> {
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::binary(op, src, one),
     })
 }
@@ -134,7 +134,7 @@ pub fn handle_coercion(name: &str, inst: &Instruction) -> Option<Statement> {
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value,
     })
 }
@@ -152,7 +152,7 @@ pub fn handle_instance_in(name: &str, inst: &Instruction) -> Option<Statement> {
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::binary(op, left, right),
     })
 }

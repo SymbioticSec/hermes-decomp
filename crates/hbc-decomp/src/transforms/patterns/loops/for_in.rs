@@ -1,5 +1,5 @@
 use crate::analysis::rename_registers;
-use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, UnaryOp, Value};
+use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, UnaryOp, Value};
 use std::collections::BTreeMap;
 
 // Detect for-in loop patterns and rebuild them as `for (key in object)`.
@@ -89,7 +89,7 @@ fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
 fn try_match_for_in(keys_stmt: &Statement, if_stmt: &Statement) -> Option<Statement> {
     // [0] keys_reg = Object.keys(obj)
     let (keys_reg, obj_expr) = match keys_stmt {
-        Statement::Assign { target: AssignTarget::Register(r), value } => {
+        Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } => {
             (*r, is_object_keys_call(value)?)
         }
         _ => return None,
@@ -109,7 +109,7 @@ fn try_match_for_in(keys_stmt: &Statement, if_stmt: &Statement) -> Option<Statem
     let mut idx = 0;
     let cur_reg = loop {
         match else_body.get(idx)? {
-            Statement::Assign { target: AssignTarget::Register(r), value }
+            Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value }
                 if is_index_into(value, keys_reg) =>
             {
                 let r = *r;
@@ -189,7 +189,7 @@ fn is_index_into(expr: &Expression, base_reg: u32) -> bool {
 }
 
 fn is_assign_of_index(stmt: &Statement, dst_reg: u32, base_reg: u32) -> bool {
-    if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
+    if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
         return *r == dst_reg && is_index_into(value, base_reg);
     }
     false

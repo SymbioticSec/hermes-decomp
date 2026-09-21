@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, Statement, Value, expr_uses_register, stmt_has_side_effects};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, expr_uses_register, stmt_has_side_effects};
 
 pub fn transform_array_literals(statements: &mut Vec<Statement>) {
     let mut i = 0;
@@ -52,9 +52,9 @@ pub fn transform_array_literals(statements: &mut Vec<Statement>) {
 
                     // Replace NewArray
                     if let Statement::Assign { target, .. } = &mut statements[i] {
-                        *target = AssignTarget::Register(arr_reg);
+                        *target = AssignTarget::Binding(Binding::Register(arr_reg));
                         statements[i] = Statement::Assign {
-                            target: AssignTarget::Register(arr_reg),
+                            target: AssignTarget::Binding(Binding::Register(arr_reg)),
                             value: Expression::Array {
                                 elements: array_elements,
                             },
@@ -75,7 +75,7 @@ pub fn transform_array_literals(statements: &mut Vec<Statement>) {
 
 fn is_new_array(stmt: &Statement) -> Option<(u32, Option<u32>)> {
     if let Statement::Assign {
-        target: AssignTarget::Register(r),
+        target: AssignTarget::Binding(Binding::Register(r)),
         value: Expression::Unknown { opcode, operands },
     } = stmt
     {
@@ -141,7 +141,7 @@ fn is_reg_used(stmt: &Statement, reg: u32) -> bool {
 fn is_reg_assigned(stmt: &Statement, reg: u32) -> bool {
     match stmt {
         Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             ..
         } => *r == reg,
         _ => false,

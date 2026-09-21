@@ -61,8 +61,8 @@ impl Codegen {
     pub(super) fn generate_assign_target(&self, target: &crate::ir::AssignTarget) -> String {
         use crate::ir::AssignTarget;
         match target {
-            AssignTarget::Register(r) => format!("r{r}"),
-            AssignTarget::Variable(n) => crate::util::sanitize_identifier(n),
+            AssignTarget::Binding(crate::ir::Binding::Register(r)) => format!("r{r}"),
+            AssignTarget::Binding(crate::ir::Binding::Variable(n)) => crate::util::sanitize_identifier(n),
             AssignTarget::Member { object, property } => {
                 let obj = self.generate_expr(object);
                 // Same rules as Expression::Member, non-identifier keys need brackets.
@@ -80,7 +80,7 @@ impl Codegen {
             }
             // Must match `Value::closure_var_name` so load/store of the same
             // captured slot use the same identifier.
-            AssignTarget::ClosureVar { level, slot } => {
+            AssignTarget::Binding(crate::ir::Binding::ClosureVar{ level, slot }) => {
                 crate::ir::Value::closure_var_name(*level, *slot)
             }
             AssignTarget::DestructuringArray(elements) => {
@@ -114,7 +114,7 @@ impl Codegen {
                 let p: Vec<String> = props.iter()
                     .map(|(k, v, def)| {
                         let target_str = self.generate_assign_target(v);
-                        let base = if let AssignTarget::Variable(name) = v {
+                        let base = if let AssignTarget::Binding(crate::ir::Binding::Variable(name)) = v {
                             if name == k {
                                 k.clone()
                             } else {
@@ -137,7 +137,7 @@ impl Codegen {
                 let mut p: Vec<String> = properties.iter()
                     .map(|(k, v, def)| {
                         let target_str = self.generate_assign_target(v);
-                        let base = if let AssignTarget::Variable(name) = v {
+                        let base = if let AssignTarget::Binding(crate::ir::Binding::Variable(name)) = v {
                             if name == k {
                                 k.clone()
                             } else {

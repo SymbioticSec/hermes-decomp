@@ -103,7 +103,7 @@ mod tests {
         let obj = Expression::Value(Value::Register(0));
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(obj.clone()),
                     property: PropertyKey::Ident("x".to_string()),
@@ -111,7 +111,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Member {
                     object: Box::new(obj.clone()),
                     property: PropertyKey::Ident("y".to_string()),
@@ -142,7 +142,7 @@ mod tests {
         let arr = Expression::Value(Value::Register(0));
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(arr.clone()),
                     property: PropertyKey::Index(0),
@@ -150,7 +150,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Member {
                     object: Box::new(arr.clone()),
                     property: PropertyKey::Index(1),
@@ -158,7 +158,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(3),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(3)),
                 value: Expression::Member {
                     object: Box::new(arr.clone()),
                     property: PropertyKey::Index(2),
@@ -188,7 +188,7 @@ mod tests {
         let arr = Expression::Value(Value::Register(0));
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(arr.clone()),
                     property: PropertyKey::Computed(Box::new(Expression::constant(
@@ -198,7 +198,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Member {
                     object: Box::new(arr.clone()),
                     property: PropertyKey::Computed(Box::new(Expression::constant(
@@ -229,7 +229,7 @@ mod tests {
         let arr = Expression::Value(Value::Register(0));
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(arr.clone()),
                     property: PropertyKey::Index(0),
@@ -237,7 +237,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Member {
                     object: Box::new(arr.clone()),
                     property: PropertyKey::Index(2),
@@ -257,7 +257,7 @@ mod tests {
         // r1 = obj.x; (single property - should not destructure)
         let obj = Expression::Value(Value::Register(0));
         let stmts = vec![Statement::Assign {
-            target: AssignTarget::Register(1),
+            target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
             value: Expression::Member {
                 object: Box::new(obj),
                 property: PropertyKey::Ident("x".to_string()),
@@ -283,7 +283,7 @@ mod tests {
         // r1 = obj1.x; r2 = obj2.y; (different objects)
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(Expression::Value(Value::Register(0))),
                     property: PropertyKey::Ident("x".to_string()),
@@ -291,7 +291,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Member {
                     object: Box::new(Expression::Value(Value::Register(10))),
                     property: PropertyKey::Ident("y".to_string()),
@@ -314,7 +314,7 @@ mod tests {
             condition: Expression::constant(Constant::Bool(true)),
             then_body: vec![
                 Statement::Assign {
-                    target: AssignTarget::Register(1),
+                    target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                     value: Expression::Member {
                         object: Box::new(obj.clone()),
                         property: PropertyKey::Ident("a".to_string()),
@@ -322,7 +322,7 @@ mod tests {
                     },
                 },
                 Statement::Assign {
-                    target: AssignTarget::Register(2),
+                    target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                     value: Expression::Member {
                         object: Box::new(obj.clone()),
                         property: PropertyKey::Ident("b".to_string()),
@@ -358,7 +358,7 @@ mod tests {
         let obj = Expression::Value(Value::Register(0));
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(obj.clone()),
                     property: PropertyKey::Ident("x".to_string()),
@@ -366,7 +366,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Member {
                     object: Box::new(obj.clone()),
                     property: PropertyKey::Ident("y".to_string()),
@@ -386,7 +386,7 @@ mod tests {
         let obj = Expression::Value(Value::Variable("data".to_string()));
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Variable("x".to_string()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("x".to_string())),
                 value: Expression::Member {
                     object: Box::new(obj.clone()),
                     property: PropertyKey::Ident("x".to_string()),
@@ -394,7 +394,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Variable("y".to_string()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("y".to_string())),
                 value: Expression::Member {
                     object: Box::new(obj.clone()),
                     property: PropertyKey::Ident("y".to_string()),
@@ -402,7 +402,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Variable("z".to_string()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("z".to_string())),
                 value: Expression::Member {
                     object: Box::new(obj.clone()),
                     property: PropertyKey::Ident("z".to_string()),
@@ -440,7 +440,7 @@ mod tests {
         let obj = Expression::Value(Value::Variable("param".to_string()));
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Variable("x".to_string()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("x".to_string())),
                 value: Expression::Member {
                     object: Box::new(obj.clone()),
                     property: PropertyKey::Ident("x".to_string()),
@@ -454,13 +454,13 @@ mod tests {
                     right: Box::new(Expression::constant(Constant::Undefined)),
                 },
                 then_body: vec![Statement::Assign {
-                    target: AssignTarget::Variable("x".to_string()),
+                    target: AssignTarget::Binding(crate::ir::Binding::Variable("x".to_string())),
                     value: Expression::constant(Constant::Integer(42)),
                 }],
                 else_body: vec![],
             },
             Statement::Assign {
-                target: AssignTarget::Variable("y".to_string()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("y".to_string())),
                 value: Expression::Member {
                     object: Box::new(obj.clone()),
                     property: PropertyKey::Ident("y".to_string()),

@@ -5,7 +5,7 @@ use super::closure_usage::{
 };
 use crate::analysis::metro::FactoryRoles;
 use crate::analysis::{ClosureContext, ClosureSlotValue};
-use crate::ir::{AssignTarget, Expression, Statement, Value, Visitor};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
 use std::collections::BTreeMap;
 
 // Cross-function closure naming: aggregates usage of `closure_N` across sibling functions
@@ -268,12 +268,12 @@ fn param_index_from_slot_store_stmt(
     match stmt {
         Statement::Assign { target, value } => {
             let writes_slot = match target {
-                AssignTarget::Variable(n)
+                AssignTarget::Binding(Binding::Variable(n))
                     if n == owner || slot_var.is_some_and(|s| n == s) =>
                 {
                     true
                 }
-                AssignTarget::ClosureVar { level: 0, slot: s } if *s == slot => true,
+                AssignTarget::Binding(Binding::ClosureVar{ level: 0, slot: s }) if *s == slot => true,
                 _ => false,
             };
             if writes_slot {
@@ -645,7 +645,7 @@ pub(super) fn collect_existing_names(stmts: &[Statement], names: &mut std::colle
 fn collect_names_in_stmt(stmt: &Statement, names: &mut std::collections::HashSet<String>) {
     match stmt {
         Statement::Assign { target, value } => {
-            if let AssignTarget::Variable(v) = target {
+            if let AssignTarget::Binding(Binding::Variable(v)) = target {
                 if !is_closure_name(v) {
                     names.insert(v.clone());
                 }
@@ -795,7 +795,7 @@ mod tests {
         all_ir.insert(
             1,
             vec![Statement::Assign {
-                target: AssignTarget::Variable("closure_0".into()),
+                target: AssignTarget::Binding(Binding::Variable("closure_0".into())),
                 value: Expression::Value(Value::Parameter(0)),
             }],
         );
@@ -832,7 +832,7 @@ mod tests {
         all_ir.insert(
             1,
             vec![Statement::Assign {
-                target: AssignTarget::Variable("closure_0".into()),
+                target: AssignTarget::Binding(Binding::Variable("closure_0".into())),
                 value: Expression::Value(Value::Parameter(0)),
             }],
         );
@@ -894,7 +894,7 @@ mod tests {
         all_ir.insert(
             1,
             vec![Statement::Assign {
-                target: AssignTarget::Variable("lib".into()),
+                target: AssignTarget::Binding(Binding::Variable("lib".into())),
                 value: Expression::Value(Value::Parameter(0)),
             }],
         );

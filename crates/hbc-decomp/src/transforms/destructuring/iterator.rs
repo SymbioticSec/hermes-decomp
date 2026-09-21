@@ -14,7 +14,7 @@
 // AFTER the block (the real binding). An element whose value never reaches such a
 // register is a hole (`,`).
 
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value, Visitor};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value, Visitor};
 use std::collections::{HashMap, HashSet};
 
 pub fn detect_iterator_destructuring(stmts: Vec<Statement>) -> Vec<Statement> {
@@ -24,7 +24,7 @@ pub fn detect_iterator_destructuring(stmts: Vec<Statement>) -> Vec<Statement> {
     // `iter = src[Symbol.iterator].call(src)` / `next = iter.next` chains).
     let mut defs: HashMap<u32, Expression> = HashMap::new();
     for s in &stmts {
-        if let Statement::Assign { target: AssignTarget::Register(r), value } = s {
+        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = s {
             defs.insert(*r, value.clone());
         }
     }
@@ -60,7 +60,7 @@ pub fn detect_iterator_destructuring(stmts: Vec<Statement>) -> Vec<Statement> {
                             while matches!(
                                 result.last(),
                                 Some(Statement::Assign {
-                                    target: AssignTarget::Register(r),
+                                    target: AssignTarget::Binding(Binding::Register(r)),
                                     value: Expression::Member { .. },
                                 }) if *r == c
                             ) {
@@ -70,7 +70,7 @@ pub fn detect_iterator_destructuring(stmts: Vec<Statement>) -> Vec<Statement> {
                     }
                     let targets: Vec<Option<(AssignTarget, Option<Expression>)>> = elements
                         .into_iter()
-                        .map(|e| e.map(|r| (AssignTarget::Register(r), None)))
+                        .map(|e| e.map(|r| (AssignTarget::Binding(Binding::Register(r)), None)))
                         .collect();
                     result.push(Statement::Assign {
                         target: AssignTarget::DestructuringArray(targets),
@@ -136,7 +136,7 @@ fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
 
 // `iter = src[Symbol.iterator]()` -> (iter_reg, src).
 fn iterator_begin(stmt: &Statement) -> Option<(u32, Expression)> {
-    if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
+    if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
         if let Expression::Call { callee, arguments } = value {
             if arguments.is_empty() {
                 if let Expression::Member { object, property: PropertyKey::Computed(c), .. } =
@@ -173,7 +173,7 @@ fn legacy_iterator_begin(
 ) -> Option<(u32, Expression, u32)> {
     let (iter_reg, src) = match stmt {
         Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value: Expression::Call { callee, arguments },
         } if arguments.len() == 1 && reg_of(callee).is_some() => (*r, arguments[0].clone()),
         _ => return None,
@@ -343,7 +343,7 @@ impl WalkState<'_> {
     fn walk(&mut self, stmts: &[Statement]) {
         for stmt in stmts {
             match stmt {
-                Statement::Assign { target: AssignTarget::Register(dst), value } => {
+                Statement::Assign { target: AssignTarget::Binding(Binding::Register(dst)), value } => {
                     if let Some(next_reg) = self.next_reg {
                         // Legacy: `result = next.call(iter)` opens an element;
                         // `elem = result.value` binds it.

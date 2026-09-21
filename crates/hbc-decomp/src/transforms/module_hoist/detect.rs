@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Value, Visitor};
+use crate::ir::{Binding, AssignTarget, Constant, Expression, PropertyKey, Statement, Value, Visitor};
 
 use super::kinds::{LoaderKind, LOADER_NAMES};
 
@@ -22,7 +22,7 @@ pub(super) fn loader_aliases(stmts: &[Statement]) -> HashMap<String, LoaderKind>
             let (name, value) = match s {
                 Statement::Let { name, value, .. } => (name, value),
                 Statement::Assign {
-                    target: AssignTarget::Variable(name),
+                    target: AssignTarget::Binding(Binding::Variable(name)),
                     value,
                 } => (name, value),
                 _ => continue,

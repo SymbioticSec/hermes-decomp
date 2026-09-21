@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, BlockId, Constant, Expression, PropertyKey, Statement, Value, CFG};
+use crate::ir::{Binding, AssignTarget, BlockId, Constant, Expression, PropertyKey, Statement, Value, CFG};
 use std::collections::BTreeMap;
 
 mod reaching_passes;
@@ -73,7 +73,7 @@ fn global_invariant_copies(cfg: &CFG) -> BTreeMap<u32, Expression> {
     let mut values: BTreeMap<u32, Expression> = BTreeMap::new();
     for block in cfg.blocks() {
         for stmt in &block.statements {
-            if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
+            if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
                 *def_count.entry(*r).or_insert(0) += 1;
                 values.insert(*r, value.clone());
             }
@@ -135,7 +135,7 @@ fn propagate_block(cfg: &mut CFG, block_id: BlockId) -> bool {
 
         // Track definitions
         if let Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value,
         } = &substituted
         {

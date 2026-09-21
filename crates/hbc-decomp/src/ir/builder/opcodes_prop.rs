@@ -1,7 +1,7 @@
 // Opcode handlers for property access operations.
 
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement};
 use crate::{BytecodeFile, Instruction};
 
 // Handle GetById opcodes.
@@ -31,7 +31,7 @@ pub fn handle_get_by_id(
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(obj),
             property: PropertyKey::Ident(prop_name),
@@ -67,7 +67,7 @@ pub fn handle_get_by_id_with_receiver(
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(Expression::Value(crate::ir::Value::Super)),
             property: PropertyKey::Ident(prop_name),
@@ -102,7 +102,7 @@ pub fn handle_try_get_by_id(
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(obj),
             property: PropertyKey::Ident(prop_name),
@@ -152,7 +152,7 @@ pub fn handle_get_by_val(inst: &Instruction) -> Option<Statement> {
     let key = reg_expr(&inst.operands, 2)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(obj),
             property: PropertyKey::Computed(Box::new(key)),
@@ -203,7 +203,7 @@ pub fn handle_typeof_is(
     let mask = inst.operands.get(2)?.value.as_u32()?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: crate::ir::builder::opcodes_flow::typeof_is_condition(src, mask),
     })
 }
@@ -245,7 +245,7 @@ pub fn handle_to_property_key(inst: &Instruction) -> Option<Statement> {
     let value = reg_expr(&inst.operands, 1)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value,
     })
 }
@@ -260,7 +260,7 @@ pub fn handle_get_by_val_with_receiver(inst: &Instruction) -> Option<Statement> 
     let key = reg_expr(&inst.operands, 2)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(Expression::Value(crate::ir::Value::Super)),
             property: PropertyKey::Computed(Box::new(key)),
@@ -306,7 +306,7 @@ pub fn handle_create_private_name(
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Value(crate::ir::Value::Variable(name)),
     })
 }
@@ -320,7 +320,7 @@ pub fn handle_get_own_private_by_sym(inst: &Instruction) -> Option<Statement> {
     let sym = reg_expr(&inst.operands, 3)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(obj),
             property: PropertyKey::Computed(Box::new(sym)),
@@ -361,7 +361,7 @@ pub fn handle_private_is_in(inst: &Instruction) -> Option<Statement> {
     let obj = reg_expr(&inst.operands, 2)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Binary {
             op: crate::ir::BinaryOp::In,
             left: Box::new(sym),

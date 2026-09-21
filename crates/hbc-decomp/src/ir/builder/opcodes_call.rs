@@ -1,7 +1,7 @@
 // Opcode handlers for call and construct operations.
 
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{AssignTarget, Expression, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value};
 use crate::{BytecodeFile, Instruction};
 
 // Upper bound for a call's argument count when pre-allocating. `arg_count`
@@ -62,7 +62,7 @@ pub fn handle_call_fixed(name: &str, inst: &Instruction) -> Option<Statement> {
     }
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(callee),
             arguments,
@@ -86,7 +86,7 @@ pub fn handle_call(inst: &Instruction, frame_size: u32, version: u32) -> Option<
     let arguments = resolve_implicit_args_from(arg_count, frame_size, this_from_top);
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(callee),
             arguments,
@@ -115,7 +115,7 @@ pub fn handle_construct(inst: &Instruction, frame_size: u32, version: u32) -> Op
     }
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::New {
             callee: Box::new(callee),
             arguments,
@@ -148,7 +148,7 @@ pub fn handle_create_closure(
     let is_arrow = func_header.map(|h| h.is_likely_arrow()).unwrap_or(false);
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Function {
             id: crate::ir::FunctionId(func_idx),
             name,
@@ -182,7 +182,7 @@ pub fn handle_create_async_closure(
     let is_arrow = func_header.map(|h| h.is_likely_arrow()).unwrap_or(false);
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Function {
             id: crate::ir::FunctionId(func_idx),
             name,
@@ -216,7 +216,7 @@ pub fn handle_create_generator_closure(
     let is_arrow = func_header.map(|h| h.is_likely_arrow()).unwrap_or(false);
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Function {
             id: crate::ir::FunctionId(func_idx),
             name,
@@ -254,7 +254,7 @@ pub fn handle_call_builtin(inst: &Instruction, frame_size: u32, version: u32) ->
     // (new) / "HermesBuiltin.silentSetPrototypeOf".
     let table = crate::opcode::builtins_for_version(version);
     let raw = table.get(builtin_idx as usize).map(|s| s.as_str());
-    let assign = |dst, value| Some(Statement::Assign { target: AssignTarget::Register(dst), value });
+    let assign = |dst, value| Some(Statement::Assign { target: AssignTarget::Binding(Binding::Register(dst)), value });
 
     // Name-based semantic rewrites (work across versions where the index differs).
     let suffix = raw.and_then(|n| n.rsplit('.').next()).unwrap_or("");
@@ -345,7 +345,7 @@ pub fn handle_get_builtin_closure(inst: &Instruction, version: u32) -> Option<St
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value,
     })
 }
@@ -380,7 +380,7 @@ pub fn handle_call_require(inst: &Instruction) -> Option<Statement> {
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(Expression::Value(Value::Variable("require".to_string()))),
             arguments: vec![arg_expr],
@@ -396,7 +396,7 @@ pub fn handle_direct_eval(inst: &Instruction) -> Option<Statement> {
     let source = reg_expr(&inst.operands, 1)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(Expression::Value(Value::Variable("eval".to_string()))),
             arguments: vec![source],

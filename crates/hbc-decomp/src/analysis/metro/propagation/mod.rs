@@ -14,7 +14,7 @@ pub use depmap_rewrite::rewrite_dependency_map_indices as rewrite_dependency_map
 use super::detection::is_meaningful_name;
 use super::registry::{FactoryRoles, MetroRegistry};
 use crate::analysis::ClosureContext;
-use crate::ir::{target_to_key, Expression, Statement, Value};
+use crate::ir::{Binding, target_to_key, Expression, Statement, Value};
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 
@@ -325,7 +325,7 @@ pub fn propagate_module_names(
                         }
 
                         // Handle closure variables specifically
-                        if let crate::ir::AssignTarget::ClosureVar { slot, level, .. } = target {
+                        if let crate::ir::AssignTarget::Binding(Binding::ClosureVar{ slot, level, .. }) = target {
                             if let Some(ctx) = closure_ctx {
                                 // Walk up levels to find the defining function
                                 let mut defining_func = *func_id;
@@ -355,7 +355,7 @@ pub fn propagate_module_names(
                             if let Some(var_name) = target_to_key(target) {
                                 renames.insert(var_name, name.clone());
                             }
-                            if let crate::ir::AssignTarget::ClosureVar { slot, level, .. } = target
+                            if let crate::ir::AssignTarget::Binding(Binding::ClosureVar{ slot, level, .. }) = target
                             {
                                 if let Some(ctx) = closure_ctx {
                                     let mut defining_func = *func_id;
@@ -420,7 +420,7 @@ pub fn propagate_module_names(
                                 renames.insert(var_name, name.clone());
                             }
                             // 4. Update Closure Context if it's a closure variable
-                            if let crate::ir::AssignTarget::ClosureVar { slot, level, .. } = target
+                            if let crate::ir::AssignTarget::Binding(Binding::ClosureVar{ slot, level, .. }) = target
                             {
                                 if let Some(ctx) = closure_ctx {
                                     let mut defining_func = *func_id;
@@ -431,7 +431,7 @@ pub fn propagate_module_names(
                                     }
                                     ctx.update_slot_variable(defining_func, *slot, name.clone());
                                 }
-                            } else if let crate::ir::AssignTarget::Variable(v) = target {
+                            } else if let crate::ir::AssignTarget::Binding(Binding::Variable(v)) = target {
                                 // Fallback: handle "closure_N" as a slot update
                                 if let Some(slot_id_str) = v.strip_prefix("closure_") {
                                     if let Ok(slot) = slot_id_str.parse::<u32>() {

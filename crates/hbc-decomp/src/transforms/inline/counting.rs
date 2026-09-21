@@ -1,6 +1,6 @@
 // Variable definition/use counting and substitution functions for named variable inlining.
 
-use crate::ir::{AssignTarget, Expression, MutVisitor, Statement, Value, Visitor};
+use crate::ir::{Binding, AssignTarget, Expression, MutVisitor, Statement, Value, Visitor};
 use std::collections::BTreeMap;
 
 // --- Counting ---
@@ -21,7 +21,7 @@ impl<'a, 'c> Visitor<'a> for VarCounter<'c> {
     fn visit_statement(&mut self, stmt: &'a Statement) {
         match stmt {
             Statement::Assign { target, value } => {
-                if let AssignTarget::Variable(name) = target {
+                if let AssignTarget::Binding(Binding::Variable(name)) = target {
                     *self.defs.entry(name.clone()).or_insert(0) += 1;
                 }
                 self.visit_assign_target(target);
@@ -117,7 +117,7 @@ pub(super) fn flush_pending(pending: &mut BTreeMap<String, Expression>, result: 
     let items = std::mem::take(pending);
     for (name, value) in items {
         result.push(Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(Binding::Variable(name)),
             value,
         });
     }

@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Statement};
+use crate::ir::{Binding, AssignTarget, Statement};
 
 // Collect destructuring-pattern target names across the whole function.
 pub(super) fn collect_pattern_names(stmts: &[Statement], out: &mut Vec<String>) {
@@ -46,7 +46,7 @@ pub(super) fn destructuring_target_names(target: &AssignTarget) -> Vec<String> {
     let mut out = Vec::new();
     fn add(t: &AssignTarget, out: &mut Vec<String>) {
         match t {
-            AssignTarget::Variable(n) => out.push(n.clone()),
+            AssignTarget::Binding(Binding::Variable(n)) => out.push(n.clone()),
             AssignTarget::DestructuringArray(elems) => {
                 for e in elems.iter().flatten() {
                     add(&e.0, out);

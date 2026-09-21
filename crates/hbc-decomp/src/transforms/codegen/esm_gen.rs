@@ -63,7 +63,7 @@ impl Codegen {
                     self.walk_statement(s);
                 }
                 fn visit_assign_target(&mut self, t: &'b AssignTarget) {
-                    if let AssignTarget::Variable(name) = t {
+                    if let AssignTarget::Binding(crate::ir::Binding::Variable(name)) = t {
                         *self.0.entry(name.clone()).or_insert(0) += 1;
                     }
                     self.walk_assign_target(t);
@@ -91,7 +91,7 @@ impl Codegen {
                         descriptor_vars.insert(name.clone(), info);
                     }
                 }
-                Statement::Assign { target: crate::ir::AssignTarget::Variable(name), value } => {
+                Statement::Assign { target: crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable(name)), value } => {
                     if let Some(info) = self.extract_descriptor_info(value) {
                         descriptor_vars.insert(name.clone(), info);
                     }
@@ -117,7 +117,7 @@ impl Codegen {
         let mut import_var_to_module: HashMap<String, String> = HashMap::new();
         for stmt in statements {
             match stmt {
-                Statement::Let { name, value, .. } | Statement::Assign { target: crate::ir::AssignTarget::Variable(name), value } => {
+                Statement::Let { name, value, .. } | Statement::Assign { target: crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable(name)), value } => {
                     if let Some(mod_name) = self.resolve_require_module(value) {
                         import_var_to_module.insert(name.clone(), mod_name);
                     }
@@ -144,7 +144,7 @@ impl Codegen {
             // Detect: X = Object.keys(X) (Assign where value is keys() call)
             // Also extract the source variable from Object.keys(SRC)
             let keys_info = match stmt {
-                Statement::Assign { target: crate::ir::AssignTarget::Variable(name), value } => {
+                Statement::Assign { target: crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable(name)), value } => {
                     if self.is_object_keys_call(value) {
                         let src = self.extract_object_keys_source(value)
                             .unwrap_or_else(|| name.clone());
@@ -206,7 +206,7 @@ impl Codegen {
             // Skip Let/Assign that define consumed descriptor variables
             let skip_descriptor = match stmt {
                 Statement::Let { name, .. } => consumed_descriptors.contains(name),
-                Statement::Assign { target: crate::ir::AssignTarget::Variable(name), .. } => {
+                Statement::Assign { target: crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable(name)), .. } => {
                     consumed_descriptors.contains(name)
                 }
                 _ => false,
@@ -218,7 +218,7 @@ impl Codegen {
             // Skip import statements for variables that became export * re-exports
             // (the import is subsumed by the export * from)
             let is_reexport_import = match stmt {
-                Statement::Let { name, .. } | Statement::Assign { target: crate::ir::AssignTarget::Variable(name), .. } => {
+                Statement::Let { name, .. } | Statement::Assign { target: crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable(name)), .. } => {
                     reexport_vars.contains(name)
                 }
                 _ => false,
@@ -544,7 +544,7 @@ impl Codegen {
         for stmt in statements {
             let (name, value) = match stmt {
                 Statement::Let { name, value, .. } => (name, value),
-                Statement::Assign { target: AssignTarget::Variable(name), value } => (name, value),
+                Statement::Assign { target: AssignTarget::Binding(crate::ir::Binding::Variable(name)), value } => (name, value),
                 _ => continue,
             };
             if !is_generic_import_binding(name) {

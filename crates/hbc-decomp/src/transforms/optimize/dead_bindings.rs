@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use crate::ir::{AssignTarget, Expression, Statement, Value, Visitor};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
 
 pub fn remove_dead_temp_bindings(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut reads: HashMap<String, u32> = HashMap::new();
@@ -44,7 +44,7 @@ fn strip(stmts: Vec<Statement>, reads: &HashMap<String, u32>) -> Vec<Statement> 
         let stmt = recurse(stmt, reads);
         let drop = match &stmt {
             Statement::Let { name, value, .. } => is_dead_binding(name, value, reads),
-            Statement::Assign { target: AssignTarget::Variable(name), value } => {
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
                 is_dead_binding(name, value, reads)
             }
             _ => false,

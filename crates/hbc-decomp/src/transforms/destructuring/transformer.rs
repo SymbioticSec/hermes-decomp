@@ -1,6 +1,6 @@
 use super::arrays::try_array_destructuring;
 use super::utils::{exprs_equal, extract_property_access, get_index};
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement};
 
 // Main in-place destructuring transform.
 pub fn transform_destructuring(stmts: &mut Vec<Statement>) {
@@ -173,8 +173,8 @@ fn extract_default_assignment(stmt: &Statement, target: &AssignTarget) -> Option
                     let mut is_undefined_check = false;
                     let is_target = |expr: &Expression| -> bool {
                         match (expr, target) {
-                            (Expression::Value(Value::Variable(v1)), AssignTarget::Variable(v2)) => v1 == v2,
-                            (Expression::Value(Value::Register(r1)), AssignTarget::Register(r2)) => r1 == r2,
+                            (Expression::Value(Value::Variable(v1)), AssignTarget::Binding(Binding::Variable(v2))) => v1 == v2,
+                            (Expression::Value(Value::Register(r1)), AssignTarget::Binding(Binding::Register(r2))) => r1 == r2,
                             _ => false,
                         }
                     };
@@ -192,8 +192,8 @@ fn extract_default_assignment(stmt: &Statement, target: &AssignTarget) -> Option
                         if let Statement::Assign { target: then_target, value } = &then_body[0] {
                             // Check if the assignment target matches the checked target
                             let does_target_match = match (then_target, target) {
-                                (AssignTarget::Variable(v1), AssignTarget::Variable(v2)) => v1 == v2,
-                                (AssignTarget::Register(r1), AssignTarget::Register(r2)) => r1 == r2,
+                                (AssignTarget::Binding(Binding::Variable(v1)), AssignTarget::Binding(Binding::Variable(v2))) => v1 == v2,
+                                (AssignTarget::Binding(Binding::Register(r1)), AssignTarget::Binding(Binding::Register(r2))) => r1 == r2,
                                 _ => false,
                             };
                             if does_target_match {

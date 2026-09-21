@@ -350,7 +350,7 @@ fn detect_async_wrapper_pattern(stmts: &[Statement]) -> Option<u32> {
                 extract_generator_from_call(value).map(|id| (name.clone(), id))?
             }
             Statement::Assign {
-                target: AssignTarget::Variable(name),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
                 value,
             } => extract_generator_from_call(value).map(|id| (name.clone(), id))?,
             _ => return None,
@@ -430,7 +430,7 @@ fn async_helper_assignment(stmt: &Statement) -> Option<(String, u32)> {
             extract_function_from_async_helper_call(value).map(|id| (name.clone(), id))
         }
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
         } => extract_function_from_async_helper_call(value).map(|id| (name.clone(), id)),
         _ => None,
@@ -461,7 +461,7 @@ fn is_apply_forward_boilerplate(stmt: &Statement, helper_var: &str) -> bool {
             is_apply_forward_value(name, value, helper_var)
         }
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
         } => is_apply_forward_value(name, value, helper_var),
         Statement::If {
@@ -692,7 +692,7 @@ fn extract_single_return_function_id(stmts: &[Statement]) -> Option<u32> {
     // Assign to register, then return that register
     if meaningful.len() == 2 {
         if let Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(crate::ir::Binding::Register(r)),
             value: Expression::Function { id, .. },
         } = meaningful[0]
         {
@@ -743,7 +743,7 @@ mod tests {
         };
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Variable("self".into()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("self".into())),
                 value: Expression::Value(Value::This),
             },
             Statement::Let {
@@ -752,7 +752,7 @@ mod tests {
                 kind: VarKind::Const,
             },
             Statement::Assign {
-                target: AssignTarget::Variable("closure_18".into()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("closure_18".into())),
                 value: Expression::Value(Value::Variable("tmp".into())),
             },
             Statement::Let {
@@ -783,7 +783,7 @@ mod tests {
                     kind: VarKind::Let,
                 }],
                 else_body: vec![Statement::Assign {
-                    target: AssignTarget::Variable("applyArgumentsResult".into()),
+                    target: AssignTarget::Binding(crate::ir::Binding::Variable("applyArgumentsResult".into())),
                     value: Expression::Call {
                         callee: Box::new(Expression::Value(Value::Variable("apply".into()))),
                         arguments: vec![

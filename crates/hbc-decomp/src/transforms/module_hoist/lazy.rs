@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value, Visitor};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value, Visitor};
 
 use super::detect::{collect_loader_ids, loader_call};
 use super::kinds::LoaderKind;
@@ -70,7 +70,7 @@ fn body_is_only_loader_plumbing(
         match s {
             Statement::Let { value, .. }
             | Statement::Assign {
-                target: AssignTarget::Variable(_),
+                target: AssignTarget::Binding(Binding::Variable(_)),
                 value,
             } => {
                 if !is_lazy_plumbing_value(value, aliases, deps) {
@@ -180,7 +180,7 @@ fn collect_function_bindings(stmts: &[Statement], out: &mut HashMap<String, u32>
                 }
             }
             Statement::Assign {
-                target: AssignTarget::Variable(name),
+                target: AssignTarget::Binding(Binding::Variable(name)),
                 value,
             } => {
                 if let Expression::Function { id, .. } = value {

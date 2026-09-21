@@ -60,7 +60,7 @@ fn existing_names(stmts: &[Statement]) -> std::collections::HashSet<String> {
             self.walk_expression(e);
         }
         fn visit_assign_target(&mut self, t: &'b AssignTarget) {
-            if let AssignTarget::Variable(n) = t {
+            if let AssignTarget::Binding(crate::ir::Binding::Variable(n)) = t {
                 self.0.insert(n.clone());
             }
             self.walk_assign_target(t);
@@ -123,7 +123,7 @@ mod tests {
     fn test_fetch_naming() {
         // r0 = fetch(url) → response = fetch(url)
         let stmts = vec![Statement::Assign {
-            target: AssignTarget::Register(0),
+            target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Call {
                 callee: Box::new(Expression::Value(Value::Variable("fetch".to_string()))),
                 arguments: vec![Expression::Value(Value::Variable("url".to_string()))],
@@ -133,7 +133,7 @@ mod tests {
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Variable(n) if n == "response"));
+            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "response"));
         } else {
             panic!("Expected assign statement");
         }
@@ -143,7 +143,7 @@ mod tests {
     fn test_property_naming() {
         // r0 = obj.length → length = obj.length (raw property name preferred)
         let stmts = vec![Statement::Assign {
-            target: AssignTarget::Register(0),
+            target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Member {
                 object: Box::new(Expression::Value(Value::Variable("obj".to_string()))),
                 property: PropertyKey::Ident("length".to_string()),
@@ -154,7 +154,7 @@ mod tests {
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Variable(n) if n == "length"));
+            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "length"));
         } else {
             panic!("Expected assign statement");
         }
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn test_http_query_object_named_request() {
         let stmts = vec![Statement::Assign {
-            target: AssignTarget::Register(2),
+            target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
             value: Expression::Object {
                 properties: vec![
                     crate::ir::ObjectProperty {
@@ -180,7 +180,7 @@ mod tests {
         let result = infer_variable_names(stmts);
         if let Statement::Assign { target, .. } = &result[0] {
             assert!(
-                matches!(target, AssignTarget::Variable(n) if n == "request"),
+                matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "request"),
                 "got {target:?}"
             );
         } else {
@@ -192,7 +192,7 @@ mod tests {
     fn test_new_instance_naming() {
         // r0 = new Date() → date = new Date()
         let stmts = vec![Statement::Assign {
-            target: AssignTarget::Register(0),
+            target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::New {
                 callee: Box::new(Expression::Value(Value::Variable("Date".to_string()))),
                 arguments: vec![],
@@ -202,7 +202,7 @@ mod tests {
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Variable(n) if n == "date"));
+            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "date"));
         } else {
             panic!("Expected assign statement");
         }
@@ -212,7 +212,7 @@ mod tests {
     fn test_binary_op_naming() {
         // r0 = a + b → sum = a + b
         let stmts = vec![Statement::Assign {
-            target: AssignTarget::Register(0),
+            target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Binary {
                 op: crate::ir::BinaryOp::Add,
                 left: Box::new(Expression::Value(Value::Variable("a".to_string()))),
@@ -223,7 +223,7 @@ mod tests {
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Variable(n) if n == "sum"));
+            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "sum"));
         } else {
             panic!("Expected assign statement");
         }
@@ -233,7 +233,7 @@ mod tests {
     fn test_array_index_zero_naming() {
         // r0 = arr[0] → first = arr[0]
         let stmts = vec![Statement::Assign {
-            target: AssignTarget::Register(0),
+            target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Member {
                 object: Box::new(Expression::Value(Value::Variable("items".to_string()))),
                 property: PropertyKey::Index(0),
@@ -244,7 +244,7 @@ mod tests {
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Variable(n) if n == "first"));
+            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "first"));
         } else {
             panic!("Expected assign statement");
         }
@@ -255,14 +255,14 @@ mod tests {
         // Two fetch calls should get unique names
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Register(0),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Value(Value::Variable("fetch".to_string()))),
                     arguments: vec![],
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Value(Value::Variable("fetch".to_string()))),
                     arguments: vec![],
@@ -276,7 +276,7 @@ mod tests {
             .iter()
             .filter_map(|s| {
                 if let Statement::Assign {
-                    target: AssignTarget::Variable(n),
+                    target: AssignTarget::Binding(crate::ir::Binding::Variable(n)),
                     ..
                 } = s
                 {

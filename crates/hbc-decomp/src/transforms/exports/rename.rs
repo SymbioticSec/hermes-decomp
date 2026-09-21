@@ -1,4 +1,4 @@
-use crate::ir::{Statement, Expression, AssignTarget, Value, PropertyKey};
+use crate::ir::{Binding, Statement, Expression, AssignTarget, Value, PropertyKey};
 
 pub fn rename_param_registers(statements: &mut [Statement], names: &[Option<String>]) {
     // 1. Map of Reg -> Name
@@ -9,7 +9,7 @@ pub fn rename_param_registers(statements: &mut [Statement], names: &[Option<Stri
     
     // Scan for LoadParam to get registers (both v2 IR and legacy formats)
     for stmt in statements.iter() {
-        if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
+        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
             match value {
                 // v2 IR: LoadParam produces Value::Parameter(idx)
                 Expression::Value(Value::Parameter(idx)) => {
@@ -131,12 +131,12 @@ fn rename_target(
     var_map: &std::collections::HashMap<String, String>,
 ) {
     match target {
-        AssignTarget::Register(r) => {
+        AssignTarget::Binding(Binding::Register(r)) => {
             if let Some(name) = reg_map.get(r) {
-                *target = AssignTarget::Variable(name.clone());
+                *target = AssignTarget::Binding(Binding::Variable(name.clone()));
             }
         }
-        AssignTarget::Variable(v) => {
+        AssignTarget::Binding(Binding::Variable(v)) => {
             if let Some(name) = var_map.get(v) {
                 *v = name.clone();
             }

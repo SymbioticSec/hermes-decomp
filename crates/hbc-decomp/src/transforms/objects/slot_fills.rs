@@ -1,4 +1,4 @@
-use crate::ir::{
+use crate::ir::{Binding, 
     AssignTarget, Expression, ObjectProperty, Statement, Value, stmt_has_side_effects,
 };
 use super::is_reg_used;
@@ -267,11 +267,11 @@ fn reassigns_deep(stmt: &Statement, obj: &ObjRef) -> bool {
 fn object_ident_keys(stmt: &Statement) -> Option<(ObjRef, Vec<String>)> {
     let (obj, props) = match stmt {
         Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value: Expression::Object { properties },
         } if !properties.is_empty() => (ObjRef::Register(*r), properties),
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(Binding::Variable(name)),
             value: Expression::Object { properties },
         } if !properties.is_empty() => (ObjRef::Name(name.clone()), properties),
         Statement::Let {
@@ -307,11 +307,11 @@ enum ObjRef {
 fn object_literal_def(stmt: &Statement) -> Option<(ObjRef, usize)> {
     match stmt {
         Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value: Expression::Object { properties },
         } if !properties.is_empty() => Some((ObjRef::Register(*r), properties.len())),
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(Binding::Variable(name)),
             value: Expression::Object { properties },
         } if !properties.is_empty() => Some((ObjRef::Name(name.clone()), properties.len())),
         Statement::Let {
@@ -372,8 +372,8 @@ fn slot_index_fill(stmt: &Statement, obj: &ObjRef, prop_count: usize) -> Option<
 // name a fill value could read; member/index writes mutate an existing binding.
 fn record_defs(stmt: &Statement, regs: &mut Vec<u32>, vars: &mut Vec<String>) {
     match stmt {
-        Statement::Assign { target: AssignTarget::Register(r), .. } => regs.push(*r),
-        Statement::Assign { target: AssignTarget::Variable(n), .. } => vars.push(n.clone()),
+        Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. } => regs.push(*r),
+        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), .. } => vars.push(n.clone()),
         Statement::Let { name, .. } => vars.push(name.clone()),
         _ => {}
     }
@@ -409,14 +409,14 @@ fn obj_reassigned(stmt: &Statement, obj: &ObjRef) -> bool {
         (
             ObjRef::Register(r),
             Statement::Assign {
-                target: AssignTarget::Register(r2),
+                target: AssignTarget::Binding(Binding::Register(r2)),
                 ..
             },
         ) => r == r2,
         (
             ObjRef::Name(n),
             Statement::Assign {
-                target: AssignTarget::Variable(n2),
+                target: AssignTarget::Binding(Binding::Variable(n2)),
                 ..
             },
         ) => n == n2,

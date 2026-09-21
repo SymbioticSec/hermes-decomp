@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Statement};
+use crate::ir::{Binding, AssignTarget, Statement};
 use std::collections::BTreeMap;
 use super::types::{ClosureInfo, ClosureSlotValue};
 use super::value::value_from_expr;
@@ -18,14 +18,14 @@ impl ClosureInfo {
     fn analyze_stmt(&mut self, stmt: &Statement, reg_values: &mut BTreeMap<u32, ClosureSlotValue>) {
         match stmt {
             Statement::Assign { target, value } => {
-                if let AssignTarget::Register(r) = target {
+                if let AssignTarget::Binding(Binding::Register(r)) = target {
                     // Use reg_values so copies like `r5 = require` still track.
                     if let Some(val) = value_from_expr(value, Some(reg_values), true) {
                         reg_values.insert(*r, val);
                     }
                 }
 
-                if let AssignTarget::ClosureVar { slot, .. } = target {
+                if let AssignTarget::Binding(Binding::ClosureVar{ slot, .. }) = target {
                     if let Some(val) = value_from_expr(value, Some(reg_values), true) {
                         self.store_slot(*slot, val);
                     }

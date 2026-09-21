@@ -1,5 +1,5 @@
 use super::state::VariableNamer;
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
 
 pub fn rename_stmt(namer: &VariableNamer, stmt: Statement) -> Statement {
     match stmt {
@@ -114,19 +114,19 @@ pub fn rename_stmt(namer: &VariableNamer, stmt: Statement) -> Statement {
 
 fn rename_target(namer: &VariableNamer, target: AssignTarget) -> AssignTarget {
     match target {
-        AssignTarget::Register(r) => {
+        AssignTarget::Binding(Binding::Register(r)) => {
             let key = format!("r{r}");
             if let Some(name) = namer.inferred_names.get(&key) {
-                AssignTarget::Variable(name.clone())
+                AssignTarget::Binding(Binding::Variable(name.clone()))
             } else {
-                AssignTarget::Register(r)
+                AssignTarget::Binding(Binding::Register(r))
             }
         }
-        AssignTarget::Variable(v) => {
+        AssignTarget::Binding(Binding::Variable(v)) => {
             if let Some(name) = namer.inferred_names.get(&v) {
-                AssignTarget::Variable(name.clone())
+                AssignTarget::Binding(Binding::Variable(name.clone()))
             } else {
-                AssignTarget::Variable(v)
+                AssignTarget::Binding(Binding::Variable(v))
             }
         }
         AssignTarget::Member { object, property } => AssignTarget::Member {

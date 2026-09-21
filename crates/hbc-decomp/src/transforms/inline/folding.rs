@@ -1,6 +1,6 @@
 // Object/Array literal folding passes.
 
-use crate::ir::{map_nested_bodies_mut, AssignTarget, Expression, ObjectProperty, PropertyKey, Statement, Value, VarKind};
+use crate::ir::{Binding, map_nested_bodies_mut, AssignTarget, Expression, ObjectProperty, PropertyKey, Statement, Value, VarKind};
 
 // === Object literal folding pass ===
 // Folds `obj = {}; obj.a = 1; obj.b = 2;` -> `obj = { a: 1, b: 2 }`
@@ -17,7 +17,7 @@ pub fn fold_object_literals(stmts: Vec<Statement>) -> Vec<Statement> {
             Statement::Let { name, value: Expression::Object { properties }, kind } => {
                 (name.clone(), properties.clone(), true, Some(*kind))
             }
-            Statement::Assign { target: AssignTarget::Variable(name), value: Expression::Object { properties } } => {
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value: Expression::Object { properties } } => {
                 (name.clone(), properties.clone(), false, None)
             }
             _ => {
@@ -68,7 +68,7 @@ pub fn fold_object_literals(stmts: Vec<Statement>) -> Vec<Statement> {
             let mut s = if is_let {
                 Statement::Let { name: obj_name, value: obj_expr, kind: var_kind.unwrap_or(VarKind::Let) }
             } else {
-                Statement::Assign { target: AssignTarget::Variable(obj_name), value: obj_expr }
+                Statement::Assign { target: AssignTarget::Binding(Binding::Variable(obj_name)), value: obj_expr }
             };
             fold_object_literals_recurse(&mut s);
             result.push(s);
@@ -137,7 +137,7 @@ pub fn fold_array_literals(stmts: Vec<Statement>) -> Vec<Statement> {
             Statement::Let { name, value: Expression::Array { elements }, kind } => {
                 (name.clone(), elements.clone(), true, Some(*kind))
             }
-            Statement::Assign { target: AssignTarget::Variable(name), value: Expression::Array { elements } } => {
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value: Expression::Array { elements } } => {
                 (name.clone(), elements.clone(), false, None)
             }
             _ => {
@@ -186,7 +186,7 @@ pub fn fold_array_literals(stmts: Vec<Statement>) -> Vec<Statement> {
             let mut s = if is_let {
                 Statement::Let { name: arr_name, value: arr_expr, kind: var_kind.unwrap_or(VarKind::Let) }
             } else {
-                Statement::Assign { target: AssignTarget::Variable(arr_name), value: arr_expr }
+                Statement::Assign { target: AssignTarget::Binding(Binding::Variable(arr_name)), value: arr_expr }
             };
             fold_array_literals_recurse(&mut s);
             result.push(s);

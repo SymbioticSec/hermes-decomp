@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
 use std::collections::BTreeMap;
 
 pub fn rename_registers(stmts: Vec<Statement>, names: &BTreeMap<u32, String>) -> Vec<Statement> {
@@ -113,11 +113,11 @@ fn rename_string_var(var: String, names: &BTreeMap<u32, String>) -> String {
 
 fn rename_target(target: AssignTarget, names: &BTreeMap<u32, String>) -> AssignTarget {
     match target {
-        AssignTarget::Register(r) => {
+        AssignTarget::Binding(Binding::Register(r)) => {
             if let Some(name) = names.get(&r) {
-                AssignTarget::Variable(name.clone())
+                AssignTarget::Binding(Binding::Variable(name.clone()))
             } else {
-                AssignTarget::Register(r)
+                AssignTarget::Binding(Binding::Register(r))
             }
         }
         AssignTarget::Member { object, property } => AssignTarget::Member {
@@ -366,7 +366,7 @@ fn rename_variables_in_stmt(stmt: &mut Statement, renames: &BTreeMap<String, Str
 
 fn rename_variables_in_target(target: &mut AssignTarget, renames: &BTreeMap<String, String>) {
     match target {
-        AssignTarget::Variable(name) => {
+        AssignTarget::Binding(Binding::Variable(name)) => {
             if let Some(new_name) = renames.get(name) {
                 *name = new_name.clone();
             }

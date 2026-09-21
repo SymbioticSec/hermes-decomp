@@ -1,4 +1,4 @@
-use crate::ir::{stmt_uses_register, AssignTarget, Expression, Statement, Value};
+use crate::ir::{Binding, stmt_uses_register, AssignTarget, Expression, Statement, Value};
 
 pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     // A store `X = value` is dead when, scanning forward in this flat sequence, a
@@ -131,16 +131,16 @@ enum Key {
 
 fn target_key(target: &AssignTarget) -> Option<Key> {
     match target {
-        AssignTarget::Register(r) => Some(Key::Reg(*r)),
-        AssignTarget::Variable(name) => Some(Key::Var(name.clone())),
+        AssignTarget::Binding(Binding::Register(r)) => Some(Key::Reg(*r)),
+        AssignTarget::Binding(Binding::Variable(name)) => Some(Key::Var(name.clone())),
         _ => None,
     }
 }
 
 fn overwrites(stmt: &Statement, key: &Key) -> bool {
     match (stmt, key) {
-        (Statement::Assign { target: AssignTarget::Register(r), .. }, Key::Reg(k)) => r == k,
-        (Statement::Assign { target: AssignTarget::Variable(n), .. }, Key::Var(k)) => n == k,
+        (Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. }, Key::Reg(k)) => r == k,
+        (Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), .. }, Key::Var(k)) => n == k,
         (Statement::Let { name, .. }, Key::Var(k)) => name == k,
         _ => false,
     }
@@ -192,8 +192,8 @@ mod tests {
     fn dead_store_of_side_effecting_call_keeps_call_drops_target() {
         // `x = __d(0); x = __r(0);` -> the first store is dead, keep the call only.
         let stmts = vec![
-            Statement::Assign { target: AssignTarget::Variable("x".into()), value: call("__d") },
-            Statement::Assign { target: AssignTarget::Variable("x".into()), value: call("__r") },
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("__d") },
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("__r") },
         ];
         let out = remove_dead_assignments(stmts);
         // First becomes a bare Expr(call), second stays (last store, not overwritten).
@@ -205,7 +205,7 @@ mod tests {
     fn live_store_is_kept() {
         // `x = f(); g(x);` -> x is read, keep the assignment.
         let stmts = vec![
-            Statement::Assign { target: AssignTarget::Variable("x".into()), value: call("f") },
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("f") },
             Statement::Expr(Expression::Call {
                 callee: Box::new(Expression::Value(Value::Variable("g".into()))),
                 arguments: vec![Expression::Value(Value::Variable("x".into()))],
@@ -219,7 +219,7 @@ mod tests {
     fn read_before_overwrite_is_kept() {
         // `x = f(); y.k = x; x = g();` -> next stmt reads x, so the first store lives.
         let stmts = vec![
-            Statement::Assign { target: AssignTarget::Variable("x".into()), value: call("f") },
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("f") },
             Statement::Assign {
                 target: AssignTarget::Member {
                     object: Expression::Value(Value::Variable("y".into())),
@@ -227,7 +227,7 @@ mod tests {
                 },
                 value: Expression::Value(Value::Variable("x".into())),
             },
-            Statement::Assign { target: AssignTarget::Variable("x".into()), value: call("g") },
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("g") },
         ];
         let out = remove_dead_assignments(stmts);
         assert!(matches!(&out[0], Statement::Assign { .. }));

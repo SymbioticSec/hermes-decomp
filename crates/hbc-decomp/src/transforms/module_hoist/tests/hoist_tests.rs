@@ -124,7 +124,7 @@ fn reuses_existing_assign_binding() {
         factory_id,
         vec![
             Statement::Assign {
-                target: AssignTarget::Variable("HTTPUtils".into()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("HTTPUtils".into())),
                 value: call("require", int(530)),
             },
             Statement::Expr(member(call("require", int(530)), "post")),

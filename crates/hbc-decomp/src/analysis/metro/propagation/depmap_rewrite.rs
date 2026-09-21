@@ -12,7 +12,7 @@
 use super::super::registry::{FactoryRoles, MetroRegistry};
 use super::is_dep_array_name;
 use crate::analysis::ClosureContext;
-use crate::ir::{
+use crate::ir::{Binding, 
     map_nested_bodies_mut, AssignTarget, Expression, PropertyKey, Statement, Value,
 };
 use std::collections::{BTreeMap, HashSet};
@@ -126,7 +126,7 @@ fn collect_depmap_aliases(stmts: &[Statement], roles: &FactoryRoles) -> HashSet<
         for stmt in stmts {
             match stmt {
                 Statement::Let { name, value, .. } | Statement::Assign {
-                    target: AssignTarget::Variable(name),
+                    target: AssignTarget::Binding(Binding::Variable(name)),
                     value,
                 } => {
                     if expr_is_depmap_root(value, aliases, roles) {
@@ -134,7 +134,7 @@ fn collect_depmap_aliases(stmts: &[Statement], roles: &FactoryRoles) -> HashSet<
                     }
                 }
                 Statement::Assign {
-                    target: AssignTarget::Register(r),
+                    target: AssignTarget::Binding(Binding::Register(r)),
                     value,
                 } => {
                     if expr_is_depmap_root(value, aliases, roles) {
@@ -218,7 +218,7 @@ fn collect_reused(
             let bound = match s {
                 Statement::Let { name, value, .. }
                 | Statement::Assign {
-                    target: AssignTarget::Variable(name),
+                    target: AssignTarget::Binding(Binding::Variable(name)),
                     value,
                 } => Some((name, value)),
                 _ => None,
@@ -280,7 +280,7 @@ fn rewrite_stmt(
         Statement::Assign { target, value } => {
             count += rewrite_expr(value, deps, aliases, roles);
             count += rewrite_target(target, deps, aliases, roles);
-            if let AssignTarget::Variable(name) = target {
+            if let AssignTarget::Binding(Binding::Variable(name)) = target {
                 if expr_is_depmap_root(value, aliases, roles) {
                     aliases.insert(name.clone());
                 }

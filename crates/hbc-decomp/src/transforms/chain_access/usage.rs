@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, Statement, Value, Visitor};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
 use std::collections::BTreeMap;
 
 pub fn is_chain_candidate(expr: &Expression) -> bool {
@@ -20,7 +20,7 @@ struct DefCounter<'c> {
 
 impl<'a, 'c> Visitor<'a> for DefCounter<'c> {
     fn visit_assign_target(&mut self, target: &'a AssignTarget) {
-        if let AssignTarget::Register(r) = target {
+        if let AssignTarget::Binding(Binding::Register(r)) = target {
             *self.counts.entry(*r).or_insert(0) += 1;
         }
         self.walk_assign_target(target);

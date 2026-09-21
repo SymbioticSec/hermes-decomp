@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, Statement, Value};
+use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, Statement, Value};
 
 // Detect and simplify generator state machine patterns.
 //
@@ -184,7 +184,7 @@ fn is_state_assignment_ref(stmt: &Statement) -> bool {
     matches!(
         stmt,
         Statement::Assign {
-            target: AssignTarget::Register(_),
+            target: AssignTarget::Binding(Binding::Register(_)),
             value: Expression::Value(Value::Constant(Constant::Integer(_)))
         }
     )

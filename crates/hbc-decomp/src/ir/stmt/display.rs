@@ -1,5 +1,6 @@
 use super::{AssignTarget, Statement, Terminator};
 use std::fmt;
+use crate::ir::Binding;
 
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -138,11 +139,11 @@ impl fmt::Display for Statement {
 impl fmt::Display for AssignTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AssignTarget::Variable(name) => {
+            AssignTarget::Binding(Binding::Variable(name)) => {
                 let sanitized = crate::util::sanitize_identifier(name);
                 write!(f, "{sanitized}")
             }
-            AssignTarget::Register(r) => write!(f, "r{r}"),
+            AssignTarget::Binding(Binding::Register(r)) => write!(f, "r{r}"),
             AssignTarget::Member { object, property } => {
                 let obj = format!("{object}");
                 let s = crate::ir::expr::display::format_member_access_with(
@@ -154,7 +155,7 @@ impl fmt::Display for AssignTarget {
                 write!(f, "{s}")
             }
             AssignTarget::Index { object, key } => write!(f, "{object}[{key}]"),
-            AssignTarget::ClosureVar { level, slot } => {
+            AssignTarget::Binding(Binding::ClosureVar{ level, slot }) => {
                 write!(f, "{}", crate::ir::Value::closure_var_name(*level, *slot))
             }
             AssignTarget::DestructuringArray(targets) => {
@@ -196,7 +197,7 @@ impl fmt::Display for AssignTarget {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    let is_shorthand = if let AssignTarget::Variable(v) = target {
+                    let is_shorthand = if let AssignTarget::Binding(Binding::Variable(v)) = target {
                         v == key
                     } else {
                         false
@@ -220,7 +221,7 @@ impl fmt::Display for AssignTarget {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    let is_shorthand = if let AssignTarget::Variable(v) = target {
+                    let is_shorthand = if let AssignTarget::Binding(Binding::Variable(v)) = target {
                         v == key
                     } else {
                         false

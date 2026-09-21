@@ -217,7 +217,7 @@ impl Codegen {
                         }
                     }
                 }
-                Statement::Assign { target: AssignTarget::Variable(name), value } => {
+                Statement::Assign { target: AssignTarget::Binding(crate::ir::Binding::Variable(name)), value } => {
                     if let Some(mod_name) = self.resolve_require_module(value) {
                         import_var = Some(name.clone());
                         module_name = Some(mod_name);

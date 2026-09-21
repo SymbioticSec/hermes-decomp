@@ -3,7 +3,7 @@
 use super::env_state::EnvRegMap;
 use super::opcodes_flow::FlowResult;
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{Expression, Statement};
+use crate::ir::{Binding, Expression, Statement};
 
 // CreateEnvironment / CreateFunctionEnvironment / CreateTopLevelEnvironment /
 // CreateInnerEnvironment, result register holds the *current* function env
@@ -93,7 +93,7 @@ pub fn handle_load_from_environment(
     env_map.set_source_slot(dst, level, slot);
 
     Some(FlowResult::Statement(Statement::Assign {
-        target: crate::ir::AssignTarget::Register(dst),
+        target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Value(crate::ir::Value::ClosureVar { level, slot }),
     }))
 }
@@ -121,7 +121,7 @@ pub fn handle_store_to_environment(
     let value = reg_expr(&inst.operands, 2)?;
 
     Some(FlowResult::Statement(Statement::Assign {
-        target: crate::ir::AssignTarget::ClosureVar { level, slot },
+        target: crate::ir::AssignTarget::Binding(Binding::ClosureVar{ level, slot }),
         value,
     }))
 }

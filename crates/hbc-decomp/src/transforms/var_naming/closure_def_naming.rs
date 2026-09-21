@@ -1,7 +1,7 @@
 // Definition-site closure naming, infers names from what value is assigned to closure_N.
 
 use super::closure_usage::{ident_from_property, is_closure_name};
-use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
 use std::collections::BTreeMap;
 
 use super::closure_definitions::{collect_existing_names, make_unique_name};
@@ -62,7 +62,7 @@ fn scan_closure_def_in_stmt(
 ) {
     match stmt {
         Statement::Assign { target, value } => {
-            if let AssignTarget::Variable(name) = target {
+            if let AssignTarget::Binding(Binding::Variable(name)) = target {
                 try_infer_closure_def(name, value, renames, used_names);
             }
         }

@@ -1,5 +1,5 @@
 use super::analysis::*;
-use crate::ir::{AssignTarget, Constant, Expression, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Constant, Expression, Statement, Value};
 use std::collections::{HashMap, HashSet};
 
 // Transform generator statements into clean yield/await expressions.
@@ -76,7 +76,7 @@ pub fn transform_generator_stmts(
                     if let Some(result_reg) = yield_to_resume.get(&i) {
                         // Emit: result = yield value
                         result.push(Statement::Assign {
-                            target: AssignTarget::Register(*result_reg),
+                            target: AssignTarget::Binding(Binding::Register(*result_reg)),
                             value: yield_expr,
                         });
                     } else {

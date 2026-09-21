@@ -3,7 +3,7 @@
 // After closure resolution and naming, variables are `Variable("tmp")`, `Variable("closure_0")`, etc.
 // This pass inlines variables that are assigned once and used once, eliminating temporaries.
 
-use crate::ir::{map_nested_bodies_mut, AssignTarget, Expression, Statement, Value};
+use crate::ir::{Binding, map_nested_bodies_mut, AssignTarget, Expression, Statement, Value};
 use std::collections::BTreeMap;
 
 use super::cleanup::cleanup_noise;
@@ -60,7 +60,7 @@ fn collect_immutable_aliases(
             let alias = match s {
                 Statement::Let { name, value, .. } => Some((name, value)),
                 Statement::Assign {
-                    target: AssignTarget::Variable(name),
+                    target: AssignTarget::Binding(Binding::Variable(name)),
                     value,
                 } => Some((name, value)),
                 _ => None,
@@ -170,7 +170,7 @@ fn inline_named_with_candidates(
     for stmt in stmts {
         // Extract variable name and value for both Assign and Let statements
         let var_info = match &stmt {
-            Statement::Assign { target: AssignTarget::Variable(name), value } => {
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
                 Some((name.clone(), value.clone(), false))
             }
             Statement::Let { name, value, .. } => {
@@ -213,7 +213,7 @@ fn inline_named_with_candidates(
                         // Don't emit the assignment -- it will be substituted at use sites
                     } else {
                         // Not simple enough: emit as normal
-                        let mut stmt = Statement::Assign { target: AssignTarget::Variable(name.clone()), value };
+                        let mut stmt = Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name.clone())), value };
                         apply_pending_to_stmt(&mut stmt, &mut pending);
                         result.push(stmt);
                     }

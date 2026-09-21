@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, UnaryOp, Value};
+use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, UnaryOp, Value};
 
 pub fn expr_uses_register(expr: &Expression, reg: u32) -> bool {
     match expr {
@@ -65,9 +65,9 @@ pub fn stmt_uses_register(stmt: &Statement, reg: u32) -> bool {
 
 pub fn target_to_key(target: &AssignTarget) -> Option<String> {
     match target {
-        AssignTarget::Register(r) => Some(format!("r{r}")),
-        AssignTarget::Variable(name) => Some(name.clone()),
-        AssignTarget::ClosureVar { slot, level, .. } => Some(format!("closure_{level}_{slot}")),
+        AssignTarget::Binding(Binding::Register(r)) => Some(format!("r{r}")),
+        AssignTarget::Binding(Binding::Variable(name)) => Some(name.clone()),
+        AssignTarget::Binding(Binding::ClosureVar{ slot, level, .. }) => Some(format!("closure_{level}_{slot}")),
         _ => None,
     }
 }

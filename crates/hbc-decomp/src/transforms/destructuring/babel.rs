@@ -94,7 +94,7 @@ fn helper_anchor(stmt: &Statement) -> Option<(String, Expression)> {
     let (name, value) = match stmt {
         Statement::Let { name, value, .. } => (name, value),
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
         } => (name, value),
         _ => return None,
@@ -159,7 +159,7 @@ fn collect_reads(
             if *pos < sk {
                 continue;
             }
-            if let AssignTarget::Variable(name) = target {
+            if let AssignTarget::Binding(crate::ir::Binding::Variable(name)) = target {
                 if reads_name(&stmts[sk], name) {
                     return None;
                 }
@@ -178,7 +178,7 @@ fn collect_reads(
 // `TARGET = tmp[N]` → (TARGET, N) for a non negative constant N.
 fn indexed_read(stmt: &Statement, tmp: &str) -> Option<(AssignTarget, usize)> {
     let (target, value) = match stmt {
-        Statement::Let { name, value, .. } => (AssignTarget::Variable(name.clone()), value),
+        Statement::Let { name, value, .. } => (AssignTarget::Binding(crate::ir::Binding::Variable(name.clone())), value),
         Statement::Assign { target, value } => (target.clone(), value),
         _ => return None,
     };
@@ -214,7 +214,7 @@ fn reads_name(stmt: &Statement, name: &str) -> bool {
             self.walk_expression(e);
         }
         fn visit_assign_target(&mut self, t: &'b AssignTarget) {
-            if let AssignTarget::Variable(n) = t {
+            if let AssignTarget::Binding(crate::ir::Binding::Variable(n)) = t {
                 if n == self.name {
                     self.found = true;
                 }
@@ -318,8 +318,8 @@ mod tests {
     fn an_already_reconstructed_pattern_drops_the_helper() {
         let out = reconstruct_babel_array_destructuring(vec![Statement::Assign {
             target: AssignTarget::DestructuringArray(vec![
-                Some((AssignTarget::Variable("a".into()), None)),
-                Some((AssignTarget::Variable("b".into()), None)),
+                Some((AssignTarget::Binding(crate::ir::Binding::Variable("a".into())), None)),
+                Some((AssignTarget::Binding(crate::ir::Binding::Variable("b".into())), None)),
             ]),
             value: helper_call("src", 2),
         }]);

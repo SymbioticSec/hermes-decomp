@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, BinaryOp, Expression, Statement, Value};
+use crate::ir::{Binding, AssignTarget, BinaryOp, Expression, Statement, Value};
 
 // Detect and transform default parameter patterns:
 // `if (argN === undefined) argN = value`
@@ -17,7 +17,7 @@ pub fn transform_default_params(stmts: &mut [Statement]) {
             if else_body.is_empty() && then_body.len() == 1 {
                 if let Some((param_reg, value)) = match_default_pattern(condition, &then_body[0]) {
                     // Transform to `arg = arg ?? value`
-                    let target = AssignTarget::Register(param_reg);
+                    let target = AssignTarget::Binding(Binding::Register(param_reg));
                     let expr = Expression::binary(
                         BinaryOp::NullishCoalesce,
                         Expression::Value(Value::Register(param_reg)),
@@ -65,7 +65,7 @@ fn match_default_pattern<'a>(
 
     // Check body assignment
     if let Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value,
     } = body
     {

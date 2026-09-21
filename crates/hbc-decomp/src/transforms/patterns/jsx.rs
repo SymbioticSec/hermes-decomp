@@ -4,7 +4,7 @@
 // 1. Resolve 1-hop object props: `const p = { a: 1 }; jsx(Tag, p)` → use `{ a: 1 }`
 // 2. Match factory calls and lower to Expression::JSXElement
 
-use crate::ir::{
+use crate::ir::{Binding, 
     map_nested_bodies_mut, AssignTarget, Constant, Expression, MutVisitor, ObjectProperty,
     PropertyKey, Statement, Value,
 };
@@ -35,7 +35,7 @@ fn resolve_prop_object_vars(stmts: Vec<Statement>) -> Vec<Statement> {
                 out.push(Statement::Let { name, value, kind });
             }
             Statement::Assign {
-                target: AssignTarget::Variable(name),
+                target: AssignTarget::Binding(Binding::Variable(name)),
                 value,
             } => {
                 let value = maybe_subst_call(value, &objects);
@@ -45,7 +45,7 @@ fn resolve_prop_object_vars(stmts: Vec<Statement>) -> Vec<Statement> {
                     objects.remove(&name);
                 }
                 out.push(Statement::Assign {
-                    target: AssignTarget::Variable(name),
+                    target: AssignTarget::Binding(Binding::Variable(name)),
                     value,
                 });
             }

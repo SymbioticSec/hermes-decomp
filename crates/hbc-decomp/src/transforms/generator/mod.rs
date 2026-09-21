@@ -57,7 +57,7 @@ mod tests {
         let stmts = vec![
             Statement::Comment("StartGenerator".to_string()),
             Statement::Assign {
-                target: AssignTarget::Register(0),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
                 value: Expression::Value(Value::Constant(Constant::Integer(1))),
             },
             Statement::Comment("__yield_point__:100".to_string()),
@@ -80,7 +80,7 @@ mod tests {
                 42,
             ))))),
             Statement::Assign {
-                target: AssignTarget::Register(5),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(5)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Member {
                         object: Box::new(Expression::Value(Value::Register(0))),
@@ -97,7 +97,7 @@ mod tests {
         // Should have: r5 = yield 42
         let has_yield_assign = result.iter().any(|s| {
             if let Statement::Assign {
-                target: AssignTarget::Register(5),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(5)),
                 value,
             } = s
             {
@@ -120,7 +120,7 @@ mod tests {
                 )))],
             })),
             Statement::Assign {
-                target: AssignTarget::Register(3),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(3)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Member {
                         object: Box::new(Expression::Value(Value::Register(0))),
@@ -137,7 +137,7 @@ mod tests {
         // Should have: r3 = await fetch("url")
         let has_await_assign = result.iter().any(|s| {
             if let Statement::Assign {
-                target: AssignTarget::Register(3),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(3)),
                 value,
             } = s
             {
@@ -185,7 +185,7 @@ mod tests {
         let stmts = vec![
             Statement::Comment("StartGenerator".to_string()),
             Statement::Assign {
-                target: AssignTarget::Register(0),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
                 value: Expression::Value(Value::Constant(Constant::Integer(1))),
             },
             Statement::Comment("__yield_point__:100".to_string()),
@@ -218,7 +218,7 @@ mod tests {
                 1,
             ))))),
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Member {
                         object: Box::new(Expression::Value(Value::Register(0))),
@@ -233,7 +233,7 @@ mod tests {
                 2,
             ))))),
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Member {
                         object: Box::new(Expression::Value(Value::Register(0))),

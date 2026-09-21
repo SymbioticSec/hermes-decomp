@@ -32,7 +32,7 @@
 // deviation makes the whole pass bail and return the input unchanged, so an
 // unrecognized generator keeps today's (raw) output rather than wrong code.
 
-use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, Value};
 
 pub fn reconstruct_generator_v98(body: Vec<Statement>) -> Vec<Statement> {
     try_reconstruct(&body).unwrap_or(body)
@@ -350,7 +350,7 @@ fn reconstruct_exit_body(
 
 // Drop state-slot writes, dead `x = undefined` inits and label copies.
 fn is_bookkeeping(s: &Statement, state_vars: &std::collections::HashSet<String>) -> bool {
-    if let Statement::Assign { target: AssignTarget::Variable(n), value } = s {
+    if let Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), value } = s {
         if state_vars.contains(n) {
             return true;
         }
@@ -395,7 +395,7 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
     // Incremental object build then return.
     if stmts.len() >= 3 {
         if let (
-            Statement::Assign { target: AssignTarget::Variable(o1), value: Expression::Object { properties } },
+            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(o1)), value: Expression::Object { properties } },
             Statement::Assign { target: value_target, value: real_value },
             Statement::Return(Some(Expression::Value(Value::Variable(o3)))),
         ) = (&stmts[0], &stmts[1], &stmts[2])
@@ -634,7 +634,7 @@ fn is_truthy(e: &Expression) -> bool {
 fn assigned_object(stmt: &Statement) -> Option<(&str, &Expression)> {
     match stmt {
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(Binding::Variable(name)),
             value,
         } => Some((name, value)),
         Statement::Let { name, value, .. } => Some((name, value)),
@@ -684,7 +684,7 @@ mod tests {
                 condition: eq(param(0), int(2)),
                 then_body: vec![
                     Statement::Assign {
-                        target: AssignTarget::Variable("obj".into()),
+                        target: AssignTarget::Binding(Binding::Variable("obj".into())),
                         value: obj_value_done(param(1), true),
                     },
                     Statement::Return(Some(var("obj"))),
@@ -713,7 +713,7 @@ mod tests {
         ]);
         let done_case = arg_protocol(vec![
             Statement::Assign {
-                target: AssignTarget::Variable("obj".into()),
+                target: AssignTarget::Binding(Binding::Variable("obj".into())),
                 value: obj_value_done(
                     Expression::Member {
                         object: Box::new(param(1)),
@@ -771,7 +771,7 @@ mod tests {
         }];
         let done_case = arg_protocol(vec![
             Statement::Assign {
-                target: AssignTarget::Variable("body".into()),
+                target: AssignTarget::Binding(Binding::Variable("body".into())),
                 value: param(1),
             },
             Statement::Expr(Expression::Call {

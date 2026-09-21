@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ir::{AssignTarget, Expression, Statement};
+use crate::ir::{Binding, AssignTarget, Expression, Statement};
 
 use super::detect::loader_call;
 use super::kinds::{HoistKey, LoaderKind, RESERVED_BINDINGS};
@@ -52,7 +52,7 @@ pub(super) fn binding_name_value(stmt: &Statement) -> Option<(&str, &Expression)
     match stmt {
         Statement::Let { name, value, .. } => Some((name.as_str(), value)),
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(Binding::Variable(name)),
             value,
         } => Some((name.as_str(), value)),
         _ => None,
@@ -82,7 +82,7 @@ pub(super) fn collect_existing_binding_names(stmts: &[Statement], out: &mut Hash
                 out.insert(name.clone());
             }
             Statement::Assign {
-                target: AssignTarget::Variable(name),
+                target: AssignTarget::Binding(Binding::Variable(name)),
                 ..
             } => {
                 out.insert(name.clone());

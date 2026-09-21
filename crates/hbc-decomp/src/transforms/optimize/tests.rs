@@ -36,7 +36,7 @@ mod tests {
         let result = detect_ternaries(stmts);
         let result = &result[0];
 
-        if let Statement::Assign { target: AssignTarget::Register(1), value } = result {
+        if let Statement::Assign { target: AssignTarget::Binding(crate::ir::Binding::Register(1)), value } = result {
             assert!(matches!(value, Expression::Conditional { .. }));
         } else {
             panic!("Expected ternary assignment");

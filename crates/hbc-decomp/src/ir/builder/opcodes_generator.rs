@@ -2,7 +2,7 @@
 
 use super::opcodes_flow::FlowResult;
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{Expression, Statement};
+use crate::ir::{Binding, Expression, Statement};
 
 // Handle StartGenerator opcode.
 pub fn handle_start_generator() -> Option<FlowResult> {
@@ -17,7 +17,7 @@ pub fn handle_resume_generator(inst: &crate::Instruction) -> Option<FlowResult> 
     let dst = get_reg(&inst.operands, 0)?;
     let gen = reg_expr(&inst.operands, 1)?;
     Some(FlowResult::Statement(Statement::Assign {
-        target: crate::ir::AssignTarget::Register(dst),
+        target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(Expression::Member {
                 object: Box::new(gen),
@@ -46,7 +46,7 @@ pub fn handle_create_generator(inst: &crate::Instruction) -> Option<FlowResult> 
             is_generator: true,
         };
         Some(FlowResult::Statement(Statement::Assign {
-            target: crate::ir::AssignTarget::Register(dst),
+            target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
             // Instantiated generator object, not the bare function*.
             value: Expression::Call {
                 callee: Box::new(gen_fn),
@@ -57,7 +57,7 @@ pub fn handle_create_generator(inst: &crate::Instruction) -> Option<FlowResult> 
         // Fallback for older bytecode without funcIdx operand
         let env = get_reg(&inst.operands, 1)?;
         Some(FlowResult::Statement(Statement::Assign {
-            target: crate::ir::AssignTarget::Register(dst),
+            target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
             value: Expression::Call {
                 callee: Box::new(Expression::Value(crate::ir::Value::Variable(
                     "CreateGenerator".to_string(),

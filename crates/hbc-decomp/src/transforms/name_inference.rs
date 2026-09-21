@@ -4,7 +4,7 @@
 // e.g. `obj.foo = function() {...}` -> `function foo() {...}`
 // Also infers names for common patterns (e.g. `x = []` -> `arr`).
 
-use crate::ir::{AssignTarget, Expression, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value};
 
 pub fn infer_names(statements: &mut [Statement]) {
     for stmt in statements {
@@ -21,7 +21,7 @@ fn infer_stmt(stmt: &mut Statement) {
             }
 
             // 2. Variable naming from Value (Type Inference)
-            if let AssignTarget::Register(_r) = target {
+            if let AssignTarget::Binding(Binding::Register(_r)) = target {
                 // Nothing to do for register unless we have a map of reg->name.
                 // But structure analysis transforms registers to vars later?
                 // No, registers are used until renamed by naming pass.
@@ -30,7 +30,7 @@ fn infer_stmt(stmt: &mut Statement) {
             }
 
             // 3. Infer target variable name from value pattern (heuristic)
-            if let AssignTarget::Variable(ref mut name) = target {
+            if let AssignTarget::Binding(Binding::Variable(ref mut name)) = target {
                 if name.starts_with("r") || name.starts_with("val") {
                     if let Some(new_name) = suggest_name(value) {
                         *name = new_name;
@@ -65,7 +65,7 @@ fn infer_stmt(stmt: &mut Statement) {
 
 fn extract_name_from_target(target: &AssignTarget) -> Option<String> {
     match target {
-        AssignTarget::Variable(name) => Some(name.clone()),
+        AssignTarget::Binding(Binding::Variable(name)) => Some(name.clone()),
         AssignTarget::Member { property, .. } => Some(property.clone()),
         _ => None,
     }

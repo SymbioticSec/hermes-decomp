@@ -1,5 +1,5 @@
 use super::registry::MetroModule;
-use crate::ir::{extract_function_id, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, extract_function_id, AssignTarget, Expression, PropertyKey, Statement, Value};
 use std::collections::{BTreeMap, HashMap};
 
 // Analyzes the exports of a Metro module to find exported functions.
@@ -24,9 +24,9 @@ impl ExportAnalyzer {
         let mut definitions = HashMap::new();
         for stmt in stmts {
             if let Statement::Assign { target, value } = stmt {
-                if let AssignTarget::Variable(name) = target {
+                if let AssignTarget::Binding(Binding::Variable(name)) = target {
                     definitions.insert(name.clone(), value);
-                } else if let AssignTarget::Register(r) = target {
+                } else if let AssignTarget::Binding(Binding::Register(r)) = target {
                     definitions.insert(format!("r{r}"), value);
                 }
             }

@@ -7,7 +7,7 @@
 //
 // Refactored to use Visitor pattern.
 
-use crate::ir::{is_simple_value, stmt_uses_register, AssignTarget, Constant, Expression, MutVisitor, Statement, Value, Visitor};
+use crate::ir::{Binding, is_simple_value, stmt_uses_register, AssignTarget, Constant, Expression, MutVisitor, Statement, Value, Visitor};
 use std::collections::{BTreeMap, HashSet};
 
 // Apply advanced cleanup transformations.
@@ -41,7 +41,7 @@ fn remove_dead_undefined_clears(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut result: Vec<Statement> = Vec::with_capacity(stmts.len());
     for (i, stmt) in stmts.iter().enumerate() {
         if let Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value: Expression::Value(Value::Constant(Constant::Undefined)),
         } = stmt
         {
@@ -164,7 +164,7 @@ fn inline_single_use(stmts: &mut Vec<Statement>) {
         for (idx, stmt) in stmts.iter().enumerate() {
             match stmt {
                 Statement::Assign {
-                    target: AssignTarget::Register(r),
+                    target: AssignTarget::Binding(Binding::Register(r)),
                     value,
                 } => {
                     def_value.insert(*r, value.clone());
@@ -237,7 +237,7 @@ fn remove_dead_assignments(stmts: &mut Vec<Statement>) {
     // Remove assignments to unused registers (but keep side-effectful expressions)
     stmts.retain(|stmt| {
         if let Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value,
         } = stmt
         {
@@ -270,7 +270,7 @@ struct DefCounter<'a> {
 
 impl<'a> Visitor<'a> for DefCounter<'a> {
     fn visit_assign_target(&mut self, target: &'a AssignTarget) {
-        if let AssignTarget::Register(r) = target {
+        if let AssignTarget::Binding(Binding::Register(r)) = target {
             *self.counts.entry(*r).or_insert(0) += 1;
         }
         self.walk_assign_target(target);
@@ -349,10 +349,10 @@ impl<'a> Visitor<'a> for TargetUseChecker<'a> {
         }
 
         match (expr, self.target) {
-            (Expression::Value(Value::Register(r1)), AssignTarget::Register(r2)) if r1 == r2 => {
+            (Expression::Value(Value::Register(r1)), AssignTarget::Binding(Binding::Register(r2))) if r1 == r2 => {
                 self.found = true
             }
-            (Expression::Value(Value::Variable(v1)), AssignTarget::Variable(v2)) if v1 == v2 => {
+            (Expression::Value(Value::Variable(v1)), AssignTarget::Binding(Binding::Variable(v2))) if v1 == v2 => {
                 self.found = true
             }
             _ => self.walk_expression(expr),

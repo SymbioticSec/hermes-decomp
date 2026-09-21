@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, Statement, Value};
+use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, Statement, Value};
 
 pub fn transform_logic(stmts: &mut [Statement]) {
     for stmt in stmts.iter_mut() {
@@ -74,7 +74,7 @@ pub fn transform_logic(stmts: &mut [Statement]) {
             value: _v1,
         } = stmt1
         {
-            if let AssignTarget::Register(r1) = t1 {
+            if let AssignTarget::Binding(Binding::Register(r1)) = t1 {
                 if let Statement::If {
                     condition,
                     then_body,

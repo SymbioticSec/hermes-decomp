@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, BinaryOp, Expression, Statement, Value, MutVisitor};
+use crate::ir::{Binding, AssignTarget, BinaryOp, Expression, Statement, Value, MutVisitor};
 
 // Detect and fold short-circuit logic operators (`&&`, `||`, `??`).
 //
@@ -51,7 +51,7 @@ impl MutVisitor for ShortCircuitVisitor {
             // that shape left the whole pattern standing.
             let first_target = match &stmts[i] {
                 Statement::Assign { target, .. } => Some(target.clone()),
-                Statement::Let { name, .. } => Some(AssignTarget::Variable(name.clone())),
+                Statement::Let { name, .. } => Some(AssignTarget::Binding(Binding::Variable(name.clone()))),
                 _ => None,
             };
             let match_result = if let Some(t1) = first_target.as_ref() {
@@ -109,14 +109,14 @@ fn targets_equal(t1: &AssignTarget, t2: &AssignTarget) -> bool {
 // pass used to accept only the first, so nothing folded once names were in.
 fn reads_target(expr: &Expression, target: &AssignTarget) -> bool {
     match (expr, target) {
-        (Expression::Value(Value::Register(r)), AssignTarget::Register(t)) => r == t,
-        (Expression::Value(Value::Variable(n)), AssignTarget::Variable(t)) => n == t,
+        (Expression::Value(Value::Register(r)), AssignTarget::Binding(Binding::Register(t))) => r == t,
+        (Expression::Value(Value::Variable(n)), AssignTarget::Binding(Binding::Variable(t))) => n == t,
         _ => false,
     }
 }
 
 fn determine_short_circuit_op(target: &AssignTarget, condition: &Expression) -> Option<BinaryOp> {
-    if !matches!(target, AssignTarget::Register(_) | AssignTarget::Variable(_)) {
+    if !matches!(target, AssignTarget::Binding(Binding::Register(_)) | AssignTarget::Binding(Binding::Variable(_))) {
         return None;
     }
 
@@ -168,7 +168,7 @@ mod tests {
 
     fn named_assign(name: &str, value: Expression) -> Statement {
         Statement::Assign {
-            target: AssignTarget::Variable(name.to_string()),
+            target: AssignTarget::Binding(Binding::Variable(name.to_string())),
             value,
         }
     }
@@ -257,7 +257,7 @@ mod tests {
         let result = detect_short_circuit_logic(stmts);
         
         assert_eq!(result.len(), 1);
-        if let Statement::Assign { target: AssignTarget::Register(1), value: Expression::Binary { op: BinaryOp::LogicalOr, .. } } = &result[0] {
+        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(1)), value: Expression::Binary { op: BinaryOp::LogicalOr, .. } } = &result[0] {
             // Success
         } else {
             panic!("Failed to fold LogicalOr");
@@ -278,7 +278,7 @@ mod tests {
         let result = detect_short_circuit_logic(stmts);
         
         assert_eq!(result.len(), 1);
-        if let Statement::Assign { target: AssignTarget::Register(1), value: Expression::Binary { op: BinaryOp::LogicalAnd, .. } } = &result[0] {
+        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(1)), value: Expression::Binary { op: BinaryOp::LogicalAnd, .. } } = &result[0] {
             // Success
         } else {
             panic!("Failed to fold LogicalAnd");

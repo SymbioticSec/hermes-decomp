@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
 
 // Extract property access pattern from a statement.
 pub fn extract_property_access(
@@ -26,7 +26,7 @@ pub fn extract_property_access(
                 return Some((
                     *object.clone(),
                     property.clone(),
-                    AssignTarget::Variable(name.clone()),
+                    AssignTarget::Binding(Binding::Variable(name.clone())),
                 ));
             }
             None

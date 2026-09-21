@@ -1,4 +1,4 @@
-use crate::ir::{BlockId, Expression, Statement, Value, CFG};
+use crate::ir::{Binding, BlockId, Expression, Statement, Value, CFG};
 use std::collections::{BTreeMap, HashSet};
 
 // Liveness analysis determines which registers are "live" (hold a useful value) at each point in the program.
@@ -108,7 +108,7 @@ fn collect_stmt_uses(stmt: &Statement, uses: &mut HashSet<u32>, defs: &HashSet<u
 
 fn collect_stmt_defs(stmt: &Statement, defs: &mut HashSet<u32>) {
     if let Statement::Assign {
-        target: crate::ir::AssignTarget::Register(r),
+        target: crate::ir::AssignTarget::Binding(Binding::Register(r)),
         ..
     } = stmt
     {

@@ -26,7 +26,7 @@ fn func(id: u32) -> Expression {
 
 fn store_env(slot: u32, level: u32, value: Expression) -> Statement {
     Statement::Assign {
-        target: AssignTarget::ClosureVar { level, slot },
+        target: AssignTarget::Binding(crate::ir::Binding::ClosureVar{ level, slot }),
         value,
     }
 }

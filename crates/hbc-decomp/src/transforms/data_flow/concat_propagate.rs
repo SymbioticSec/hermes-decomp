@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, Statement, Value, MutVisitor};
+use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, Statement, Value, MutVisitor};
 
 // Propagates string concatenations across multiple assignments to reconstruct
 // complete template literals.
@@ -107,7 +107,7 @@ impl MutVisitor for ConcatPropagator {
 
     fn visit_statement(&mut self, stmt: &mut Statement) {
         match stmt {
-            Statement::Assign { target: AssignTarget::Register(r), value } => {
+            Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } => {
                 // First, try replacing variables inside the value using walk_expression
                 self.walk_expression(value);
 

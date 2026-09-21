@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value};
 
 // Reserved JS keywords that cannot be used as variable names.
 const JS_RESERVED: &[&str] = &[
@@ -81,7 +81,7 @@ fn rename_reserved_in_stmt(stmt: &mut Statement) {
 
 fn rename_reserved_in_target(target: &mut AssignTarget) {
     match target {
-        AssignTarget::Variable(name) => {
+        AssignTarget::Binding(Binding::Variable(name)) => {
             if is_reserved(name) {
                 *name = format!("_{name}");
             }

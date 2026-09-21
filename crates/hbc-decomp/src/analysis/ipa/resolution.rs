@@ -219,7 +219,7 @@ mod tests {
         // Caller body: r1 = globalThis.mid; r2 = r1(undefined, r0)
         let caller = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(Expression::Value(Value::Global)),
                     property: PropertyKey::Ident("mid".into()),
@@ -227,7 +227,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Value(Value::Register(1))),
                     arguments: vec![
@@ -258,7 +258,7 @@ mod tests {
     fn indirect_global_member_ambiguous_name_does_not_resolve() {
         let caller = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(Expression::Value(Value::Global)),
                     property: PropertyKey::Ident("run".into()),
@@ -266,7 +266,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Value(Value::Register(1))),
                     arguments: vec![],

@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Constant, Expression, MethodKind, PropertyKey, Value};
+use crate::ir::{Binding, AssignTarget, Constant, Expression, MethodKind, PropertyKey, Value};
 
 pub fn extract_name(expr: &Expression) -> Option<String> {
     match expr {
@@ -10,8 +10,8 @@ pub fn extract_name(expr: &Expression) -> Option<String> {
 
 pub fn get_target_name(target: &AssignTarget) -> Option<String> {
     match target {
-        AssignTarget::Variable(s) => Some(s.clone()),
-        AssignTarget::Register(r) => Some(format!("r{r}")),
+        AssignTarget::Binding(Binding::Variable(s)) => Some(s.clone()),
+        AssignTarget::Binding(Binding::Register(r)) => Some(format!("r{r}")),
         _ => None,
     }
 }

@@ -43,7 +43,7 @@ impl PipelineContext {
     }
 
     pub(super) fn body_has_closure_var(stmts: &[Statement]) -> bool {
-        use crate::ir::{AssignTarget, Visitor};
+        use crate::ir::{Binding, AssignTarget, Visitor};
         struct HasClosure(bool);
         impl Visitor<'_> for HasClosure {
             fn visit_expression(&mut self, e: &crate::ir::Expression) {
@@ -59,7 +59,7 @@ impl PipelineContext {
                 }
             }
             fn visit_assign_target(&mut self, t: &AssignTarget) {
-                if matches!(t, AssignTarget::ClosureVar { .. }) {
+                if matches!(t, AssignTarget::Binding(Binding::ClosureVar{ .. })) {
                     self.0 = true;
                     return;
                 }

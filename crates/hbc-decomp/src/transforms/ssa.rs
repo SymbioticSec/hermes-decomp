@@ -1,5 +1,5 @@
 use crate::analysis::reaching::{DefSite, ReachingDefs};
-use crate::ir::{AssignTarget, Expression, MutVisitor, Statement, Terminator, Value, Visitor, CFG};
+use crate::ir::{Binding, AssignTarget, Expression, MutVisitor, Statement, Terminator, Value, Visitor, CFG};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 // Transform the function to Static Single Assignment (SSA) form.
@@ -53,7 +53,7 @@ fn split_live_ranges(cfg: &mut CFG) {
     for block in cfg.blocks() {
         for (i, stmt) in block.statements.iter().enumerate() {
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 ..
             } = stmt
             {
@@ -80,7 +80,7 @@ fn split_live_ranges(cfg: &mut CFG) {
                 union_reaching(&mut uf, &def_id, cur.get(&r));
             }
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 ..
             } = stmt
             {
@@ -139,7 +139,7 @@ fn split_live_ranges(cfg: &mut CFG) {
 
             let def_orig = match &stmt {
                 Statement::Assign {
-                    target: AssignTarget::Register(r),
+                    target: AssignTarget::Binding(Binding::Register(r)),
                     ..
                 } => Some(*r),
                 _ => None,
@@ -155,7 +155,7 @@ fn split_live_ranges(cfg: &mut CFG) {
                 };
                 if let Some(v) = version_of(&mut uf, &site) {
                     if let Statement::Assign {
-                        target: AssignTarget::Register(t),
+                        target: AssignTarget::Binding(Binding::Register(t)),
                         ..
                     } = &mut stmt
                     {
@@ -388,7 +388,7 @@ mod tests {
         let mut assignments = Vec::new();
         for stmt in &block.statements {
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 value,
             } = stmt
             {

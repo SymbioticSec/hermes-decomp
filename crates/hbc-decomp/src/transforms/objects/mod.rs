@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, ObjectProperty, PropertyKey, Statement, Value,
+use crate::ir::{Binding, AssignTarget, Expression, ObjectProperty, PropertyKey, Statement, Value,
     expr_uses_register, stmt_has_side_effects};
 use std::collections::HashSet;
 
@@ -65,9 +65,9 @@ pub fn transform_object_literals(statements: &mut Vec<Statement>) {
             if !properties.is_empty() {
                 // Replace the NewObject call
                 if let Statement::Assign { target, .. } = &mut statements[i] {
-                    *target = AssignTarget::Register(obj_reg);
+                    *target = AssignTarget::Binding(Binding::Register(obj_reg));
                     statements[i] = Statement::Assign {
-                        target: AssignTarget::Register(obj_reg),
+                        target: AssignTarget::Binding(Binding::Register(obj_reg)),
                         value: Expression::Object { properties },
                     };
 
@@ -93,14 +93,14 @@ pub fn transform_object_literals(statements: &mut Vec<Statement>) {
 
 fn is_new_object(stmt: &Statement) -> Option<(u32, usize)> {
     if let Statement::Assign {
-        target: AssignTarget::Register(r),
+        target: AssignTarget::Binding(Binding::Register(r)),
         value: Expression::New { .. },
     } = stmt
     {
         return Some((*r, 0));
     }
     if let Statement::Assign {
-        target: AssignTarget::Register(r),
+        target: AssignTarget::Binding(Binding::Register(r)),
         value: Expression::Object { properties },
     } = stmt
     {
@@ -109,7 +109,7 @@ fn is_new_object(stmt: &Statement) -> Option<(u32, usize)> {
         }
     }
     if let Statement::Assign {
-        target: AssignTarget::Register(r),
+        target: AssignTarget::Binding(Binding::Register(r)),
         value: Expression::Unknown { opcode, .. },
     } = stmt
     {
@@ -172,7 +172,7 @@ fn is_put_prop(stmt: &Statement, obj_reg: u32, props: &mut Vec<ObjectProperty>) 
 fn is_reg_assigned(stmt: &Statement, reg: u32) -> bool {
     match stmt {
         Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             ..
         } => *r == reg,
         _ => false,
@@ -245,7 +245,7 @@ fn registers_assigned_multiple_times(stmts: &[Statement]) -> HashSet<u32> {
 
 fn count_register_assigns(stmts: &[Statement], counts: &mut std::collections::HashMap<u32, usize>) {
     for stmt in stmts {
-        if let Statement::Assign { target: AssignTarget::Register(r), .. } = stmt {
+        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. } = stmt {
             *counts.entry(*r).or_insert(0) += 1;
         }
         match stmt {

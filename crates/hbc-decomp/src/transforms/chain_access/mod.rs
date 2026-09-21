@@ -2,7 +2,7 @@ mod inlining;
 mod usage;
 
 use std::collections::HashSet;
-use crate::ir::{map_nested_bodies, AssignTarget, Expression, Statement};
+use crate::ir::{Binding, map_nested_bodies, AssignTarget, Expression, Statement};
 use inlining::inline_chains_in_stmt;
 use std::collections::BTreeMap;
 use usage::{count_register_defs, count_register_uses, is_chain_candidate};
@@ -23,7 +23,7 @@ pub fn optimize_chain_access(stmts: Vec<Statement>) -> Vec<Statement> {
         count_register_defs(stmt, &mut def_count);
 
         if let Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value,
         } = stmt
         {
@@ -79,7 +79,7 @@ mod tests {
         let obj = Expression::Value(Value::Variable("obj".to_string()));
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Register(0),
+                target: AssignTarget::Binding(Binding::Register(0)),
                 value: Expression::Member {
                     object: Box::new(obj),
                     property: PropertyKey::Ident("a".to_string()),
@@ -87,7 +87,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(Expression::Value(Value::Register(0))),
                     property: PropertyKey::Ident("b".to_string()),
@@ -132,7 +132,7 @@ mod tests {
         let obj = Expression::Value(Value::Variable("obj".to_string()));
         let stmts = vec![
             Statement::Assign {
-                target: AssignTarget::Register(0),
+                target: AssignTarget::Binding(Binding::Register(0)),
                 value: Expression::Member {
                     object: Box::new(obj),
                     property: PropertyKey::Ident("a".to_string()),
@@ -140,7 +140,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(Expression::Value(Value::Register(0))),
                     property: PropertyKey::Ident("b".to_string()),
@@ -148,7 +148,7 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(Binding::Register(2)),
                 value: Expression::Member {
                     object: Box::new(Expression::Value(Value::Register(0))),
                     property: PropertyKey::Ident("c".to_string()),

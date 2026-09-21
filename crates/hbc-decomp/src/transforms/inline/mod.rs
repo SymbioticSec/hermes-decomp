@@ -19,7 +19,7 @@ pub use inline_named::{eliminate_immutable_aliases, inline_named_variables};
 pub use reserved_words::rename_reserved_words;
 pub use strip_this::strip_hermes_this;
 
-use crate::ir::{AssignTarget, Expression, MutVisitor, Statement, Value, Visitor};
+use crate::ir::{Binding, AssignTarget, Expression, MutVisitor, Statement, Value, Visitor};
 use std::collections::{BTreeMap, HashSet};
 
 pub fn inline_expressions(mut stmts: Vec<Statement>) -> Vec<Statement> {
@@ -67,7 +67,7 @@ impl<'a> Visitor<'a> for UseCounter {
     }
 
     fn visit_assign_target(&mut self, target: &'a AssignTarget) {
-        if let AssignTarget::Register(r) = target {
+        if let AssignTarget::Binding(Binding::Register(r)) = target {
             *self.def_count.entry(*r).or_insert(0) += 1;
         }
         self.walk_assign_target(target);
@@ -132,7 +132,7 @@ impl MutVisitor for ExpressionInliner {
 
             // Process the resulting statement for potential new pending
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 value,
             } = &stmt
             {
@@ -189,7 +189,7 @@ fn stmt_uses(stmt: &Statement, reg: u32) -> bool {
     struct UsesRegister(u32, bool);
     impl<'a> Visitor<'a> for UsesRegister {
         fn visit_assign_target(&mut self, target: &'a AssignTarget) {
-            if let AssignTarget::Register(r) = target {
+            if let AssignTarget::Binding(Binding::Register(r)) = target {
                 if *r == self.0 {
                     self.1 = true;
                 }
@@ -226,7 +226,7 @@ fn stmt_redefines_source(stmt: &Statement, value: &Expression) -> bool {
     }
     impl<'a> Visitor<'a> for DefChecker<'a> {
         fn visit_assign_target(&mut self, target: &'a AssignTarget) {
-            if let AssignTarget::Register(r) = target {
+            if let AssignTarget::Binding(Binding::Register(r)) = target {
                 if self.reads.contains(r) {
                     self.found = true;
                 }

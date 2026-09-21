@@ -1,6 +1,6 @@
 use super::{is_iterator_call, unwrap_iterator_body};
 use crate::analysis::rename_registers;
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
 use std::collections::BTreeMap;
 
 // Detect for-of loop patterns and rebuild them as `for (item of source)`.
@@ -89,7 +89,7 @@ fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
 fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
     // [0] iter = src[Symbol.iterator]()
     let (iter_reg, source) = match &stmts[0] {
-        Statement::Assign { target: AssignTarget::Register(r), value } => {
+        Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } => {
             (*r, is_iterator_call(value)?)
         }
         _ => return None,
@@ -109,7 +109,7 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
     while let Some(stmt) = stmts.get(idx) {
         match stmt {
             // val = <alias>.next()
-            Statement::Assign { target: AssignTarget::Register(r), value }
+            Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value }
                 if iter_aliases.iter().any(|&a| is_next_call(value, a)) =>
             {
                 val_reg = Some(*r);
@@ -117,7 +117,7 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
             }
             // copy = iter (alias)
             Statement::Assign {
-                target: AssignTarget::Register(dst),
+                target: AssignTarget::Binding(Binding::Register(dst)),
                 value: Expression::Value(Value::Register(src)),
             } if iter_aliases.contains(src) => {
                 iter_aliases.push(*dst);
@@ -125,7 +125,7 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
             }
             // x = undefined (the sentinel constant), keep it, it may be read later.
             Statement::Assign {
-                target: AssignTarget::Register(_),
+                target: AssignTarget::Binding(Binding::Register(_)),
                 value: Expression::Value(Value::Constant(crate::ir::Constant::Undefined)),
             } => {
                 kept.push(stmt.clone());
@@ -136,7 +136,7 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
             // which isn't an iterator alias, keep it and keep scanning so the
             // following `val = iter.next()` is still recognised.
             Statement::Assign {
-                target: AssignTarget::Register(_),
+                target: AssignTarget::Binding(Binding::Register(_)),
                 value: Expression::Value(Value::Register(_)),
             } => {
                 kept.push(stmt.clone());

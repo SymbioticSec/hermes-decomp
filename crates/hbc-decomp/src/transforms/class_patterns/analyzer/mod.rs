@@ -1,4 +1,4 @@
-use crate::ir::{Statement, Expression, Value, Constant, AssignTarget, PropertyKey, MethodKind};
+use crate::ir::{Binding, Statement, Expression, Value, Constant, AssignTarget, PropertyKey, MethodKind};
 use std::collections::{BTreeMap, HashSet};
 use super::builder::ClassBuilder;
 use super::utils::{
@@ -155,7 +155,7 @@ impl<'a> ClassAnalyzer<'a> {
         for stmt in stmts {
             let (alias, value) = match stmt {
                 Statement::Assign {
-                    target: target @ (AssignTarget::Register(_) | AssignTarget::Variable(_)),
+                    target: target @ (AssignTarget::Binding(Binding::Register(_)) | AssignTarget::Binding(Binding::Variable(_))),
                     value,
                 } => (get_target_name(target), value),
                 Statement::Let { name, value, .. } => (Some(name.clone()), value),
@@ -190,7 +190,7 @@ impl<'a> ClassAnalyzer<'a> {
             // Pattern: Foo = function() { ... } (Constructor). Restrict to a plain
             // register/variable target so it does not swallow member-target method
             // assignments like `Foo.prototype.m = function() {}` (handled below).
-            Statement::Assign { target: target @ (AssignTarget::Register(_) | AssignTarget::Variable(_)), value }
+            Statement::Assign { target: target @ (AssignTarget::Binding(Binding::Register(_)) | AssignTarget::Binding(Binding::Variable(_))), value }
                 if matches!(value, Expression::Function { .. }) =>
             {
                 if let Some(name) = get_target_name(target) {

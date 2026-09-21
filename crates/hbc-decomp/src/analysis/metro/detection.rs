@@ -1,5 +1,5 @@
 use super::registry::{MetroModule, MetroRegistry};
-use crate::ir::{Expression, Statement, Value};
+use crate::ir::{Binding, Expression, Statement, Value};
 use std::collections::HashMap;
 
 pub struct MetroDetector;
@@ -39,8 +39,8 @@ impl MetroDetector {
         match stmt {
             Statement::Assign { target, value } => {
                 let var_name = match target {
-                    crate::ir::AssignTarget::Register(r) => Some(format!("r{r}")),
-                    crate::ir::AssignTarget::Variable(n) => Some(n.clone()),
+                    crate::ir::AssignTarget::Binding(Binding::Register(r)) => Some(format!("r{r}")),
+                    crate::ir::AssignTarget::Binding(Binding::Variable(n)) => Some(n.clone()),
                     _ => None,
                 };
 

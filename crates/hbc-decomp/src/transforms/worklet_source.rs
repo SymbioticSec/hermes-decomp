@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn collects_from_initdata_object() {
         let stmts = vec![Statement::Assign {
-            target: crate::ir::AssignTarget::Variable("d".to_string()),
+            target: crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable("d".to_string())),
             value: Expression::Object {
                 properties: vec![crate::ir::ObjectProperty {
                     key: PropertyKey::Ident("code".to_string()),

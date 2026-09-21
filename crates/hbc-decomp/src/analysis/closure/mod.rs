@@ -4,7 +4,7 @@ pub mod info;
 #[cfg(test)]
 mod inheritance_tests;
 
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
 
 pub use context::ClosureContext;
 use info::encode_level_slot;
@@ -138,7 +138,7 @@ fn resolve_stmt(stmt: Statement, info: &ClosureInfo) -> Statement {
 
 fn resolve_target(target: AssignTarget, info: &ClosureInfo) -> AssignTarget {
     match target {
-        AssignTarget::ClosureVar { level, slot } => {
+        AssignTarget::Binding(Binding::ClosureVar{ level, slot }) => {
             let encoded = encode_level_slot(level, slot);
             let name = if info.slots.contains_key(&encoded) {
                 info.get_slot_name(encoded)
@@ -148,7 +148,7 @@ fn resolve_target(target: AssignTarget, info: &ClosureInfo) -> AssignTarget {
                 // Unresolved parent-env capture: same family as local `closure_N`.
                 crate::ir::Value::closure_var_name(level, slot)
             };
-            AssignTarget::Variable(name)
+            AssignTarget::Binding(Binding::Variable(name))
         }
         AssignTarget::Member { object, property } => AssignTarget::Member {
             object: resolve_expr(object, info),

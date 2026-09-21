@@ -1,7 +1,7 @@
 mod rename;
 
 use crate::analysis::metro::registry::FactoryRoles;
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
 use std::collections::HashMap;
 
 pub use rename::rename_param_registers;
@@ -191,7 +191,7 @@ pub fn infer_commonjs_names(statements: &mut [Statement], param_count: u32) -> O
     // Map registers loaded from a parameter back to the parameter index.
     let mut param_map: HashMap<u32, u32> = HashMap::new();
     for stmt in statements.iter() {
-        if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
+        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
             match value {
                 Expression::Value(Value::Parameter(idx)) => {
                     param_map.insert(*r, *idx);
@@ -334,7 +334,7 @@ mod tests {
     fn non_factory_function_not_renamed() {
         // An ordinary 4-arg function with no Metro signals must be left alone.
         let mut stmts = vec![Statement::Assign {
-            target: AssignTarget::Register(0),
+            target: AssignTarget::Binding(Binding::Register(0)),
             value: Expression::Binary {
                 op: crate::ir::BinaryOp::Add,
                 left: Box::new(param(0)),

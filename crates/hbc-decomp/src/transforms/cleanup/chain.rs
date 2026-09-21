@@ -1,6 +1,6 @@
 // Fold chain assignments: `r0 = x; y = r0` -> `y = x`
 
-use crate::ir::{AssignTarget, Expression, Statement, Value, Visitor};
+use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
 use std::collections::BTreeMap;
 
 // Fold chain assignments. Only when r0 is used exactly once in the whole
@@ -22,7 +22,7 @@ fn fold_with_counts(stmts: Vec<Statement>, use_counts: &BTreeMap<u32, usize>) ->
     while let Some(stmt) = iter.next() {
         match &stmt {
             Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 value,
             } if !value.has_side_effects() => {
                 if let Some(Statement::Assign {
@@ -33,7 +33,7 @@ fn fold_with_counts(stmts: Vec<Statement>, use_counts: &BTreeMap<u32, usize>) ->
                     // Fold only if r is used exactly once (this immediate use); a
                     // later use such as `return r` must not be orphaned.
                     if r == r2
-                        && !matches!(next_target, AssignTarget::Register(_))
+                        && !matches!(next_target, AssignTarget::Binding(Binding::Register(_)))
                         && use_counts.get(r).copied().unwrap_or(0) == 1
                     {
                         let Some(next) = iter.next() else { continue };

@@ -1,11 +1,11 @@
 use super::state::{infer_name_from_expr, VariableNamer};
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
 
 pub fn analyze_stmt(namer: &mut VariableNamer, stmt: &Statement) {
     match stmt {
         Statement::Assign { target, value } => {
             // Handle Register for backward compat
-            if let AssignTarget::Register(r) = target {
+            if let AssignTarget::Binding(Binding::Register(r)) = target {
                 if let Some(name) = infer_name_from_expr(value) {
                     log::debug!("Register r{r} inferred name '{name}' from expression");
                     namer.suggest_name(&format!("r{r}"), &name);
@@ -14,7 +14,7 @@ pub fn analyze_stmt(namer: &mut VariableNamer, stmt: &Statement) {
             // Handle Variables (r0, r1, etc).
             // We only rename variables that are clearly generic/generated.
             // If a variable already has a meaningful name (e.g. from debug info or closure analysis), we keep it.
-            if let AssignTarget::Variable(v) = target {
+            if let AssignTarget::Binding(Binding::Variable(v)) = target {
                 // Check if the name is generic and can be improved
                 let is_generic = (v.starts_with('r') && v[1..].chars().all(|c| c.is_ascii_digit()))
                     || v.starts_with("closure_")
