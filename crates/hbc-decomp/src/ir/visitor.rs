@@ -13,10 +13,19 @@ pub trait Visitor<'a> {
         self.walk_assign_target(target);
     }
 
+    // A name this statement introduces: a `let`, a loop head, a catch parameter,
+    // a class or one of its method parameters. These were the only write
+    // positions no hook ever saw, so a pass wanting the names a body declares had
+    // to re-walk the tree itself, and each one that did missed a different subset.
+    fn visit_binding_def(&mut self, _name: &'a str) {}
+
     fn walk_statement(&mut self, stmt: &'a Statement) {
         match stmt {
             Statement::Expr(e) => self.visit_expression(e),
-            Statement::Let { value, .. } => self.visit_expression(value),
+            Statement::Let { name, value, .. } => {
+                self.visit_binding_def(name);
+                self.visit_expression(value);
+            }
             Statement::Assign { target, value } => {
                 self.visit_assign_target(target);
                 self.visit_expression(value);
@@ -94,12 +103,15 @@ pub trait Visitor<'a> {
             }
             Statement::TryCatch {
                 try_body,
+                catch_param,
                 catch_body,
                 finally_body,
-                ..
             } => {
                 for s in try_body {
                     self.visit_statement(s);
+                }
+                if let Some(name) = catch_param {
+                    self.visit_binding_def(name);
                 }
                 for s in catch_body {
                     self.visit_statement(s);
@@ -108,16 +120,31 @@ pub trait Visitor<'a> {
                     self.visit_statement(s);
                 }
             }
-            Statement::ForIn { object, body, .. } => {
+            Statement::ForIn { variable, object, body } => {
+                self.visit_binding_def(variable);
                 self.visit_expression(object);
                 for s in body {
                     self.visit_statement(s);
                 }
             }
-            Statement::ForOf { iterable, body, .. } => {
+            Statement::ForOf { variable, iterable, body } => {
+                self.visit_binding_def(variable);
                 self.visit_expression(iterable);
                 for s in body {
                     self.visit_statement(s);
+                }
+            }
+            // The names a class introduces are reported, its body is not walked.
+            // Descending into `super_class` was tried and renamed `extends
+            // _default` to `extends r10023` on the reference bundle: the passes
+            // that rewrite expressions were written on the assumption that a class
+            // body is out of reach, and several of them are wrong inside one.
+            Statement::Class { name, methods, .. } => {
+                self.visit_binding_def(name);
+                for method in methods {
+                    for param in &method.params {
+                        self.visit_binding_def(param);
+                    }
                 }
             }
             _ => {}
@@ -277,10 +304,17 @@ pub trait MutVisitor {
         self.walk_assign_target(target);
     }
 
+    // The mutable counterpart of `Visitor::visit_binding_def`, so a renaming pass
+    // can reach a declared name the same way it reaches a written one.
+    fn visit_binding_def(&mut self, _name: &mut String) {}
+
     fn walk_statement(&mut self, stmt: &mut Statement) {
         match stmt {
             Statement::Expr(e) => self.visit_expression(e),
-            Statement::Let { value, .. } => self.visit_expression(value),
+            Statement::Let { name, value, .. } => {
+                self.visit_binding_def(name);
+                self.visit_expression(value);
+            }
             Statement::Assign { target, value } => {
                 self.visit_assign_target(target);
                 self.visit_expression(value);
@@ -342,29 +376,43 @@ pub trait MutVisitor {
             }
             Statement::TryCatch {
                 try_body,
+                catch_param,
                 catch_body,
                 finally_body,
-                ..
             } => {
                 self.visit_statement_list(try_body);
+                if let Some(name) = catch_param {
+                    self.visit_binding_def(name);
+                }
                 self.visit_statement_list(catch_body);
                 self.visit_statement_list(finally_body);
             }
-            Statement::ForIn { object, body, .. } => {
+            Statement::ForIn { variable, object, body } => {
+                self.visit_binding_def(variable);
                 self.visit_expression(object);
                 self.visit_statement_list(body);
             }
-            Statement::ForOf { iterable, body, .. } => {
+            Statement::ForOf { variable, iterable, body } => {
+                self.visit_binding_def(variable);
                 self.visit_expression(iterable);
                 self.visit_statement_list(body);
+            }
+            // See the read only walker: the names are reported, the body is not
+            // walked.
+            Statement::Class { name, methods, .. } => {
+                self.visit_binding_def(name);
+                for method in methods.iter_mut() {
+                    for param in method.params.iter_mut() {
+                        self.visit_binding_def(param);
+                    }
+                }
             }
             Statement::Return(None)
             | Statement::Debugger
             | Statement::Comment(_)
             | Statement::Break(_)
             | Statement::Continue(_)
-            | Statement::Goto(_)
-            | Statement::Class { .. } => {}
+            | Statement::Goto(_) => {}
         }
     }
 
@@ -569,5 +617,118 @@ mod write_target_tests {
         let mut reads = Reads(Vec::new());
         reads.visit_statement(&Statement::Expr(assignment_expression()));
         assert!(reads.0.is_empty(), "a place is not a value: {:?}", reads.0);
+    }
+}
+
+#[cfg(test)]
+mod binding_def_tests {
+    use super::{MutVisitor, Visitor};
+    use crate::ir::{ClassMethod, Constant, Expression, Statement, VarKind};
+
+    fn body() -> Vec<Statement> {
+        vec![
+            Statement::Let {
+                name: "declared".into(),
+                value: Expression::constant(Constant::Integer(1)),
+                kind: VarKind::Let,
+            },
+            Statement::ForOf {
+                variable: "item".into(),
+                iterable: Expression::constant(Constant::Integer(2)),
+                body: vec![],
+            },
+            Statement::ForIn {
+                variable: "key".into(),
+                object: Expression::constant(Constant::Integer(3)),
+                body: vec![],
+            },
+            Statement::TryCatch {
+                try_body: vec![],
+                catch_param: Some("err".into()),
+                catch_body: vec![],
+                finally_body: vec![],
+            },
+            Statement::Class {
+                name: "Widget".into(),
+                super_class: None,
+                constructor: None,
+                methods: vec![ClassMethod {
+                    key: "render".into(),
+                    value: Expression::constant(Constant::Integer(4)),
+                    body: None,
+                    is_static: false,
+                    kind: crate::ir::MethodKind::Method,
+                    params: vec!["props".into()],
+                }],
+            },
+        ]
+    }
+
+    // Every one of these positions introduces a name and none of them was
+    // reachable from a visitor before, so a pass that wanted the names a body
+    // declares had to re-walk the tree and each one that did missed a different
+    // subset.
+    #[test]
+    fn every_declaration_position_reaches_the_hook() {
+        struct Collect(Vec<String>);
+        impl<'a> Visitor<'a> for Collect {
+            fn visit_binding_def(&mut self, name: &'a str) {
+                self.0.push(name.to_string());
+            }
+        }
+        let mut c = Collect(Vec::new());
+        for stmt in &body() {
+            c.visit_statement(stmt);
+        }
+        assert_eq!(
+            c.0,
+            vec!["declared", "item", "key", "err", "Widget", "props"]
+        );
+    }
+
+    #[test]
+    fn the_mutable_hook_can_rename_a_declaration() {
+        struct Upper;
+        impl MutVisitor for Upper {
+            fn visit_binding_def(&mut self, name: &mut String) {
+                *name = name.to_uppercase();
+            }
+        }
+        let mut stmts = body();
+        for stmt in stmts.iter_mut() {
+            Upper.visit_statement(stmt);
+        }
+        match &stmts[0] {
+            Statement::Let { name, .. } => assert_eq!(name, "DECLARED"),
+            other => panic!("unexpected {other:?}"),
+        }
+        match &stmts[3] {
+            Statement::TryCatch { catch_param, .. } => {
+                assert_eq!(catch_param.as_deref(), Some("ERR"))
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    // A class body is deliberately out of reach: several passes that rewrite
+    // expressions are wrong inside one, and walking it renamed `extends _default`
+    // to `extends r10023` on the reference bundle.
+    #[test]
+    fn a_class_body_is_not_walked() {
+        struct Count(usize);
+        impl<'a> Visitor<'a> for Count {
+            fn visit_expression(&mut self, e: &'a Expression) {
+                self.0 += 1;
+                self.walk_expression(e);
+            }
+        }
+        let mut c = Count(0);
+        c.visit_statement(&Statement::Class {
+            name: "Widget".into(),
+            super_class: Some(Expression::constant(Constant::Integer(9))),
+            constructor: None,
+            methods: vec![],
+        });
+        assert_eq!(c.0, 0, "the super class expression stays out of reach");
     }
 }
