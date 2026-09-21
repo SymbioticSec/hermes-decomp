@@ -64,7 +64,7 @@ fn substitute_target(target: &AssignTarget, copies: &BTreeMap<u32, Expression>) 
 
 fn substitute_expr(expr: &Expression, copies: &BTreeMap<u32, Expression>) -> Expression {
     match expr {
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
             copies.get(r).cloned().unwrap_or_else(|| expr.clone())
         }
         Expression::Binary { op, left, right } => Expression::binary(

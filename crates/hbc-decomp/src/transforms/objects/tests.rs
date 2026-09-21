@@ -7,7 +7,7 @@ fn null() -> Expression {
 
 fn themes(prop: &str) -> Expression {
     Expression::Member {
-        object: Box::new(Expression::Value(Value::Variable("Themes".into()))),
+        object: Box::new(Expression::Value(Value::Binding(Binding::Variable("Themes".into())))),
         property: PropertyKey::Ident(prop.into()),
         optional: false,
     }
@@ -16,7 +16,7 @@ fn themes(prop: &str) -> Expression {
 fn index_assign(name: &str, slot: i32, value: Expression) -> Statement {
     Statement::Assign {
         target: AssignTarget::Index {
-            object: Expression::Value(Value::Variable(name.into())),
+            object: Expression::Value(Value::Binding(Binding::Variable(name.into()))),
             key: Expression::Value(Value::Constant(Constant::Integer(slot))),
         },
         value,
@@ -68,7 +68,7 @@ fn folds_named_member_placeholder_assigns() {
                 properties: vec![
                     ObjectProperty {
                         key: PropertyKey::Ident("url".into()),
-                        value: Expression::Value(Value::Variable("URL".into())),
+                        value: Expression::Value(Value::Binding(Binding::Variable("URL".into()))),
                     },
                     ObjectProperty {
                         key: PropertyKey::Ident("body".into()),
@@ -80,13 +80,13 @@ fn folds_named_member_placeholder_assigns() {
         },
         Statement::Assign {
             target: AssignTarget::Member {
-                object: Expression::Value(Value::Variable("obj1".into())),
+                object: Expression::Value(Value::Binding(Binding::Variable("obj1".into()))),
                 property: "body".into(),
             },
             value: Expression::Object {
                 properties: vec![ObjectProperty {
                     key: PropertyKey::Ident("login".into()),
-                    value: Expression::Value(Value::Variable("user".into())),
+                    value: Expression::Value(Value::Binding(Binding::Variable("user".into()))),
                 }],
             },
         },
@@ -135,7 +135,7 @@ fn does_not_fold_forward_referenced_value() {
             },
             kind: VarKind::Let,
         },
-        index_assign("obj", 0, Expression::Value(Value::Variable("config".into()))),
+        index_assign("obj", 0, Expression::Value(Value::Binding(Binding::Variable("config".into())))),
         index_assign("obj", 1, themes("ACTIVE")),
     ];
     fold_slot_index_fills(&mut stmts);
@@ -145,7 +145,7 @@ fn does_not_fold_forward_referenced_value() {
         s,
         Statement::Assign {
             target: AssignTarget::Member { property, .. },
-            value: Expression::Value(Value::Variable(v)),
+            value: Expression::Value(Value::Binding(Binding::Variable(v))),
         } if property == "a" && v == "config"
     ));
     assert!(has_forward_fill, "forward-ref fill must be preserved: {stmts:?}");
@@ -178,11 +178,11 @@ fn does_not_fold_slot_fills_inside_switch() {
             },
             kind: VarKind::Let,
         },
-        index_assign("obj", 0, Expression::Value(Value::Variable("type".into()))),
-        index_assign("obj", 1, Expression::Value(Value::Variable("guild_id".into()))),
+        index_assign("obj", 0, Expression::Value(Value::Binding(Binding::Variable("type".into())))),
+        index_assign("obj", 1, Expression::Value(Value::Binding(Binding::Variable("guild_id".into())))),
     ];
     let mut stmts = vec![Statement::Switch {
-        discriminant: Expression::Value(Value::Variable("type".into())),
+        discriminant: Expression::Value(Value::Binding(Binding::Variable("type".into()))),
         cases: vec![(
             Expression::Value(Value::Constant(Constant::String("MESSAGE_CREATE".into()))),
             inner.clone(),
@@ -222,10 +222,10 @@ fn rewrites_forward_ref_slot_index_to_named_member() {
         },
         Statement::Let {
             name: "user_id".into(),
-            value: Expression::Value(Value::Variable("type".into())),
+            value: Expression::Value(Value::Binding(Binding::Variable("type".into()))),
             kind: VarKind::Let,
         },
-        index_assign("obj", 1, Expression::Value(Value::Variable("user_id".into()))),
+        index_assign("obj", 1, Expression::Value(Value::Binding(Binding::Variable("user_id".into())))),
     ];
     fold_slot_index_fills(&mut stmts);
     assert_eq!(stmts.len(), 3, "forward-ref fill stays: {stmts:?}");

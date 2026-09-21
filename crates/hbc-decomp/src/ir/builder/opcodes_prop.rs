@@ -307,7 +307,7 @@ pub fn handle_create_private_name(
 
     Some(Statement::Assign {
         target: AssignTarget::Binding(Binding::Register(dst)),
-        value: Expression::Value(crate::ir::Value::Variable(name)),
+        value: Expression::Value(crate::ir::Value::Binding(Binding::Variable(name))),
     })
 }
 

@@ -35,7 +35,7 @@ pub(super) fn infer_name_from_define_property(
         (1, 2)
     } else if arguments.len() >= 4 {
         let first_is_exports = match &arguments[0] {
-            Expression::Value(Value::Variable(n)) => FactoryRoles::matches_exports_name(n),
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => FactoryRoles::matches_exports_name(n),
             Expression::Value(Value::Parameter(idx)) if FactoryRoles::is_exports_idx(*idx) => true,
             _ => false,
         };
@@ -55,8 +55,8 @@ pub(super) fn infer_name_from_define_property(
     // Try to extract the exported value/function name from the descriptor
     let descriptor = &arguments[desc_idx];
     let resolved_descriptor = match descriptor {
-        Expression::Value(Value::Variable(name)) => var_defs.get(name.as_str()).copied(),
-        Expression::Value(Value::Register(r)) => var_defs.get(&format!("r{r}")).copied(),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => var_defs.get(name.as_str()).copied(),
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => var_defs.get(&format!("r{r}")).copied(),
         _ => Some(descriptor),
     };
 
@@ -92,14 +92,14 @@ pub(super) fn infer_name_from_define_property(
 
                                     for stmt in body {
                                         if let Statement::Return(Some(ret_val)) = stmt {
-                                            if let Expression::Value(Value::Variable(v)) = ret_val {
+                                            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) = ret_val {
                                                 if is_meaningful_name(v) {
                                                     return Some(v.clone());
                                                 }
                                             }
                                             let ret_key = match ret_val {
-                                                Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
-                                                Expression::Value(Value::Variable(v)) => Some(v.clone()),
+                                                Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
+                                                Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) => Some(v.clone()),
                                                 _ => None,
                                             };
                                             if let Some(key) = ret_key {
@@ -124,7 +124,7 @@ pub(super) fn infer_name_from_define_property(
                         if let Some(name) = infer_from_expr(&prop.value, functions, visited) {
                             return Some(name);
                         }
-                        if let Expression::Value(Value::Variable(v)) = &prop.value {
+                        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) = &prop.value {
                             if is_meaningful_name(v) {
                                 return Some(v.clone());
                             }
@@ -167,7 +167,7 @@ pub(super) fn infer_name_from_all_define_properties(
                     1
                 } else if arguments.len() >= 4 {
                     let first_is_exports = match &arguments[0] {
-                        Expression::Value(Value::Variable(n)) => FactoryRoles::matches_exports_name(n),
+                        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => FactoryRoles::matches_exports_name(n),
                         Expression::Value(Value::Parameter(idx)) if FactoryRoles::is_exports_idx(*idx) => true,
                         _ => false,
                     };

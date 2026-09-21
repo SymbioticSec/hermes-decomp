@@ -72,7 +72,7 @@ impl ConcatPropagator {
     }
 
     fn get_register(expr: &Expression) -> Option<u32> {
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             Some(*r)
         } else {
             None
@@ -194,7 +194,7 @@ mod tests {
             Statement::assign_reg(2, Expression::binary(
                 BinaryOp::Add,
                 Expression::register(1),
-                Expression::Value(Value::Variable("x".to_string())),
+                Expression::Value(Value::Binding(Binding::Variable("x".to_string()))),
             )),
             Statement::assign_reg(3, Expression::binary(
                 BinaryOp::Add,
@@ -210,7 +210,7 @@ mod tests {
         if let Statement::Return(Some(Expression::TemplateLiteral { quasis, expressions })) = &result[3] {
             assert_eq!(quasis, &vec!["User ".to_string(), " connected".to_string()]);
             assert_eq!(expressions.len(), 1);
-            if let Expression::Value(Value::Variable(v)) = &expressions[0] {
+            if let Expression::Value(Value::Binding(Binding::Variable(v))) = &expressions[0] {
                 assert_eq!(v, "x");
             } else {
                 panic!("Expected variable x");

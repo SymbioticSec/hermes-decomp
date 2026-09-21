@@ -12,7 +12,7 @@ pub(super) fn is_iterator_call(expr: &Expression) -> Option<Expression> {
         if arguments.is_empty() {
             if let Expression::Member { object, property: PropertyKey::Computed(computed), .. } = callee.as_ref() {
                 if let Expression::Member { object: sym, property: PropertyKey::Ident(p), .. } = computed.as_ref() {
-                    if let Expression::Value(Value::Variable(n)) = sym.as_ref() {
+                    if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) = sym.as_ref() {
                         if n == "Symbol" && p == "iterator" {
                             return Some((**object).clone());
                         }

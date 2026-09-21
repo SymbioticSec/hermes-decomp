@@ -407,13 +407,13 @@ mod tests {
         let expr = Expression::Conditional {
             condition: Box::new(Expression::binary(
                 BinaryOp::Eq,
-                Expression::Value(Value::Register(0)),
+                Expression::Value(Value::Binding(crate::ir::Binding::Register(0))),
                 Expression::constant(Constant::Null),
             )),
             then_expr: Box::new(Expression::constant(Constant::String(
                 "default".to_string(),
             ))),
-            else_expr: Box::new(Expression::Value(Value::Register(0))),
+            else_expr: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Register(0)))),
         };
 
         let result = transform_nullish(expr);

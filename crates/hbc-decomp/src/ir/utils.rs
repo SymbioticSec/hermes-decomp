@@ -2,7 +2,7 @@ use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, PropertyK
 
 pub fn expr_uses_register(expr: &Expression, reg: u32) -> bool {
     match expr {
-        Expression::Value(Value::Register(r)) => *r == reg,
+        Expression::Value(Value::Binding(Binding::Register(r))) => *r == reg,
         Expression::Binary { left, right, .. } => {
             expr_uses_register(left, reg) || expr_uses_register(right, reg)
         }
@@ -74,8 +74,8 @@ pub fn target_to_key(target: &AssignTarget) -> Option<String> {
 
 pub fn get_value_name(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Value(Value::Variable(n)) => Some(n.clone()),
-        Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => Some(n.clone()),
+        Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
         Expression::Value(Value::Parameter(idx)) => Some(format!("arg{idx}")),
         _ => None,
     }
@@ -288,8 +288,8 @@ pub fn is_simple_value(expr: &Expression) -> bool {
     matches!(
         expr,
         Expression::Value(Value::Constant(_))
-            | Expression::Value(Value::Register(_))
-            | Expression::Value(Value::Variable(_))
+            | Expression::Value(Value::Binding(Binding::Register(_)))
+            | Expression::Value(Value::Binding(Binding::Variable(_)))
             | Expression::Value(Value::This)
             | Expression::Value(Value::Global)
     )

@@ -4,7 +4,7 @@ use super::esm_cleanup::{inline_hoisted_aliases_and_trim, remove_esm_boilerplate
 
 fn is_self_assign_value(name: &str, value: &Expression) -> bool {
     match value {
-        Expression::Value(Value::Variable(val_name)) => name == val_name,
+        Expression::Value(Value::Binding(Binding::Variable(val_name))) => name == val_name,
         Expression::Value(Value::Parameter(idx)) => name == format!("arg{idx}"),
         Expression::Value(Value::Constant(crate::ir::Constant::Bool(b))) => {
             (*b && name == "true") || (!*b && name == "false")
@@ -22,7 +22,7 @@ fn is_self_assign_value(name: &str, value: &Expression) -> bool {
                 && crate::ir::expr::display::is_builtin_global(name)
                 && match &**object {
                     Expression::Value(Value::Global) => true,
-                    Expression::Value(Value::Variable(v)) => v == "globalThis",
+                    Expression::Value(Value::Binding(Binding::Variable(v))) => v == "globalThis",
                     _ => false,
                 }
         }
@@ -161,7 +161,7 @@ mod tests {
         // `let Error = Error;` should be removed (Babel global capture)
         let stmts = vec![Statement::Let {
             name: "Error".to_string(),
-            value: Expression::Value(Value::Variable("Error".to_string())),
+            value: Expression::Value(Value::Binding(Binding::Variable("Error".to_string()))),
             kind: VarKind::Let,
         }];
         let result = cleanup_noise(stmts);
@@ -192,7 +192,7 @@ mod tests {
         // `let x = y;` should NOT be removed (different names)
         let stmts = vec![Statement::Let {
             name: "x".to_string(),
-            value: Expression::Value(Value::Variable("y".to_string())),
+            value: Expression::Value(Value::Binding(Binding::Variable("y".to_string()))),
             kind: VarKind::Let,
         }];
         let result = cleanup_noise(stmts);

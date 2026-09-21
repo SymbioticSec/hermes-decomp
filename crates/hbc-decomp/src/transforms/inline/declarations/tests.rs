@@ -14,7 +14,7 @@ fn nested_mutation_forces_let_not_const() {
             target: AssignTarget::Binding(Binding::Variable("tmp".into())),
             value: Expression::Binary {
                 op: crate::ir::BinaryOp::Add,
-                left: Box::new(Expression::Value(Value::Variable("tmp".into()))),
+                left: Box::new(Expression::Value(Value::Binding(Binding::Variable("tmp".into())))),
                 right: Box::new(Expression::constant(Constant::Integer(1))),
             },
         },
@@ -101,7 +101,7 @@ fn nested_local_let_does_not_force_parent_let() {
 fn nested_env_slot_write_stays_assign() {
     let mut child = vec![Statement::Assign {
         target: AssignTarget::Binding(Binding::Variable("closure_1".into())),
-        value: Expression::Value(Value::Variable("payload".into())),
+        value: Expression::Value(Value::Binding(Binding::Variable("payload".into()))),
     }];
     let mut outer = HashSet::new();
     outer.insert("closure_1".into());

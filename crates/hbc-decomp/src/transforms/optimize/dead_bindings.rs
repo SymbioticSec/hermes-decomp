@@ -72,8 +72,8 @@ fn is_dead_binding(name: &str, value: &Expression, reads: &HashMap<String, u32>)
 fn is_trivial_value(e: &Expression) -> bool {
     use crate::ir::Constant;
     match e {
-        Expression::Value(Value::Variable(_))
-        | Expression::Value(Value::Register(_))
+        Expression::Value(Value::Binding(Binding::Variable(_)))
+        | Expression::Value(Value::Binding(Binding::Register(_)))
         | Expression::Value(Value::Parameter(_))
         | Expression::Value(Value::This) => true,
         Expression::Value(Value::Constant(c)) => !matches!(c, Constant::String(_) | Constant::BigInt(_)),
@@ -124,7 +124,7 @@ struct ReadCounter<'a> {
 
 impl<'a> Visitor<'a> for ReadCounter<'a> {
     fn visit_expression(&mut self, e: &'a Expression) {
-        if let Expression::Value(Value::Variable(name)) = e {
+        if let Expression::Value(Value::Binding(Binding::Variable(name))) = e {
             *self.reads.entry(name.clone()).or_insert(0) += 1;
         }
         self.walk_expression(e);
@@ -158,7 +158,7 @@ mod tests {
     use crate::ir::VarKind;
 
     fn var(n: &str) -> Expression {
-        Expression::Value(Value::Variable(n.into()))
+        Expression::Value(Value::Binding(Binding::Variable(n.into())))
     }
 
     #[test]

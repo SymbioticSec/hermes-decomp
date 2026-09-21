@@ -13,12 +13,12 @@ impl Codegen {
 
         // Case 1: Descriptor is a variable reference → lookup in descriptor_vars
         match descriptor {
-            Expression::Value(Value::Variable(name)) => {
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
                 if let Some(info) = descriptor_vars.get(name) {
                     return info.getter_return.clone().or(info.value_prop.clone());
                 }
             }
-            Expression::Value(Value::Register(r)) => {
+            Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
                 let key = format!("r{r}");
                 if let Some(info) = descriptor_vars.get(&key) {
                     return info.getter_return.clone().or(info.value_prop.clone());
@@ -144,8 +144,8 @@ impl Codegen {
 
         // Return the variable name of the descriptor
         match &args[desc_idx] {
-            Expression::Value(Value::Variable(name)) => Some(name.clone()),
-            Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => Some(name.clone()),
+            Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
             _ => None, // inline descriptor, not a variable
         }
     }
@@ -291,7 +291,7 @@ impl Codegen {
                     // The argument to keys() is the source object
                     let args = Self::effective_args(arguments);
                     if let Some(arg) = args.first() {
-                        if let Expression::Value(Value::Variable(var_name)) = arg {
+                        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(var_name))) = arg {
                             return Some(var_name.clone());
                         }
                     }
@@ -320,7 +320,7 @@ impl Codegen {
         if let Expression::Call { callee, .. } = expr {
             if let Expression::Member { object, property: PropertyKey::Ident(method), .. } = callee.as_ref() {
                 if method == "forEach" {
-                    if let Expression::Value(Value::Variable(name)) = object.as_ref() {
+                    if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref() {
                         return name == var_name;
                     }
                 }

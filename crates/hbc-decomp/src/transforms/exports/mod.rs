@@ -13,8 +13,8 @@ pub use rename::rename_param_registers;
 fn resolve_param_idx(expr: &Expression, param_map: &HashMap<u32, u32>) -> Option<u32> {
     match expr {
         Expression::Value(Value::Parameter(idx)) => Some(*idx),
-        Expression::Value(Value::Register(r)) => param_map.get(r).copied(),
-        Expression::Value(Value::Variable(n)) => FactoryRoles::extract_param_index(n),
+        Expression::Value(Value::Binding(Binding::Register(r))) => param_map.get(r).copied(),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => FactoryRoles::extract_param_index(n),
         _ => None,
     }
 }

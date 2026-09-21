@@ -248,7 +248,7 @@ mod tests {
         // return Object.create(new.target.prototype);
         let body = Some(vec![Statement::Return(Some(Expression::Call {
             callee: Box::new(member(
-                Expression::Value(Value::Variable("Object".into())),
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable("Object".into()))),
                 "create",
             )),
             arguments: vec![member(Expression::Value(Value::NewTarget), "prototype")],
@@ -261,7 +261,7 @@ mod tests {
         // return HermesBuiltin.applyArguments(...);
         let body = Some(vec![Statement::Return(Some(Expression::Call {
             callee: Box::new(member(
-                Expression::Value(Value::Variable("HermesBuiltin".into())),
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable("HermesBuiltin".into()))),
                 "applyArguments",
             )),
             arguments: vec![Expression::Value(Value::NewTarget)],

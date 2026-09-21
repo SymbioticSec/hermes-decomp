@@ -48,7 +48,7 @@ impl Codegen {
         use crate::ir::{Expression, PropertyKey, Value};
 
         match callee {
-            Expression::Value(Value::Variable(name)) => {
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
                 FactoryRoles::matches_require_loader_name(name)
             }
             Expression::Value(Value::Parameter(idx)) => {
@@ -216,7 +216,7 @@ impl Codegen {
 
         // Pattern 3: Assignments like Object2 = globalThis.Object (shallow check only)
         // Only check top-level variable/value, never recurse into function bodies
-        if let Expression::Value(Value::Variable(name)) = expr {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = expr {
             if name == "Object2" || name == "globalThisObject" {
                 return true;
             }
@@ -243,7 +243,7 @@ impl Codegen {
         if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } = value {
             let is_global_obj = match object.as_ref() {
                 Expression::Value(Value::Global) => true,
-                Expression::Value(Value::Variable(v)) if v == "globalThis" => true,
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis" => true,
                 _ => false,
             };
             if is_global_obj {
@@ -276,7 +276,7 @@ impl Codegen {
         if is_global_alias_name {
             match value {
                 Expression::Value(Value::Global) => return true,
-                Expression::Value(Value::Variable(v)) if v == "globalThis" => return true,
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis" => return true,
                 _ => {}
             }
         }
@@ -293,7 +293,7 @@ impl Codegen {
             Expression::Member { object, property: PropertyKey::Ident(name), .. } => {
                 let is_global = match object.as_ref() {
                     Expression::Value(Value::Global) => true,
-                    Expression::Value(Value::Variable(v)) if v == "globalThis" => true,
+                    Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis" => true,
                     _ => false,
                 };
                 if is_global && crate::ir::expr::display::is_builtin_global(name) {

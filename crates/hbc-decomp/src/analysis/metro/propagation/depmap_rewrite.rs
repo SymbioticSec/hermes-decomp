@@ -241,7 +241,7 @@ fn collect_reused(
 
 fn expr_is_depmap_root(expr: &Expression, aliases: &HashSet<String>, roles: &FactoryRoles) -> bool {
     match expr {
-        Expression::Value(Value::Variable(n)) => {
+        Expression::Value(Value::Binding(Binding::Variable(n))) => {
             aliases.contains(n) || is_dep_array_name(n, roles)
         }
         Expression::Value(Value::Parameter(idx)) => roles.deps_idx == Some(*idx),
@@ -483,7 +483,7 @@ fn try_resolve_depmap_index(
     };
 
     let base_is_dep = match object.as_ref() {
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(Binding::Variable(name))) => {
             aliases.contains(name) || is_dep_array_name(name, roles)
         }
         Expression::Value(Value::Parameter(idx)) => roles.deps_idx == Some(*idx),

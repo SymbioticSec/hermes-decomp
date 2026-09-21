@@ -111,7 +111,7 @@ pub(super) fn inline_hoisted_aliases_and_trim(stmts: Vec<Statement>) -> Vec<Stat
                 if is_inlinable_name(name) {
                     match value {
                         Expression::Value(Value::Parameter(_))
-                        | Expression::Value(Value::Variable(_)) => {
+                        | Expression::Value(Value::Binding(Binding::Variable(_))) => {
                             aliases.insert(name.clone(), value.clone());
                         }
                         _ => {}
@@ -196,7 +196,7 @@ fn apply_hoisted_aliases_to_target(target: &mut AssignTarget, aliases: &BTreeMap
 
 fn apply_hoisted_aliases_to_expr(expr: &mut Expression, aliases: &BTreeMap<String, Expression>) {
     match expr {
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(Binding::Variable(name))) => {
             if let Some(replacement) = aliases.get(name.as_str()) {
                 *expr = replacement.clone();
             }

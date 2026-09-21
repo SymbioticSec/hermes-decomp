@@ -109,8 +109,8 @@ fn targets_equal(t1: &AssignTarget, t2: &AssignTarget) -> bool {
 // pass used to accept only the first, so nothing folded once names were in.
 fn reads_target(expr: &Expression, target: &AssignTarget) -> bool {
     match (expr, target) {
-        (Expression::Value(Value::Register(r)), AssignTarget::Binding(Binding::Register(t))) => r == t,
-        (Expression::Value(Value::Variable(n)), AssignTarget::Binding(Binding::Variable(t))) => n == t,
+        (Expression::Value(Value::Binding(Binding::Register(r))), AssignTarget::Binding(Binding::Register(t))) => r == t,
+        (Expression::Value(Value::Binding(Binding::Variable(n))), AssignTarget::Binding(Binding::Variable(t))) => n == t,
         _ => false,
     }
 }
@@ -174,7 +174,7 @@ mod tests {
     }
 
     fn var(name: &str) -> Expression {
-        Expression::Value(Value::Variable(name.to_string()))
+        Expression::Value(Value::Binding(Binding::Variable(name.to_string())))
     }
 
     #[test]

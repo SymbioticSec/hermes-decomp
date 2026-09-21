@@ -28,7 +28,7 @@ fn is_object_create(callee: &Expression) -> bool {
             matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "create");
         if is_create {
             return match object.as_ref() {
-                Expression::Value(Value::Variable(v)) => v == "Object",
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) => v == "Object",
                 Expression::Member { property, .. } => {
                     matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "Object")
                 }
@@ -41,7 +41,7 @@ fn is_object_create(callee: &Expression) -> bool {
 
 fn mentions_hermes_internal(e: &Expression) -> bool {
     match e {
-        Expression::Value(Value::Variable(v)) => v == "HermesInternal",
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) => v == "HermesInternal",
         Expression::Member { object, property, .. } => {
             matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "HermesInternal")
                 || mentions_hermes_internal(object)

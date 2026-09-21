@@ -115,7 +115,7 @@ impl Codegen {
         // already holding a string, rare but seen after const folding gaps).
         let prop_name = match &args[name_idx] {
             Expression::Value(Value::Constant(Constant::String(s))) => s.clone(),
-            Expression::Value(Value::Variable(n))
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(n)))
                 if crate::util::is_valid_identifier(n) && !n.starts_with("arg") =>
             {
                 // Variable used as export name, only accept if it looks like a

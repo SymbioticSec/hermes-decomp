@@ -116,10 +116,10 @@ impl MetroDetector {
                 // Get function ID - either directly or via register/variable lookup
                 let function_id = match &arguments[1] {
                     Expression::Function { id, .. } => Some(id.0),
-                    Expression::Value(Value::Register(r)) => {
+                    Expression::Value(Value::Binding(Binding::Register(r))) => {
                         reg_functions.get(&format!("r{r}")).copied()
                     }
-                    Expression::Value(Value::Variable(n)) => reg_functions.get(n).copied(),
+                    Expression::Value(Value::Binding(Binding::Variable(n))) => reg_functions.get(n).copied(),
                     _ => None,
                 };
 
@@ -131,10 +131,10 @@ impl MetroDetector {
                     Expression::Value(Value::Constant(crate::ir::Constant::Number(n))) => {
                         Some(*n as u32)
                     }
-                    Expression::Value(Value::Register(r)) => {
+                    Expression::Value(Value::Binding(Binding::Register(r))) => {
                         reg_integers.get(&format!("r{r}")).copied()
                     }
-                    Expression::Value(Value::Variable(n)) => reg_integers.get(n).copied(),
+                    Expression::Value(Value::Binding(Binding::Variable(n))) => reg_integers.get(n).copied(),
                     _ => None,
                 };
 
@@ -144,11 +144,11 @@ impl MetroDetector {
                         extract_array_of_integers(&arguments[3], Some(reg_integers))
                             .unwrap_or_default()
                     }
-                    Expression::Value(Value::Register(r)) => reg_arrays
+                    Expression::Value(Value::Binding(Binding::Register(r))) => reg_arrays
                         .get(&format!("r{r}"))
                         .cloned()
                         .unwrap_or_default(),
-                    Expression::Value(Value::Variable(n)) => {
+                    Expression::Value(Value::Binding(Binding::Variable(n))) => {
                         reg_arrays.get(n).cloned().unwrap_or_default()
                     }
                     _ => Vec::new(),
@@ -209,12 +209,12 @@ fn extract_array_of_integers(
                 // Try resolving register/variable
                 if let Some(map) = reg_integers {
                     match e {
-                        Expression::Value(Value::Register(r)) => {
+                        Expression::Value(Value::Binding(Binding::Register(r))) => {
                             let key = format!("r{r}");
                             let val = map.get(&key).copied();
                             val
                         }
-                        Expression::Value(Value::Variable(n)) => map.get(n).copied(),
+                        Expression::Value(Value::Binding(Binding::Variable(n))) => map.get(n).copied(),
                         _ => None,
                     }
                 } else {

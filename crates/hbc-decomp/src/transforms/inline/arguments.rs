@@ -59,7 +59,7 @@ pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
                             // Emit: array = [...arguments]
                             let spread_args = Expression::Array {
                                 elements: vec![Some(Expression::Spread(Box::new(
-                                    Expression::Value(Value::Variable("arguments".to_string()))
+                                    Expression::Value(Value::Binding(Binding::Variable("arguments".to_string())))
                                 )))],
                             };
                             if is_let {
@@ -95,7 +95,7 @@ pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
                         Statement::Let {
                             name: array_name,
                             value: Expression::New {
-                                callee: Box::new(Expression::Value(Value::Variable("Array".to_string()))),
+                                callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("Array".to_string())))),
                                 arguments: vec![],
                             },
                             kind: var_kind.unwrap_or(VarKind::Const),
@@ -104,7 +104,7 @@ pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
                         Statement::Assign {
                             target: AssignTarget::Binding(Binding::Variable(array_name)),
                             value: Expression::New {
-                                callee: Box::new(Expression::Value(Value::Variable("Array".to_string()))),
+                                callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("Array".to_string())))),
                                 arguments: vec![],
                             },
                         }
@@ -134,7 +134,7 @@ fn is_arguments_length(expr: &Expression) -> bool {
     if let Expression::Member { object, property: crate::ir::PropertyKey::Ident(prop), .. } = expr {
         if prop == "length" {
             return matches!(&**object,
-                Expression::Value(Value::Variable(v)) if v == "arguments"
+                Expression::Value(Value::Binding(Binding::Variable(v))) if v == "arguments"
             ) || matches!(&**object, Expression::Value(Value::Arguments));
         }
     }
@@ -148,11 +148,11 @@ fn is_empty_new_array(expr: &Expression) -> bool {
             return false;
         }
         return match &**callee {
-            Expression::Value(Value::Variable(v)) => v == "Array",
+            Expression::Value(Value::Binding(Binding::Variable(v))) => v == "Array",
             Expression::Member { object, property: crate::ir::PropertyKey::Ident(prop), .. } => {
                 prop == "Array" && (
                     matches!(&**object, Expression::Value(Value::Global))
-                    || matches!(&**object, Expression::Value(Value::Variable(v)) if v == "globalThis")
+                    || matches!(&**object, Expression::Value(Value::Binding(Binding::Variable(v))) if v == "globalThis")
                 )
             }
             _ => false,
@@ -216,7 +216,7 @@ fn is_zero_or_const(expr: &Expression) -> bool {
 }
 
 fn is_var_named(expr: &Expression, name: &str) -> bool {
-    matches!(expr, Expression::Value(Value::Variable(v)) if v == name)
+    matches!(expr, Expression::Value(Value::Binding(Binding::Variable(v))) if v == name)
 }
 
 fn stmt_references_arguments(stmt: &Statement) -> bool {
@@ -243,7 +243,7 @@ fn target_references_arguments(target: &AssignTarget) -> bool {
 fn expr_references_arguments(expr: &Expression) -> bool {
     match expr {
         Expression::Value(Value::Arguments) => true,
-        Expression::Value(Value::Variable(v)) if v == "arguments" => true,
+        Expression::Value(Value::Binding(Binding::Variable(v))) if v == "arguments" => true,
         Expression::Member { object, .. } => expr_references_arguments(object),
         Expression::Binary { left, right, .. } => {
             expr_references_arguments(left) || expr_references_arguments(right)

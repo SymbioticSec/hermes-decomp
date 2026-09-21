@@ -59,10 +59,10 @@ pub fn handle_create_generator(inst: &crate::Instruction) -> Option<FlowResult> 
         Some(FlowResult::Statement(Statement::Assign {
             target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
             value: Expression::Call {
-                callee: Box::new(Expression::Value(crate::ir::Value::Variable(
+                callee: Box::new(Expression::Value(crate::ir::Value::Binding(Binding::Variable(
                     "CreateGenerator".to_string(),
-                ))),
-                arguments: vec![Expression::Value(crate::ir::Value::Register(env))],
+                )))),
+                arguments: vec![Expression::Value(crate::ir::Value::Binding(Binding::Register(env)))],
             },
         }))
     }

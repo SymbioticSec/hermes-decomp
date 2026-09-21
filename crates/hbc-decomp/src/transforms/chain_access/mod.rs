@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn test_chain_access_inline() {
         // r0 = obj.a; r1 = r0.b; return r1;
-        let obj = Expression::Value(Value::Variable("obj".to_string()));
+        let obj = Expression::Value(Value::Binding(Binding::Variable("obj".to_string())));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(0)),
@@ -89,12 +89,12 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(1)),
                 value: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Register(0))),
+                    object: Box::new(Expression::Value(Value::Binding(Binding::Register(0)))),
                     property: PropertyKey::Ident("b".to_string()),
                     optional: false,
                 },
             },
-            Statement::Return(Some(Expression::Value(Value::Register(1)))),
+            Statement::Return(Some(Expression::Value(Value::Binding(Binding::Register(1))))),
         ];
 
         let result = optimize_chain_access(stmts);
@@ -116,7 +116,7 @@ mod tests {
             {
                 assert_eq!(inner_prop, "a");
                 assert!(
-                    matches!(inner.as_ref(), Expression::Value(Value::Variable(v)) if v == "obj")
+                    matches!(inner.as_ref(), Expression::Value(Value::Binding(Binding::Variable(v))) if v == "obj")
                 );
             } else {
                 panic!("Expected nested member access");
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn test_multi_use_not_inlined() {
         // r0 = obj.a; r1 = r0.b; r2 = r0.c; (r0 used twice)
-        let obj = Expression::Value(Value::Variable("obj".to_string()));
+        let obj = Expression::Value(Value::Binding(Binding::Variable("obj".to_string())));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(0)),
@@ -142,7 +142,7 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(1)),
                 value: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Register(0))),
+                    object: Box::new(Expression::Value(Value::Binding(Binding::Register(0)))),
                     property: PropertyKey::Ident("b".to_string()),
                     optional: false,
                 },
@@ -150,7 +150,7 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(2)),
                 value: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Register(0))),
+                    object: Box::new(Expression::Value(Value::Binding(Binding::Register(0)))),
                     property: PropertyKey::Ident("c".to_string()),
                     optional: false,
                 },

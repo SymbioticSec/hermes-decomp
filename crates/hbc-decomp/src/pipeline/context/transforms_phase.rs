@@ -290,13 +290,13 @@ impl PipelineContext {
 // Drop leftover state-machine bookkeeping that reconstruct no longer reads
 // (`c1 = tmp3`, `dependencyMap = 0`). Only unread trivial copies/scalars.
 fn drop_unread_bookkeeping(stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::Statement> {
-    use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
+    use crate::ir::{AssignTarget, Expression, Statement, Value, Visitor};
     use std::collections::HashMap;
 
     struct Reads<'a>(&'a mut HashMap<String, u32>);
     impl Visitor<'_> for Reads<'_> {
         fn visit_expression(&mut self, e: &Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) = e {
                 *self.0.entry(n.clone()).or_insert(0) += 1;
             }
             self.walk_expression(e);
@@ -313,7 +313,7 @@ fn drop_unread_bookkeeping(stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::S
         .into_iter()
         .filter(|stmt| match stmt {
             Statement::Let { name, value, .. } | Statement::Assign {
-                target: AssignTarget::Binding(Binding::Variable(name)),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
                 value,
             } => {
                 if !is_bookkeeping_name(name) {
@@ -400,8 +400,8 @@ fn is_trivial_bookkeeping_value(e: &crate::ir::Expression) -> bool {
     use crate::ir::{Constant, Expression, Value};
     matches!(
         e,
-        Expression::Value(Value::Variable(_))
-            | Expression::Value(Value::Register(_))
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(_)))
+            | Expression::Value(Value::Binding(crate::ir::Binding::Register(_)))
             | Expression::Value(Value::Parameter(_))
             | Expression::Value(Value::Constant(
                 Constant::Integer(_) | Constant::Null | Constant::Undefined | Constant::Bool(_)

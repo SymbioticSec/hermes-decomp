@@ -79,7 +79,7 @@ fn is_error_call(expr: &Expression) -> bool {
 
 fn is_error_ctor(expr: &Expression) -> bool {
     match expr {
-        Expression::Value(Value::Variable(n)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => {
             n == "Error"
                 || n == "TypeError"
                 || n == "RangeError"
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn extracts_email_from_error() {
         let throw = Statement::Throw(Expression::New {
-            callee: Box::new(Expression::Value(Value::Variable("Error".into()))),
+            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("Error".into())))),
             arguments: vec![
                 Expression::Value(Value::Constant(Constant::String("Invalid email".into()))),
                 Expression::Value(Value::Parameter(0)),
@@ -219,7 +219,7 @@ mod tests {
         });
         // Parameter may not be in Error() args often, put param in message build
         let throw2 = Statement::Throw(Expression::New {
-            callee: Box::new(Expression::Value(Value::Variable("TypeError".into()))),
+            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("TypeError".into())))),
             arguments: vec![Expression::Binary {
                 op: crate::ir::BinaryOp::Add,
                 left: Box::new(Expression::Value(Value::Constant(Constant::String(
@@ -238,7 +238,7 @@ mod tests {
         // or "password" to arg0 vs arg1 by position would be a guess, so neither
         // parameter is named and both stay argN.
         let throw = Statement::Throw(Expression::New {
-            callee: Box::new(Expression::Value(Value::Variable("Error".into()))),
+            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("Error".into())))),
             arguments: vec![
                 Expression::Value(Value::Constant(Constant::String(
                     "bad email or password".into(),

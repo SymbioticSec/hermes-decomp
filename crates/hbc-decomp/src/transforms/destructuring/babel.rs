@@ -75,7 +75,7 @@ fn unwrap_helper_source(stmt: Statement) -> Statement {
         return Statement::Assign { target, value };
     }
     if let Expression::Call { callee, arguments } = &value {
-        if let Expression::Value(Value::Variable(name)) = callee.as_ref() {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = callee.as_ref() {
             if ARRAY_HELPERS.contains(&name.as_str()) {
                 if let Some(src) = arguments.first() {
                     return Statement::Assign {
@@ -102,7 +102,7 @@ fn helper_anchor(stmt: &Statement) -> Option<(String, Expression)> {
     let Expression::Call { callee, arguments } = value else {
         return None;
     };
-    let Expression::Value(Value::Variable(callee_name)) = callee.as_ref() else {
+    let Expression::Value(Value::Binding(crate::ir::Binding::Variable(callee_name))) = callee.as_ref() else {
         return None;
     };
     if !ARRAY_HELPERS.contains(&callee_name.as_str()) {
@@ -185,7 +185,7 @@ fn indexed_read(stmt: &Statement, tmp: &str) -> Option<(AssignTarget, usize)> {
     let Expression::Member { object, property, .. } = value else {
         return None;
     };
-    let Expression::Value(Value::Variable(name)) = object.as_ref() else {
+    let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref() else {
         return None;
     };
     if name != tmp {
@@ -206,7 +206,7 @@ fn reads_name(stmt: &Statement, name: &str) -> bool {
     }
     impl<'b> Visitor<'b> for V<'_> {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) = e {
                 if n == self.name {
                     self.found = true;
                 }
@@ -241,7 +241,7 @@ mod tests {
     use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value, VarKind};
 
     fn var(n: &str) -> Expression {
-        Expression::Value(Value::Variable(n.into()))
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n.into())))
     }
 
     fn helper_call(src: &str, n: i64) -> Expression {

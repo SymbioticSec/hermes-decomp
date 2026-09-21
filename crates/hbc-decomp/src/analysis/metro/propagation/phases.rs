@@ -42,7 +42,7 @@ pub(super) fn reverse_require_naming(
                 if let Some(ref name) = var_name {
                     let param_idx = match value {
                         Expression::Value(Value::Parameter(idx)) => Some(*idx),
-                        Expression::Value(Value::Variable(v)) => {
+                        Expression::Value(Value::Binding(Binding::Variable(v))) => {
                             FactoryRoles::extract_param_index(v)
                         }
                         _ => None,
@@ -59,8 +59,8 @@ pub(super) fn reverse_require_naming(
                             ..
                         } => {
                             let base_name = match &**object {
-                                Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
-                                Expression::Value(Value::Variable(n)) => Some(n.clone()),
+                                Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
+                                Expression::Value(Value::Binding(Binding::Variable(n))) => Some(n.clone()),
                                 Expression::Value(Value::Parameter(i)) => Some(format!("arg{i}")),
                                 _ => None,
                             };
@@ -68,7 +68,7 @@ pub(super) fn reverse_require_naming(
                                 reg_props.insert(name.clone(), (base, *idx as u32));
                             }
                         }
-                        Expression::Value(Value::Register(r)) => {
+                        Expression::Value(Value::Binding(Binding::Register(r))) => {
                             let r_name = format!("r{r}");
                             if let Some(prop) = reg_props.get(&r_name) {
                                 reg_props.insert(name.clone(), prop.clone());
@@ -77,7 +77,7 @@ pub(super) fn reverse_require_naming(
                                 reg_params.insert(name.clone(), *param);
                             }
                         }
-                        Expression::Value(Value::Variable(v)) => {
+                        Expression::Value(Value::Binding(Binding::Variable(v))) => {
                             if let Some(prop) = reg_props.get(v) {
                                 reg_props.insert(name.clone(), prop.clone());
                             }
@@ -179,7 +179,7 @@ pub(super) fn propagate_reexport_names(
                 if let Some(name) = opt_name {
                     let param_idx = match value {
                         Expression::Value(Value::Parameter(idx)) => Some(*idx),
-                        Expression::Value(Value::Variable(v)) => {
+                        Expression::Value(Value::Binding(Binding::Variable(v))) => {
                             FactoryRoles::extract_param_index(v)
                         }
                         _ => None,
@@ -193,8 +193,8 @@ pub(super) fn propagate_reexport_names(
                         ..
                     } = value {
                         let base_name = match &**object {
-                            Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
-                            Expression::Value(Value::Variable(n)) => Some(n.clone()),
+                            Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
+                            Expression::Value(Value::Binding(Binding::Variable(n))) => Some(n.clone()),
                             Expression::Value(Value::Parameter(i)) => Some(format!("arg{i}")),
                             _ => None,
                         };
@@ -213,7 +213,7 @@ pub(super) fn propagate_reexport_names(
                         crate::ir::AssignTarget::Member { object, .. } => {
                             
                             match object {
-                                Expression::Value(Value::Variable(n)) => {
+                                Expression::Value(Value::Binding(Binding::Variable(n))) => {
                                     FactoryRoles::matches_module_name(n) || FactoryRoles::matches_exports_name(n)
                                 }
                                 Expression::Value(Value::Parameter(idx))
@@ -274,7 +274,7 @@ pub(super) fn propagate_reexport_names(
                     };
                     if let Some(Expression::Call { callee, arguments }) = call {
                         let is_export_star = match &**callee {
-                            Expression::Value(Value::Variable(n)) => {
+                            Expression::Value(Value::Binding(Binding::Variable(n))) => {
                                 n.contains("exportStar") || n.contains("__export")
                             }
                             _ => false,
@@ -282,7 +282,7 @@ pub(super) fn propagate_reexport_names(
                         if is_export_star && !arguments.is_empty() {
                             let dep_id = resolve_require_module(&arguments[0], module.function_id, registry, &reg_params, &reg_props)
                                 .or_else(|| {
-                                    if let Expression::Value(Value::Variable(v)) = &arguments[0] {
+                                    if let Expression::Value(Value::Binding(Binding::Variable(v))) = &arguments[0] {
                                         for s in stmts {
                                             if let Statement::Assign { target, value } = s {
                                                 if let Some(tgt_name) = target_to_key(target) {
@@ -364,7 +364,7 @@ pub(crate) fn propagate_module_names_to_closures(
                 if let Some(name) = opt_name {
                     let param_idx = match value {
                         Expression::Value(Value::Parameter(idx)) => Some(*idx),
-                        Expression::Value(Value::Variable(v)) => {
+                        Expression::Value(Value::Binding(Binding::Variable(v))) => {
                             FactoryRoles::extract_param_index(v)
                         }
                         _ => None,
@@ -379,8 +379,8 @@ pub(crate) fn propagate_module_names_to_closures(
                             ..
                         } => {
                             let base_name = match &**object {
-                                Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
-                                Expression::Value(Value::Variable(n)) => Some(n.clone()),
+                                Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
+                                Expression::Value(Value::Binding(Binding::Variable(n))) => Some(n.clone()),
                                 Expression::Value(Value::Parameter(i)) => Some(format!("arg{i}")),
                                 _ => None,
                             };
@@ -388,7 +388,7 @@ pub(crate) fn propagate_module_names_to_closures(
                                 reg_props.insert(name.clone(), (base, *idx as u32));
                             }
                         }
-                        Expression::Value(Value::Register(r)) => {
+                        Expression::Value(Value::Binding(Binding::Register(r))) => {
                             let r_name = format!("r{r}");
                             if let Some(prop) = reg_props.get(&r_name) {
                                 reg_props.insert(name.clone(), prop.clone());
@@ -397,7 +397,7 @@ pub(crate) fn propagate_module_names_to_closures(
                                 reg_params.insert(name.clone(), *param);
                             }
                         }
-                        Expression::Value(Value::Variable(v)) => {
+                        Expression::Value(Value::Binding(Binding::Variable(v))) => {
                             if let Some(prop) = reg_props.get(v) {
                                 reg_props.insert(name.clone(), prop.clone());
                             }

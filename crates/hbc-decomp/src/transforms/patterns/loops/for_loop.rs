@@ -92,8 +92,8 @@ fn extract_for_loop_update(body: &[Statement]) -> Option<(Statement, Vec<Stateme
 // Check if an expression uses a given assignment target.
 fn uses_variable(expr: &Expression, target: &AssignTarget) -> bool {
     match (expr, target) {
-        (Expression::Value(Value::Register(r1)), AssignTarget::Binding(Binding::Register(r2))) => r1 == r2,
-        (Expression::Value(Value::Variable(v1)), AssignTarget::Binding(Binding::Variable(v2))) => v1 == v2,
+        (Expression::Value(Value::Binding(Binding::Register(r1))), AssignTarget::Binding(Binding::Register(r2))) => r1 == r2,
+        (Expression::Value(Value::Binding(Binding::Variable(v1))), AssignTarget::Binding(Binding::Variable(v2))) => v1 == v2,
         (Expression::Binary { left, right, .. }, _) => {
             uses_variable(left, target) || uses_variable(right, target)
         }
@@ -104,8 +104,8 @@ fn uses_variable(expr: &Expression, target: &AssignTarget) -> bool {
 // Check if an expression is the same as an assignment target.
 fn is_same_target(target: &AssignTarget, expr: &Expression) -> bool {
     match (target, expr) {
-        (AssignTarget::Binding(Binding::Register(r1)), Expression::Value(Value::Register(r2))) => r1 == r2,
-        (AssignTarget::Binding(Binding::Variable(v1)), Expression::Value(Value::Variable(v2))) => v1 == v2,
+        (AssignTarget::Binding(Binding::Register(r1)), Expression::Value(Value::Binding(Binding::Register(r2)))) => r1 == r2,
+        (AssignTarget::Binding(Binding::Variable(v1)), Expression::Value(Value::Binding(Binding::Variable(v2)))) => v1 == v2,
         _ => false,
     }
 }

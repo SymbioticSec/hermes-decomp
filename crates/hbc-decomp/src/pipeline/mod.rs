@@ -180,7 +180,7 @@ fn collect_existing_var_names(
     struct C<'a>(&'a mut std::collections::HashSet<String>);
     impl<'a, 'b> Visitor<'b> for C<'a> {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(Binding::Variable(n))) = e {
                 self.0.insert(n.clone());
             }
             self.walk_expression(e);

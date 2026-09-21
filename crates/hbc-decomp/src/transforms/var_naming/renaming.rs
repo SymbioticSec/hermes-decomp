@@ -143,19 +143,19 @@ fn rename_target(namer: &VariableNamer, target: AssignTarget) -> AssignTarget {
 
 fn rename_expr(namer: &VariableNamer, expr: Expression) -> Expression {
     match expr {
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(Binding::Register(r))) => {
             let key = format!("r{r}");
             if let Some(name) = namer.inferred_names.get(&key) {
-                Expression::Value(Value::Variable(name.clone()))
+                Expression::Value(Value::Binding(Binding::Variable(name.clone())))
             } else {
-                Expression::Value(Value::Register(r))
+                Expression::Value(Value::Binding(Binding::Register(r)))
             }
         }
-        Expression::Value(Value::Variable(v)) => {
+        Expression::Value(Value::Binding(Binding::Variable(v))) => {
             if let Some(name) = namer.inferred_names.get(&v) {
-                Expression::Value(Value::Variable(name.clone()))
+                Expression::Value(Value::Binding(Binding::Variable(name.clone())))
             } else {
-                Expression::Value(Value::Variable(v))
+                Expression::Value(Value::Binding(Binding::Variable(v)))
             }
         }
         Expression::Binary { op, left, right } => Expression::Binary {

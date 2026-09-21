@@ -24,7 +24,7 @@ pub(super) fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
         Expression::Value(Value::Parameter(_))
         | Expression::Value(Value::This)
         | Expression::Value(Value::Arguments) => true,
-        Expression::Value(Value::Variable(v)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) => {
             v == "self"
                 || v == "arguments"
                 || (v.starts_with("arg")
@@ -95,13 +95,13 @@ pub(super) fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
         [Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(r)),
             value,
-        }, Statement::Return(Some(Expression::Value(Value::Register(rr))))]
+        }, Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Register(rr)))))]
             if r == rr =>
         {
             inner_gen_id(value)
         }
         // let/const x = function*(){}; return x  (after naming)
-        [Statement::Let { name, value, .. }, Statement::Return(Some(Expression::Value(Value::Variable(v))))]
+        [Statement::Let { name, value, .. }, Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Variable(v)))))]
             if name == v =>
         {
             inner_gen_id(value)
@@ -109,13 +109,13 @@ pub(super) fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
         [Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
-        }, Statement::Return(Some(Expression::Value(Value::Variable(v))))]
+        }, Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Variable(v)))))]
             if name == v =>
         {
             inner_gen_id(value)
         }
         // CreateGenerator + kick: `const g = (function*(){})(); g.next(); return g`
-        [Statement::Let { name, value, .. }, start, Statement::Return(Some(Expression::Value(Value::Variable(v))))]
+        [Statement::Let { name, value, .. }, start, Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Variable(v)))))]
             if name == v && is_iterator_next(start, name) =>
         {
             inner_gen_id(value)
@@ -123,7 +123,7 @@ pub(super) fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
         [Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
-        }, start, Statement::Return(Some(Expression::Value(Value::Variable(v))))]
+        }, start, Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Variable(v)))))]
             if name == v && is_iterator_next(start, name) =>
         {
             inner_gen_id(value)
@@ -157,7 +157,7 @@ fn is_iterator_next(stmt: &Statement, name: &str) -> bool {
             property: PropertyKey::Ident(p) | PropertyKey::String(p),
             ..
         } if p == "next"
-            && matches!(object.as_ref(), Expression::Value(Value::Variable(v)) if v == name)
+            && matches!(object.as_ref(), Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == name)
     )
 }
 
@@ -182,7 +182,7 @@ mod tests {
     fn next_stmt(name: &str) -> Statement {
         Statement::Expr(Expression::Call {
             callee: Box::new(Expression::Member {
-                object: Box::new(Expression::Value(Value::Variable(name.into()))),
+                object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable(name.into())))),
                 property: crate::ir::PropertyKey::Ident("next".into()),
                 optional: false,
             }),
@@ -207,7 +207,7 @@ mod tests {
                 kind: VarKind::Const,
             },
             next_stmt("iter"),
-            Statement::Return(Some(Expression::Value(Value::Variable("iter".into())))),
+            Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Variable("iter".into()))))),
         ];
         assert_eq!(generator_wrapper_target(&body), Some(9));
     }

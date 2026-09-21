@@ -94,7 +94,7 @@ pub fn handle_load_from_environment(
 
     Some(FlowResult::Statement(Statement::Assign {
         target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
-        value: Expression::Value(crate::ir::Value::ClosureVar { level, slot }),
+        value: Expression::Value(crate::ir::Value::Binding(Binding::ClosureVar{ level, slot })),
     }))
 }
 

@@ -18,7 +18,7 @@ mod tests {
     #[test]
     fn test_remove_self_assignment() {
         let stmts = vec![
-            Statement::assign_reg(0, Expression::Value(Value::Register(0))),
+            Statement::assign_reg(0, Expression::Value(Value::Binding(crate::ir::Binding::Register(0)))),
             Statement::assign_reg(1, Expression::constant(Constant::Integer(42))),
         ];
 

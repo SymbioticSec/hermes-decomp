@@ -126,7 +126,7 @@ fn is_put_prop(stmt: &Statement, obj_reg: u32, props: &mut Vec<ObjectProperty>) 
     if let Statement::Assign {
         target:
             AssignTarget::Member {
-                object: Expression::Value(Value::Register(r)),
+                object: Expression::Value(Value::Binding(Binding::Register(r))),
                 property,
             },
         value,
@@ -144,7 +144,7 @@ fn is_put_prop(stmt: &Statement, obj_reg: u32, props: &mut Vec<ObjectProperty>) 
     if let Statement::Assign {
         target:
             AssignTarget::Index {
-                object: Expression::Value(Value::Register(r)),
+                object: Expression::Value(Value::Binding(Binding::Register(r))),
                 key,
             },
         value,
@@ -205,7 +205,7 @@ fn value_uses_any_reg(expr: &Expression, regs: &HashSet<u32>) -> bool {
         return false;
     }
     match expr {
-        Expression::Value(Value::Register(r)) => regs.contains(r),
+        Expression::Value(Value::Binding(Binding::Register(r))) => regs.contains(r),
         Expression::Binary { left, right, .. } => {
             value_uses_any_reg(left, regs) || value_uses_any_reg(right, regs)
         }

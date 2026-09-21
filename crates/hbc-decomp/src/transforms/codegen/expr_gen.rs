@@ -75,7 +75,7 @@ impl Codegen {
                             if let Expression::Call { callee: interop_callee, arguments: interop_args } = object.as_ref() {
                                 if interop_args.len() == 1 {
                                     let is_interop = match interop_callee.as_ref() {
-                                        Expression::Value(Value::Variable(n)) => {
+                                        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => {
                                             n.contains("interop") || n == "_interopDefault"
                                                 || n == "_interopRequireDefault" || n == "_interopNamespace"
                                         }
@@ -94,7 +94,7 @@ impl Codegen {
                     if let crate::ir::PropertyKey::Ident(name) = property {
                         let is_global = match &**object {
                             Expression::Value(Value::Global) => true,
-                            Expression::Value(Value::Variable(v)) if v == "globalThis" => true,
+                            Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis" => true,
                             _ => false,
                         };
                         if is_global && crate::ir::expr::display::is_builtin_global(name) {

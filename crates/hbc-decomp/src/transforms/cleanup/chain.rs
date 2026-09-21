@@ -27,7 +27,7 @@ fn fold_with_counts(stmts: Vec<Statement>, use_counts: &BTreeMap<u32, usize>) ->
             } if !value.has_side_effects() => {
                 if let Some(Statement::Assign {
                     target: next_target,
-                    value: Expression::Value(Value::Register(r2)),
+                    value: Expression::Value(Value::Binding(Binding::Register(r2))),
                 }) = iter.peek()
                 {
                     // Fold only if r is used exactly once (this immediate use); a
@@ -78,7 +78,7 @@ struct RegUseCounter<'a> {
 
 impl<'a, 'b> Visitor<'b> for RegUseCounter<'a> {
     fn visit_expression(&mut self, expr: &'b Expression) {
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             *self.counts.entry(*r).or_insert(0) += 1;
         }
         self.walk_expression(expr);

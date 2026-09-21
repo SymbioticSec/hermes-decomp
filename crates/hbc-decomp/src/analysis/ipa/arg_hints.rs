@@ -31,13 +31,13 @@ fn hint_inner(
     depth: u8,
 ) -> Option<String> {
     match arg {
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
             if !is_generic_name(name) {
                 return Some(name.clone());
             }
             resolve(name, value_defs, depth)
         }
-        Expression::Value(Value::Register(r)) => resolve(&format!("r{r}"), value_defs, depth),
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => resolve(&format!("r{r}"), value_defs, depth),
         Expression::Value(Value::Constant(Constant::String(s))) => {
             if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 Some(s.clone())
@@ -82,9 +82,9 @@ fn object_hint(
     depth: u8,
 ) -> Option<String> {
     match object {
-        Expression::Value(Value::Variable(name)) if !is_generic_name(name) => Some(name.clone()),
-        Expression::Value(Value::Variable(name)) => resolve(name, value_defs, depth),
-        Expression::Value(Value::Register(r)) => resolve(&format!("r{r}"), value_defs, depth),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) if !is_generic_name(name) => Some(name.clone()),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => resolve(name, value_defs, depth),
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => resolve(&format!("r{r}"), value_defs, depth),
         _ => None,
     }
 }
@@ -95,7 +95,7 @@ mod tests {
     use crate::ir::{Expression, PropertyKey, Value};
 
     fn var(n: &str) -> Expression {
-        Expression::Value(Value::Variable(n.to_string()))
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n.to_string())))
     }
 
     fn method_call(obj: Expression, method: &str) -> Expression {
@@ -124,7 +124,7 @@ mod tests {
         // array `first`, so no name is guessed from the transform receiver.
         let mut defs = HashMap::new();
         defs.insert("r5".to_string(), method_call(var("first"), "join"));
-        let arg = Expression::Value(Value::Register(5));
+        let arg = Expression::Value(Value::Binding(crate::ir::Binding::Register(5)));
         assert_eq!(hint_from_arg(&arg, &defs), None);
     }
 
@@ -147,6 +147,6 @@ mod tests {
     #[test]
     fn generic_without_definition_yields_none() {
         let defs = HashMap::new();
-        assert_eq!(hint_from_arg(&Expression::Value(Value::Register(9)), &defs), None);
+        assert_eq!(hint_from_arg(&Expression::Value(Value::Binding(crate::ir::Binding::Register(9))), &defs), None);
     }
 }

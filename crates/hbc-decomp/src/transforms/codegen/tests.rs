@@ -5,7 +5,7 @@ use crate::ir::{Constant, Expression};
 fn test_simple_codegen() {
     let stmts = vec![
         Statement::let_stmt("x", Expression::constant(Constant::Integer(42))),
-        Statement::Return(Some(Expression::Value(crate::ir::Value::Register(0)))),
+        Statement::Return(Some(Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Register(0))))),
     ];
 
     let mut codegen = Codegen::new(CodegenOptions::new());
@@ -18,7 +18,7 @@ fn test_simple_codegen() {
 #[test]
 fn test_if_codegen() {
     let stmts = vec![Statement::If {
-        condition: Expression::Value(crate::ir::Value::Register(0)),
+        condition: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Register(0))),
         then_body: vec![Statement::Return(Some(Expression::constant(
             Constant::Integer(1),
         )))],
@@ -42,7 +42,7 @@ fn test_require_import_comment() {
 
     let codegen = Codegen::new(CodegenOptions::new()).with_imports(imports);
     let expr = Expression::call(
-        Expression::Value(crate::ir::Value::Variable("require".into())),
+        Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("require".into()))),
         vec![
             Expression::constant(Constant::Undefined),
             Expression::constant(Constant::Integer(5)),
@@ -57,7 +57,7 @@ fn test_for_of_uses_generate_expr() {
     let stmts = vec![Statement::ForOf {
         variable: "item".into(),
         iterable: Expression::call(
-            Expression::Value(crate::ir::Value::Variable("require".into())),
+            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("require".into()))),
             vec![
                 Expression::constant(Constant::Undefined),
                 Expression::constant(Constant::Integer(3)),
@@ -77,7 +77,7 @@ fn test_for_of_uses_generate_expr() {
 #[test]
 fn test_switch_uses_generate_expr() {
     let stmts = vec![Statement::Switch {
-        discriminant: Expression::Value(crate::ir::Value::Variable("x".into())),
+        discriminant: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("x".into()))),
         cases: vec![(
             Expression::constant(Constant::Integer(1)),
             vec![Statement::Return(Some(Expression::constant(Constant::Integer(42))))],
@@ -96,7 +96,7 @@ fn test_switch_uses_generate_expr() {
 fn test_class_super_uses_generate_expr() {
     let stmts = vec![Statement::Class {
         name: "MyClass".into(),
-        super_class: Some(Expression::Value(crate::ir::Value::Variable("BaseClass".into()))),
+        super_class: Some(Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("BaseClass".into())))),
         constructor: None,
         methods: vec![],
     }];
@@ -110,7 +110,7 @@ fn test_class_super_uses_generate_expr() {
 fn test_assign_target_member() {
     let codegen = Codegen::new(CodegenOptions::new());
     let target = crate::ir::AssignTarget::Member {
-        object: Expression::Value(crate::ir::Value::Variable("obj".into())),
+        object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("obj".into()))),
         property: "prop".into(),
     };
     let result = codegen.generate_assign_target(&target);
@@ -131,7 +131,7 @@ fn arrow_after_logical_or_is_parenthesized() {
     };
     let expr = Expression::Binary {
         op: crate::ir::BinaryOp::LogicalOr,
-        left: Box::new(Expression::Value(Value::Variable("x".into()))),
+        left: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("x".into())))),
         right: Box::new(arrow),
     };
     let out = codegen.generate_expr(&expr);
@@ -151,7 +151,7 @@ fn template_quasi_escapes_inner_backticks() {
     let codegen = Codegen::new(CodegenOptions::new());
     let expr = Expression::TemplateLiteral {
         quasis: vec!["warn: `nested` ".into(), "".into()],
-        expressions: vec![Expression::Value(crate::ir::Value::Variable("x".into()))],
+        expressions: vec![Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("x".into())))],
     };
     let out = codegen.generate_expr(&expr);
     assert!(
@@ -180,7 +180,7 @@ fn test_esm_import_from_require() {
     let stmts = vec![Statement::let_stmt(
         "React",
         Expression::call(
-            Expression::Value(crate::ir::Value::Variable("require".into())),
+            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("require".into()))),
             vec![
                 Expression::constant(Constant::Undefined),
                 Expression::constant(Constant::Integer(0)),
@@ -206,7 +206,7 @@ fn test_esm_import_from_require() {
 fn test_esm_renames_array_result_import_binding() {
     let req = |id: i32| {
         Expression::call(
-            Expression::Value(crate::ir::Value::Variable("require".into())),
+            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("require".into()))),
             vec![
                 Expression::constant(Constant::Undefined),
                 Expression::constant(Constant::Integer(id)),
@@ -244,10 +244,10 @@ fn test_esm_export_from_assign() {
     // exports.default = value should become `export default value`
     let stmts = vec![Statement::Assign {
         target: crate::ir::AssignTarget::Member {
-            object: Expression::Value(crate::ir::Value::Variable("exports".into())),
+            object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("exports".into()))),
             property: "default".into(),
         },
-        value: Expression::Value(crate::ir::Value::Variable("MyComponent".into())),
+        value: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("MyComponent".into()))),
     }];
 
     let mut codegen = Codegen::new(CodegenOptions::new()).with_esm_mode(BTreeMap::new());
@@ -261,7 +261,7 @@ fn test_esm_skip_esmodule_boilerplate() {
     let stmts = vec![
         Statement::Assign {
             target: crate::ir::AssignTarget::Member {
-                object: Expression::Value(crate::ir::Value::Variable("exports".into())),
+                object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("exports".into()))),
                 property: "__esModule".into(),
             },
             value: Expression::constant(Constant::Bool(true)),
@@ -281,10 +281,10 @@ fn test_esm_named_export() {
     // exports.foo = bar -> export const foo = bar
     let stmts = vec![Statement::Assign {
         target: crate::ir::AssignTarget::Member {
-            object: Expression::Value(crate::ir::Value::Variable("exports".into())),
+            object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("exports".into()))),
             property: "loginWithToken".into(),
         },
-        value: Expression::Value(crate::ir::Value::Variable("fn42".into())),
+        value: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("fn42".into()))),
     }];
 
     let mut codegen = Codegen::new(CodegenOptions::new()).with_esm_mode(BTreeMap::new());

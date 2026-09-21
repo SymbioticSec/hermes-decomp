@@ -2,8 +2,8 @@ use crate::ir::{Binding, AssignTarget, Constant, Expression, MethodKind, Propert
 
 pub fn extract_name(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Value(Value::Variable(s)) => Some(s.clone()),
-        Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
+        Expression::Value(Value::Binding(Binding::Variable(s))) => Some(s.clone()),
+        Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
         _ => None,
     }
 }
@@ -27,7 +27,7 @@ pub fn is_likely_class_name(name: &str) -> bool {
 
 pub fn is_create_class_call(callee: &Expression) -> bool {
     match callee {
-        Expression::Value(Value::Variable(name)) => name == "_createClass" || name == "createClass",
+        Expression::Value(Value::Binding(Binding::Variable(name))) => name == "_createClass" || name == "createClass",
         Expression::Member {
             property: PropertyKey::Ident(name),
             ..
@@ -44,13 +44,13 @@ pub fn is_set_prototype_of_call(callee: &Expression) -> bool {
     } = callee
     {
         if prop == "setPrototypeOf" {
-            if let Expression::Value(Value::Variable(obj_name)) = object.as_ref() {
+            if let Expression::Value(Value::Binding(Binding::Variable(obj_name))) = object.as_ref() {
                 return obj_name == "Object";
             }
         }
     }
     // Also check for _setPrototypeOf helper
-    if let Expression::Value(Value::Variable(name)) = callee {
+    if let Expression::Value(Value::Binding(Binding::Variable(name))) = callee {
         return name == "_setPrototypeOf" || name == "setPrototypeOf";
     }
     false
@@ -64,7 +64,7 @@ pub fn is_define_property_call(callee: &Expression) -> bool {
     } = callee
     {
         if prop == "defineProperty" {
-            if let Expression::Value(Value::Variable(obj_name)) = object.as_ref() {
+            if let Expression::Value(Value::Binding(Binding::Variable(obj_name))) = object.as_ref() {
                 return obj_name == "Object";
             }
         }
@@ -90,7 +90,7 @@ pub fn extract_method_array(expr: &Expression) -> Option<Vec<(String, Expression
                                     &prop.value
                                 {
                                     key = Some(s.clone());
-                                } else if let Expression::Value(Value::Variable(s)) = &prop.value {
+                                } else if let Expression::Value(Value::Binding(Binding::Variable(s))) = &prop.value {
                                     key = Some(s.clone());
                                 }
                             } else if k == "value" {
@@ -174,7 +174,7 @@ pub fn extract_accessor_definition(
     // prop_name should be a string
     let name = match prop_name {
         Expression::Value(Value::Constant(Constant::String(s))) => s.clone(),
-        Expression::Value(Value::Variable(s)) => s.clone(),
+        Expression::Value(Value::Binding(Binding::Variable(s))) => s.clone(),
         _ => return None,
     };
 
@@ -218,10 +218,10 @@ mod tests {
 
     #[test]
     fn test_is_create_class_call() {
-        let callee = Expression::Value(Value::Variable("_createClass".to_string()));
+        let callee = Expression::Value(Value::Binding(Binding::Variable("_createClass".to_string())));
         assert!(is_create_class_call(&callee));
 
-        let callee2 = Expression::Value(Value::Variable("somethingElse".to_string()));
+        let callee2 = Expression::Value(Value::Binding(Binding::Variable("somethingElse".to_string())));
         assert!(!is_create_class_call(&callee2));
     }
 }

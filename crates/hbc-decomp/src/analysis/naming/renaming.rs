@@ -164,11 +164,11 @@ fn rename_target(target: AssignTarget, names: &BTreeMap<u32, String>) -> AssignT
 
 fn rename_expr(expr: Expression, names: &BTreeMap<u32, String>) -> Expression {
     match expr {
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(Binding::Register(r))) => {
             if let Some(name) = names.get(&r) {
-                Expression::Value(Value::Variable(name.clone()))
+                Expression::Value(Value::Binding(Binding::Variable(name.clone())))
             } else {
-                Expression::Value(Value::Register(r))
+                Expression::Value(Value::Binding(Binding::Register(r)))
             }
         }
         Expression::Binary { op, left, right } => Expression::Binary {
@@ -382,7 +382,7 @@ fn rename_variables_in_target(target: &mut AssignTarget, renames: &BTreeMap<Stri
 
 fn rename_variables_in_expr(expr: &mut Expression, renames: &BTreeMap<String, String>) {
     match expr {
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(Binding::Variable(name))) => {
             if let Some(new_name) = renames.get(name) {
                 *name = new_name.clone();
             }

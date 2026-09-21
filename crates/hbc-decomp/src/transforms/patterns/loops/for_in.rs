@@ -166,7 +166,7 @@ fn is_object_keys_call(expr: &Expression) -> Option<Expression> {
                 callee.as_ref()
             {
                 if prop == "keys" {
-                    if let Expression::Value(Value::Variable(name)) = object.as_ref() {
+                    if let Expression::Value(Value::Binding(Binding::Variable(name))) = object.as_ref() {
                         if name == "Object" {
                             return Some(arguments[0].clone());
                         }
@@ -181,7 +181,7 @@ fn is_object_keys_call(expr: &Expression) -> Option<Expression> {
 // `reg[<anything>]`, the GetNextPName lowering (property at the internal index).
 fn is_index_into(expr: &Expression, base_reg: u32) -> bool {
     if let Expression::Member { object, property: PropertyKey::Computed(_), .. } = expr {
-        if let Expression::Value(Value::Register(r)) = object.as_ref() {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = object.as_ref() {
             return *r == base_reg;
         }
     }
@@ -215,7 +215,7 @@ fn is_undefined_check_neq(expr: &Expression, reg: u32) -> bool {
 }
 
 fn touches_undefined(left: &Expression, right: &Expression, reg: u32) -> bool {
-    let is_reg = |e: &Expression| matches!(e, Expression::Value(Value::Register(r)) if *r == reg);
+    let is_reg = |e: &Expression| matches!(e, Expression::Value(Value::Binding(Binding::Register(r))) if *r == reg);
     let is_undef =
         |e: &Expression| matches!(e, Expression::Value(Value::Constant(Constant::Undefined)));
     (is_reg(left) && is_undef(right)) || (is_reg(right) && is_undef(left))

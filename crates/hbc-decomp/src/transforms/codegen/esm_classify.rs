@@ -8,7 +8,7 @@ impl Codegen {
         stmt: &Statement,
         rebound: &std::collections::HashSet<String>,
     ) -> EsmClassification {
-        use crate::ir::{Binding, Expression, Value, Constant, AssignTarget};
+        use crate::ir::{Expression, Value, Constant, AssignTarget};
 
         match stmt {
             // Skip: return undefined / return;
@@ -44,7 +44,7 @@ impl Codegen {
             // Assign: target = value
             Statement::Assign { target, value } => {
                 // Import: variable = require(N) or variable = _interopDefault(require(N))
-                if let AssignTarget::Binding(Binding::Variable(name)) = target {
+                if let AssignTarget::Binding(crate::ir::Binding::Variable(name)) = target {
                     if let Some(cls) = self.import_classification(name, value, rebound) {
                         return cls;
                     }
@@ -231,7 +231,7 @@ mod rebound_import_tests {
 
     fn require_call(id: i32) -> Expression {
         Expression::Call {
-            callee: Box::new(Expression::Value(Value::Variable("require".into()))),
+            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("require".into())))),
             arguments: vec![Expression::Value(Value::Constant(Constant::Integer(id)))],
         }
     }

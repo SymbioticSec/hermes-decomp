@@ -130,7 +130,7 @@ fn collect_async_generators_from_expr(expr: &crate::ir::Expression, results: &mu
 fn is_async_helper_callee(callee: &crate::ir::Expression) -> bool {
     use crate::ir::{Expression, PropertyKey, Value};
     match callee {
-        Expression::Value(Value::Variable(n)) => looks_like_async_helper(n),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => looks_like_async_helper(n),
         Expression::Member {
             object,
             property: PropertyKey::Ident(p) | PropertyKey::String(p),
@@ -479,7 +479,7 @@ fn is_apply_forward_boilerplate(stmt: &Statement, helper_var: &str) -> bool {
         }
         Statement::Return(Some(e)) => {
             is_arguments_forward_call(e, helper_var)
-                || matches!(e, Expression::Value(Value::Variable(n)) if n == helper_var || n == "applyArgumentsResult" || n == "apply")
+                || matches!(e, Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) if n == helper_var || n == "applyArgumentsResult" || n == "apply")
                 || is_apply_or_apply_arguments_call(e, helper_var)
         }
         Statement::Expr(e) => is_apply_or_apply_arguments_call(e, helper_var),
@@ -493,7 +493,7 @@ fn is_apply_forward_value(name: &str, value: &crate::ir::Expression, helper_var:
         return true;
     }
     if is_env_slot_name(name)
-        && matches!(value, Expression::Value(Value::Variable(v)) if v == helper_var)
+        && matches!(value, Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == helper_var)
     {
         return true;
     }
@@ -514,7 +514,7 @@ fn is_apply_forward_value(name: &str, value: &crate::ir::Expression, helper_var:
             property: PropertyKey::Ident(p) | PropertyKey::String(p),
             ..
         } if p == "apply"
-            && matches!(object.as_ref(), Expression::Value(Value::Variable(v)) if v == helper_var)
+            && matches!(object.as_ref(), Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == helper_var)
     ) {
         return true;
     }
@@ -560,7 +560,7 @@ fn is_apply_or_apply_arguments_call(expr: &crate::ir::Expression, helper_var: &s
         return true;
     }
     match callee.as_ref() {
-        Expression::Value(Value::Variable(n)) if n == "apply" || n == helper_var => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) if n == "apply" || n == helper_var => {
             arguments.iter().any(|a| match a {
                 Expression::Value(Value::Arguments) => true,
                 Expression::Spread(inner) => {
@@ -642,7 +642,7 @@ fn is_arguments_forward_call(expr: &crate::ir::Expression, var_name: &str) -> bo
     if let Expression::Call { callee, arguments } = expr {
         match &**callee {
             // Pattern 1: VAR(...arguments)
-            Expression::Value(Value::Variable(name)) if name == var_name => {
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) if name == var_name => {
                 return arguments.iter().any(|a| {
                     matches!(
                         a,
@@ -657,7 +657,7 @@ fn is_arguments_forward_call(expr: &crate::ir::Expression, var_name: &str) -> bo
                 property: PropertyKey::Ident(prop),
                 ..
             } if prop == "apply" => {
-                if let Expression::Value(Value::Variable(name)) = &**object {
+                if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**object {
                     if name == var_name {
                         return arguments
                             .iter()
@@ -696,7 +696,7 @@ fn extract_single_return_function_id(stmts: &[Statement]) -> Option<u32> {
             value: Expression::Function { id, .. },
         } = meaningful[0]
         {
-            if let Statement::Return(Some(Expression::Value(Value::Register(r2)))) = meaningful[1] {
+            if let Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Register(r2))))) = meaningful[1] {
                 if *r == *r2 {
                     return Some(id.0);
                 }
@@ -717,9 +717,9 @@ mod tests {
 
     fn async_helper_call(inner: u32) -> Expression {
         Expression::Call {
-            callee: Box::new(Expression::Value(Value::Variable(
+            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable(
                 "asyncGeneratorStep".into(),
-            ))),
+            )))),
             arguments: vec![Expression::Function {
                 id: FunctionId(inner),
                 name: None,
@@ -733,13 +733,13 @@ mod tests {
     #[test]
     fn detects_hermes_apply_forward_wrapper() {
         let apply_member = Expression::Member {
-            object: Box::new(Expression::Value(Value::Variable("tmp".into()))),
+            object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("tmp".into())))),
             property: PropertyKey::Ident("apply".into()),
             optional: false,
         };
         let typeof_apply = Expression::Unary {
             op: UnaryOp::TypeOf,
-            operand: Box::new(Expression::Value(Value::Variable("apply".into()))),
+            operand: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("apply".into())))),
         };
         let stmts = vec![
             Statement::Assign {
@@ -753,7 +753,7 @@ mod tests {
             },
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Variable("closure_18".into())),
-                value: Expression::Value(Value::Variable("tmp".into())),
+                value: Expression::Value(Value::Binding(crate::ir::Binding::Variable("tmp".into()))),
             },
             Statement::Let {
                 name: "apply".into(),
@@ -772,30 +772,30 @@ mod tests {
                     name: "applyArgumentsResult".into(),
                     value: Expression::Call {
                         callee: Box::new(Expression::Member {
-                            object: Box::new(Expression::Value(Value::Variable(
+                            object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable(
                                 "HermesBuiltin".into(),
-                            ))),
+                            )))),
                             property: PropertyKey::Ident("applyArguments".into()),
                             optional: false,
                         }),
-                        arguments: vec![Expression::Value(Value::Variable("self".into()))],
+                        arguments: vec![Expression::Value(Value::Binding(crate::ir::Binding::Variable("self".into())))],
                     },
                     kind: VarKind::Let,
                 }],
                 else_body: vec![Statement::Assign {
                     target: AssignTarget::Binding(crate::ir::Binding::Variable("applyArgumentsResult".into())),
                     value: Expression::Call {
-                        callee: Box::new(Expression::Value(Value::Variable("apply".into()))),
+                        callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("apply".into())))),
                         arguments: vec![
-                            Expression::Value(Value::Variable("self".into())),
+                            Expression::Value(Value::Binding(crate::ir::Binding::Variable("self".into()))),
                             Expression::Value(Value::Arguments),
                         ],
                     },
                 }],
             },
-            Statement::Return(Some(Expression::Value(Value::Variable(
+            Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Variable(
                 "applyArgumentsResult".into(),
-            )))),
+            ))))),
         ];
         assert_eq!(detect_async_wrapper_pattern(&stmts), Some(42));
     }

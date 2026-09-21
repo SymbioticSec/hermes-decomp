@@ -150,7 +150,7 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
                 }
                 // Check for Array.isArray(arg)
                 if method == "isArray" {
-                    if let Expression::Value(Value::Variable(name)) = &**object {
+                    if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**object {
                         if name == "Array" {
                             if let Some(Expression::Value(Value::Parameter(idx))) = arguments.first() {
                                 hints.entry(*idx).or_default().push("arr".to_string());

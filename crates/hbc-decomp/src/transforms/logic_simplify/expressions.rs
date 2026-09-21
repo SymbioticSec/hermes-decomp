@@ -217,8 +217,8 @@ mod tests {
     #[test]
     fn test_de_morgan_or() {
         // !(a || b) → !a && !b
-        let a = Expression::Value(Value::Variable("a".to_string()));
-        let b = Expression::Value(Value::Variable("b".to_string()));
+        let a = Expression::Value(Value::Binding(crate::ir::Binding::Variable("a".to_string())));
+        let b = Expression::Value(Value::Binding(crate::ir::Binding::Variable("b".to_string())));
         let expr = Expression::Unary {
             op: UnaryOp::Not,
             operand: Box::new(Expression::Binary {
@@ -241,8 +241,8 @@ mod tests {
     #[test]
     fn test_de_morgan_and() {
         // !(a && b) → !a || !b
-        let a = Expression::Value(Value::Variable("a".to_string()));
-        let b = Expression::Value(Value::Variable("b".to_string()));
+        let a = Expression::Value(Value::Binding(crate::ir::Binding::Variable("a".to_string())));
+        let b = Expression::Value(Value::Binding(crate::ir::Binding::Variable("b".to_string())));
         let expr = Expression::Unary {
             op: UnaryOp::Not,
             operand: Box::new(Expression::Binary {
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn test_or_identity() {
         // x || false → x
-        let x = Expression::Value(Value::Variable("x".to_string()));
+        let x = Expression::Value(Value::Binding(crate::ir::Binding::Variable("x".to_string())));
         let expr = Expression::Binary {
             op: BinaryOp::Or,
             left: Box::new(x.clone()),
@@ -273,13 +273,13 @@ mod tests {
         };
 
         let result = simplify_expr(expr);
-        assert!(matches!(result, Expression::Value(Value::Variable(ref v)) if v == "x"));
+        assert!(matches!(result, Expression::Value(Value::Binding(crate::ir::Binding::Variable(ref v))) if v == "x"));
     }
 
     #[test]
     fn test_and_identity() {
         // x && true → x
-        let x = Expression::Value(Value::Variable("x".to_string()));
+        let x = Expression::Value(Value::Binding(crate::ir::Binding::Variable("x".to_string())));
         let expr = Expression::Binary {
             op: BinaryOp::And,
             left: Box::new(x.clone()),
@@ -287,14 +287,14 @@ mod tests {
         };
 
         let result = simplify_expr(expr);
-        assert!(matches!(result, Expression::Value(Value::Variable(ref v)) if v == "x"));
+        assert!(matches!(result, Expression::Value(Value::Binding(crate::ir::Binding::Variable(ref v))) if v == "x"));
     }
 
     #[test]
     fn test_ternary_constant_condition() {
         // true ? a : b → a
-        let a = Expression::Value(Value::Variable("a".to_string()));
-        let b = Expression::Value(Value::Variable("b".to_string()));
+        let a = Expression::Value(Value::Binding(crate::ir::Binding::Variable("a".to_string())));
+        let b = Expression::Value(Value::Binding(crate::ir::Binding::Variable("b".to_string())));
         let expr = Expression::Conditional {
             condition: Box::new(Expression::Value(Value::Constant(Constant::Bool(true)))),
             then_expr: Box::new(a),
@@ -302,14 +302,14 @@ mod tests {
         };
 
         let result = simplify_expr(expr);
-        assert!(matches!(result, Expression::Value(Value::Variable(ref v)) if v == "a"));
+        assert!(matches!(result, Expression::Value(Value::Binding(crate::ir::Binding::Variable(ref v))) if v == "a"));
     }
 
     #[test]
     fn test_negate_comparison() {
         // !(x === y) → x !== y
-        let x = Expression::Value(Value::Variable("x".to_string()));
-        let y = Expression::Value(Value::Variable("y".to_string()));
+        let x = Expression::Value(Value::Binding(crate::ir::Binding::Variable("x".to_string())));
+        let y = Expression::Value(Value::Binding(crate::ir::Binding::Variable("y".to_string())));
         let inner = Expression::Binary {
             op: BinaryOp::StrictEq,
             left: Box::new(x),

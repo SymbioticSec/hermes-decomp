@@ -216,7 +216,7 @@ fn resolve_property(property: PropertyKey, info: &ClosureInfo) -> PropertyKey {
 
 fn resolve_expr(expr: Expression, info: &ClosureInfo) -> Expression {
     match expr {
-        Expression::Value(Value::ClosureVar { level, slot }) => {
+        Expression::Value(Value::Binding(Binding::ClosureVar{ level, slot })) => {
             let encoded = encode_level_slot(level, slot);
             let name = if info.slots.contains_key(&encoded) {
                 info.get_slot_name(encoded)
@@ -226,7 +226,7 @@ fn resolve_expr(expr: Expression, info: &ClosureInfo) -> Expression {
                 // Unresolved parent-env capture: same family as local `closure_N`.
                 crate::ir::Value::closure_var_name(level, slot)
             };
-            Expression::Value(Value::Variable(name))
+            Expression::Value(Value::Binding(Binding::Variable(name)))
         }
         Expression::Binary { op, left, right } => Expression::Binary {
             op,

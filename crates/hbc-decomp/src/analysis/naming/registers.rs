@@ -196,14 +196,14 @@ fn analyze_target(target: &AssignTarget, info: &mut BTreeMap<u32, RegisterInfo>)
 
 fn analyze_expr(expr: &Expression, info: &mut BTreeMap<u32, RegisterInfo>) {
     match expr {
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(Binding::Register(r))) => {
             info.entry(*r).or_default().use_count += 1;
         }
         Expression::Member {
             object, property, ..
         } => {
             // Track property access
-            if let Expression::Value(Value::Register(r)) = object.as_ref() {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = object.as_ref() {
                 let entry = info.entry(*r).or_default();
                 if let PropertyKey::Ident(name) = property {
                     entry.accessed_props.insert(name.clone());
@@ -224,7 +224,7 @@ fn analyze_expr(expr: &Expression, info: &mut BTreeMap<u32, RegisterInfo>) {
                 ..
             } = callee.as_ref()
             {
-                if let Expression::Value(Value::Register(r)) = object.as_ref() {
+                if let Expression::Value(Value::Binding(Binding::Register(r))) = object.as_ref() {
                     info.entry(*r)
                         .or_default()
                         .called_methods

@@ -16,7 +16,7 @@ impl Codegen {
 
         // Shorthand: { x } instead of { x: x }
         if let PropertyKey::Ident(key_name) = &prop.key {
-            if let Expression::Value(Value::Variable(var_name)) = &prop.value {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(var_name))) = &prop.value {
                 if key_name == var_name {
                     return key_name.clone();
                 }

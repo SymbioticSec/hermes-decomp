@@ -37,7 +37,7 @@ pub fn fold_object_literals(stmts: Vec<Statement>) -> Vec<Statement> {
                     value,
                 } => {
                     // Check object is Variable(obj_name)
-                    if !matches!(object, Expression::Value(Value::Variable(n)) if n == &obj_name) {
+                    if !matches!(object, Expression::Value(Value::Binding(Binding::Variable(n))) if n == &obj_name) {
                         break;
                     }
                     // Don't fold if value references the object itself (e.g. obj.constructor = obj)
@@ -89,7 +89,7 @@ fn fold_object_literals_recurse(stmt: &mut Statement) {
 // Check if an expression references a specific variable name.
 fn expr_references_var(expr: &Expression, var_name: &str) -> bool {
     match expr {
-        Expression::Value(Value::Variable(name)) => name == var_name,
+        Expression::Value(Value::Binding(Binding::Variable(name))) => name == var_name,
         Expression::Binary { left, right, .. } => {
             expr_references_var(left, var_name) || expr_references_var(right, var_name)
         }
@@ -157,7 +157,7 @@ pub fn fold_array_literals(stmts: Vec<Statement>) -> Vec<Statement> {
                     value,
                 } => {
                     // Check object is Variable(arr_name)
-                    if !matches!(object, Expression::Value(Value::Variable(n)) if n == &arr_name) {
+                    if !matches!(object, Expression::Value(Value::Binding(Binding::Variable(n))) if n == &arr_name) {
                         break;
                     }
                     // Check key is a constant integer index

@@ -110,7 +110,7 @@ mod tests {
 
         let stmt = Statement::let_stmt("x", Expression::constant(Constant::Integer(1)));
         builder.emit(stmt);
-        builder.emit_return(Some(Expression::Value(Value::Register(0))));
+        builder.emit_return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Register(0)))));
 
         let cfg = builder.finish();
         assert_eq!(cfg.block_count(), 1);
@@ -123,7 +123,7 @@ mod tests {
         let then_block = builder.create_block();
         let else_block = builder.create_block();
 
-        let cond = Expression::Value(Value::Register(0));
+        let cond = Expression::Value(Value::Binding(crate::ir::Binding::Register(0)));
         builder.emit_branch(cond, then_block, else_block);
 
         builder.set_current_block(then_block);

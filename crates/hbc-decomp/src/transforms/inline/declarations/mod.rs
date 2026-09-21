@@ -254,7 +254,7 @@ fn is_valid_js_identifier(name: &str) -> bool {
 
 // Check if assignment is a self-assignment: `name = name`
 fn is_self_assignment_var(name: &str, value: &Expression) -> bool {
-    matches!(value, Expression::Value(Value::Variable(v)) if v == name)
+    matches!(value, Expression::Value(Value::Binding(Binding::Variable(v))) if v == name)
 }
 
 // Aggregate writes from nested/descendant function bodies so the parent scope

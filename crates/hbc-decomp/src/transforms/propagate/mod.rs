@@ -104,7 +104,7 @@ fn resolve_invariant_register(
         v @ Expression::Value(
             Value::Parameter(_) | Value::Global | Value::Constant(_),
         ) => Some(v.clone()),
-        Expression::Value(Value::Register(b)) => {
+        Expression::Value(Value::Binding(Binding::Register(b))) => {
             resolve_invariant_register(*b, values, def_count, depth + 1)
         }
         _ => None,
@@ -185,7 +185,7 @@ fn is_propagatable(expr: &Expression) -> bool {
         // becomes the catch parameter, so the catch body ends up referring to a
         // free `__exception` (renamed inconsistently from the `catch (e)` param).
         // Keep it pinned to its register.
-        Expression::Value(Value::Variable(name)) if name == "__exception" => false,
+        Expression::Value(Value::Binding(Binding::Variable(name))) if name == "__exception" => false,
         Expression::Value(_) => true,
         // Allow propagation of simple member access on known safe objects
         // e.g., `Object = globalThis.Object` → inline `globalThis.Object`

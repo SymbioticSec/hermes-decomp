@@ -172,12 +172,12 @@ fn rename_expr(
     var_map: &std::collections::HashMap<String, String>,
 ) {
     match expr {
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(Binding::Register(r))) => {
             if let Some(name) = reg_map.get(r) {
-                *expr = Expression::Value(Value::Variable(name.clone()));
+                *expr = Expression::Value(Value::Binding(Binding::Variable(name.clone())));
             }
         }
-        Expression::Value(Value::Variable(v)) => {
+        Expression::Value(Value::Binding(Binding::Variable(v))) => {
             if let Some(name) = var_map.get(v) {
                 *v = name.clone();
             }
@@ -188,7 +188,7 @@ fn rename_expr(
             if let Some(Some(name)) = var_map.get(&format!("arg{idx}")).map(Some) {
                  // Wait, var_map.get returns &String. 
                  // If we have a name, convert to Variable.
-                 *expr = Expression::Value(Value::Variable(name.clone()));
+                 *expr = Expression::Value(Value::Binding(Binding::Variable(name.clone())));
             }
         }
         Expression::Binary { left, right, .. } => {

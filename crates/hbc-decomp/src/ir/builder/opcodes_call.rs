@@ -29,7 +29,7 @@ fn resolve_implicit_args_from(arg_count: usize, frame_size: u32, this_from_top: 
     }
     for i in 0..arg_count.min(MAX_CALL_ARGS) {
         match (frame_size - this_from_top).checked_sub(i as u32) {
-            Some(reg) => arguments.push(Expression::Value(Value::Register(reg))),
+            Some(reg) => arguments.push(Expression::Value(Value::Binding(Binding::Register(reg)))),
             None => break,
         }
     }
@@ -270,7 +270,7 @@ pub fn handle_call_builtin(inst: &Instruction, frame_size: u32, version: u32) ->
         // require(...)
         "requireFast" => {
             return assign(dst, Expression::Call {
-                callee: Box::new(Expression::Value(Value::Variable("require".to_string()))),
+                callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("require".to_string())))),
                 arguments,
             });
         }
@@ -286,7 +286,7 @@ pub fn handle_call_builtin(inst: &Instruction, frame_size: u32, version: u32) ->
             None => {
                 // Unknown index for this version: keep a debuggable placeholder.
                 return assign(dst, Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Variable(format!("__builtin{builtin_idx}")))),
+                    callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(format!("__builtin{builtin_idx}"))))),
                     arguments,
                 });
             }
@@ -382,7 +382,7 @@ pub fn handle_call_require(inst: &Instruction) -> Option<Statement> {
     Some(Statement::Assign {
         target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
-            callee: Box::new(Expression::Value(Value::Variable("require".to_string()))),
+            callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("require".to_string())))),
             arguments: vec![arg_expr],
         },
     })
@@ -398,7 +398,7 @@ pub fn handle_direct_eval(inst: &Instruction) -> Option<Statement> {
     Some(Statement::Assign {
         target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
-            callee: Box::new(Expression::Value(Value::Variable("eval".to_string()))),
+            callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("eval".to_string())))),
             arguments: vec![source],
         },
     })

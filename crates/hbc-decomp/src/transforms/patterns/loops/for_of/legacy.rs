@@ -228,14 +228,14 @@ fn is_symbol_iterator(
 
 fn reg_of(e: &Expression) -> Option<u32> {
     match e {
-        Expression::Value(Value::Register(r)) => Some(*r),
+        Expression::Value(Value::Binding(Binding::Register(r))) => Some(*r),
         _ => None,
     }
 }
 
 fn reg_of_value(e: &Expression) -> Option<u32> {
     match e {
-        Expression::Value(Value::Register(r)) => Some(*r),
+        Expression::Value(Value::Binding(Binding::Register(r))) => Some(*r),
         _ => None,
     }
 }

@@ -15,7 +15,7 @@ pub(super) fn resolve_callee(
     func_name_index: &FunctionNameIndex,
 ) -> Option<u32> {
     match callee {
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
             if let Some(fid) = resolve_named_definition(name, defs, metro_registry, func_name_index) {
                 return Some(fid);
             }
@@ -25,7 +25,7 @@ pub(super) fn resolve_callee(
             }
             None
         }
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
             let r_name = format!("r{r}");
             resolve_named_definition(&r_name, defs, metro_registry, func_name_index)
         }
@@ -98,8 +98,8 @@ fn resolve_unique_by_name(name: &str, func_name_index: &FunctionNameIndex) -> Op
 
 pub(super) fn get_base_name(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Value(Value::Variable(name)) => Some(name.clone()),
-        Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => Some(name.clone()),
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
         _ => None,
     }
 }
@@ -112,7 +112,7 @@ pub(super) fn get_base_name(expr: &Expression) -> Option<String> {
 // - This helps naming variables holding the result: `var email = getEmail();`
 pub(super) fn extract_name_from_callee(callee: &Expression) -> Option<String> {
     let name = match callee {
-        Expression::Value(Value::Variable(name)) => name.clone(),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => name.clone(),
         Expression::Member {
             property: PropertyKey::String(prop),
             ..
@@ -176,7 +176,7 @@ pub(super) fn extract_object_name_from_method_call(callee: &Expression) -> Optio
             }
         }
 
-        if let Expression::Value(Value::Variable(name)) = object.as_ref() {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref() {
             // Filter out generic names
             if !super::inference::is_generic_name(name) {
                 return Some(name.clone());
@@ -195,7 +195,7 @@ pub(super) fn extract_object_name_from_method_call(callee: &Expression) -> Optio
 // only ever propagate a meaningful, source-derived identifier.
 pub(super) fn extract_method_object_name(callee: &Expression) -> Option<String> {
     if let Expression::Member { object, .. } = callee {
-        if let Expression::Value(Value::Variable(name)) = object.as_ref() {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref() {
             if !super::inference::is_generic_name(name) {
                 return Some(name.clone());
             }
@@ -229,10 +229,10 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Register(1))),
+                    callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Register(1)))),
                     arguments: vec![
                         Expression::Value(Value::Constant(crate::ir::Constant::Undefined)),
-                        Expression::Value(Value::Register(0)),
+                        Expression::Value(Value::Binding(crate::ir::Binding::Register(0))),
                     ],
                 },
             },
@@ -268,7 +268,7 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Register(1))),
+                    callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Register(1)))),
                     arguments: vec![],
                 },
             },

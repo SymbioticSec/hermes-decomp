@@ -554,7 +554,7 @@ fn is_file_finished_importing_callee(callee: &Expression) -> bool {
             property: PropertyKey::Ident(s) | PropertyKey::String(s),
             ..
         } => s == "fileFinishedImporting",
-        Expression::Value(Value::Variable(s)) => s == "fileFinishedImporting",
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(s))) => s == "fileFinishedImporting",
         _ => false,
     }
 }
@@ -736,7 +736,7 @@ mod file_path_naming_tests {
             name: "result".into(),
             value: Expression::Call {
                 callee: Box::new(Expression::Member {
-                    object: Box::new(Expression::Value(Value::Variable("clear".into()))),
+                    object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("clear".into())))),
                     property: PropertyKey::Ident("fileFinishedImporting".into()),
                     optional: false,
                 }),
@@ -782,7 +782,7 @@ mod file_path_naming_tests {
         );
         let assign = Statement::Assign {
             target: crate::ir::AssignTarget::Member {
-                object: Expression::Value(Value::Variable("exports".into())),
+                object: Expression::Value(Value::Binding(crate::ir::Binding::Variable("exports".into()))),
                 property: "fileFinishedImporting".into(),
             },
             value: Expression::Function {

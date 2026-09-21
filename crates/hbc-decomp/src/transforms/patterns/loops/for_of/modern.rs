@@ -118,7 +118,7 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
             // copy = iter (alias)
             Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(dst)),
-                value: Expression::Value(Value::Register(src)),
+                value: Expression::Value(Value::Binding(Binding::Register(src))),
             } if iter_aliases.contains(src) => {
                 iter_aliases.push(*dst);
                 idx += 1;
@@ -137,7 +137,7 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
             // following `val = iter.next()` is still recognised.
             Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(_)),
-                value: Expression::Value(Value::Register(_)),
+                value: Expression::Value(Value::Binding(Binding::Register(_))),
             } => {
                 kept.push(stmt.clone());
                 idx += 1;
@@ -177,7 +177,7 @@ fn is_next_call(expr: &Expression, iter_reg: u32) -> bool {
         if arguments.is_empty() {
             if let Expression::Member { object, property: PropertyKey::Ident(p), .. } = callee.as_ref() {
                 if p == "next" {
-                    if let Expression::Value(Value::Register(r)) = object.as_ref() {
+                    if let Expression::Value(Value::Binding(Binding::Register(r))) = object.as_ref() {
                         return *r == iter_reg;
                     }
                 }
@@ -194,7 +194,7 @@ fn is_next_call(expr: &Expression, iter_reg: u32) -> bool {
 fn is_iter_done_check(expr: &Expression, iter_aliases: &[u32]) -> bool {
     use crate::ir::{BinaryOp, UnaryOp};
     let touches_iter = |e: &Expression| {
-        matches!(e, Expression::Value(Value::Register(r)) if iter_aliases.contains(r))
+        matches!(e, Expression::Value(Value::Binding(Binding::Register(r))) if iter_aliases.contains(r))
     };
     match expr {
         // iter !== undefined

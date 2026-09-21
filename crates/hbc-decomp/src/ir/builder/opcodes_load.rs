@@ -67,7 +67,7 @@ pub fn handle_mov(inst: &Instruction) -> Option<Statement> {
 
     Some(Statement::Assign {
         target: AssignTarget::Binding(Binding::Register(dst)),
-        value: Expression::Value(Value::Register(src)),
+        value: Expression::Value(Value::Binding(Binding::Register(src))),
     })
 }
 
@@ -136,5 +136,5 @@ pub fn get_reg(operands: &[crate::opcode::Operand], idx: usize) -> Option<u32> {
 
 // Helper to get register as expression.
 pub fn reg_expr(operands: &[crate::opcode::Operand], idx: usize) -> Option<Expression> {
-    Some(Expression::Value(Value::Register(get_reg(operands, idx)?)))
+    Some(Expression::Value(Value::Binding(Binding::Register(get_reg(operands, idx)?))))
 }

@@ -60,13 +60,13 @@ pub fn reconstruct_v98_array_destructuring(stmts: Vec<Statement>) -> Vec<Stateme
 fn iterator_anchor(stmt: &Statement) -> Option<(Expression, Expression)> {
     let (target, value) = match stmt {
         Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } => {
-            (Expression::Value(Value::Register(*r)), value)
+            (Expression::Value(Value::Binding(Binding::Register(*r))), value)
         }
         Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), value } => {
-            (Expression::Value(Value::Variable(n.clone())), value)
+            (Expression::Value(Value::Binding(Binding::Variable(n.clone()))), value)
         }
         Statement::Let { name, value, .. } => {
-            (Expression::Value(Value::Variable(name.clone())), value)
+            (Expression::Value(Value::Binding(Binding::Variable(name.clone()))), value)
         }
         _ => return None,
     };
@@ -88,7 +88,7 @@ fn symbol_iterator_source(expr: &Expression) -> Option<Expression> {
     };
     if let Expression::Member { object: sym, property, .. } = computed.as_ref() {
         let is_iter = matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "iterator");
-        let is_symbol = matches!(sym.as_ref(), Expression::Value(Value::Variable(s)) if s == "Symbol");
+        let is_symbol = matches!(sym.as_ref(), Expression::Value(Value::Binding(Binding::Variable(s))) if s == "Symbol");
         if is_iter && is_symbol {
             return Some((**object).clone());
         }
@@ -140,13 +140,13 @@ fn collect(stmts: &[Statement], start: usize, iter: &Expression) -> Option<(Elem
 fn advance_result(stmt: &Statement, iter: &Expression) -> Option<Option<Expression>> {
     match stmt {
         Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } if is_iter_next(value, iter) => {
-            Some(Some(Expression::Value(Value::Register(*r))))
+            Some(Some(Expression::Value(Value::Binding(Binding::Register(*r)))))
         }
         Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), value } if is_iter_next(value, iter) => {
-            Some(Some(Expression::Value(Value::Variable(n.clone()))))
+            Some(Some(Expression::Value(Value::Binding(Binding::Variable(n.clone())))))
         }
         Statement::Let { name, value, .. } if is_iter_next(value, iter) => {
-            Some(Some(Expression::Value(Value::Variable(name.clone()))))
+            Some(Some(Expression::Value(Value::Binding(Binding::Variable(name.clone())))))
         }
         Statement::Expr(e) if is_iter_next(e, iter) => Some(None),
         Statement::If { then_body, else_body, .. } => {

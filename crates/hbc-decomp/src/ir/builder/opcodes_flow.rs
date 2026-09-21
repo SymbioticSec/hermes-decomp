@@ -280,7 +280,7 @@ pub fn handle_catch(inst: &Instruction) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
     Some(FlowResult::Statement(Statement::Assign {
         target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
-        value: Expression::Value(crate::ir::Value::Variable("__exception".to_string())),
+        value: Expression::Value(crate::ir::Value::Binding(Binding::Variable("__exception".to_string()))),
     }))
 }
 

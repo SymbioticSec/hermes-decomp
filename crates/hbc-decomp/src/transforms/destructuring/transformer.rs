@@ -153,7 +153,7 @@ fn is_global_object(e: &Expression) -> bool {
     use crate::ir::Value;
     match e {
         Expression::Value(Value::Global) => true,
-        Expression::Value(Value::Variable(v)) => v == "globalThis" || v == "global",
+        Expression::Value(Value::Binding(Binding::Variable(v))) => v == "globalThis" || v == "global",
         _ => false,
     }
 }
@@ -173,8 +173,8 @@ fn extract_default_assignment(stmt: &Statement, target: &AssignTarget) -> Option
                     let mut is_undefined_check = false;
                     let is_target = |expr: &Expression| -> bool {
                         match (expr, target) {
-                            (Expression::Value(Value::Variable(v1)), AssignTarget::Binding(Binding::Variable(v2))) => v1 == v2,
-                            (Expression::Value(Value::Register(r1)), AssignTarget::Binding(Binding::Register(r2))) => r1 == r2,
+                            (Expression::Value(Value::Binding(Binding::Variable(v1))), AssignTarget::Binding(Binding::Variable(v2))) => v1 == v2,
+                            (Expression::Value(Value::Binding(Binding::Register(r1))), AssignTarget::Binding(Binding::Register(r2))) => r1 == r2,
                             _ => false,
                         }
                     };

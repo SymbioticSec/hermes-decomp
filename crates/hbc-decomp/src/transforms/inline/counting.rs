@@ -36,7 +36,7 @@ impl<'a, 'c> Visitor<'a> for VarCounter<'c> {
     }
 
     fn visit_expression(&mut self, expr: &'a Expression) {
-        if let Expression::Value(Value::Variable(name)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Variable(name))) = expr {
             *self.uses.entry(name.clone()).or_insert(0) += 1;
         }
         // Don't recurse into function bodies
@@ -61,7 +61,7 @@ struct VarSubstitutor<'p> {
 impl<'p> MutVisitor for VarSubstitutor<'p> {
     fn visit_expression(&mut self, expr: &mut Expression) {
         self.walk_expression(expr);
-        if let Expression::Value(Value::Variable(name)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Variable(name))) = expr {
             if let Some(replacement) = self.pending.get(name) {
                 *expr = replacement.clone();
             }
@@ -131,7 +131,7 @@ fn remove_used_from_pending(expr: &Expression, pending: &mut BTreeMap<String, Ex
     }
     impl<'a> Visitor<'a> for UsedVarCollector {
         fn visit_expression(&mut self, expr: &'a Expression) {
-            if let Expression::Value(Value::Variable(name)) = expr {
+            if let Expression::Value(Value::Binding(Binding::Variable(name))) = expr {
                 self.names.push(name.clone());
             }
             self.walk_expression(expr);

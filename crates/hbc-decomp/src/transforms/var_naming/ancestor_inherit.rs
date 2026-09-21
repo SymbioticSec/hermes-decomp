@@ -136,7 +136,7 @@ fn collect_names(stmts: &[Statement], all: &mut HashSet<String>, closures: &mut 
     struct C<'a>(&'a mut HashSet<String>, &'a mut HashSet<String>);
     impl<'b> Visitor<'b> for C<'_> {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) = e {
                 self.0.insert(n.clone());
                 if n.starts_with("closure_") {
                     self.1.insert(n.clone());

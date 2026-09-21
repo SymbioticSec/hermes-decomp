@@ -134,7 +134,7 @@ fn infer_name_from_definition(expr: &Expression) -> Option<String> {
 // Infer name from a `new X()` constructor call.
 fn infer_from_new_call(callee: &Expression) -> Option<String> {
     let name = match callee {
-        Expression::Value(Value::Variable(n)) => n.as_str(),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => n.as_str(),
         Expression::Member { property, .. } => {
             if let PropertyKey::Ident(n) = property { n.as_str() } else { return None; }
         }
@@ -159,9 +159,9 @@ fn infer_from_new_call(callee: &Expression) -> Option<String> {
 fn infer_from_call(callee: &Expression, arguments: &[Expression]) -> Option<String> {
     // Symbol("name") → nameSymbol
     let is_symbol = match callee {
-        Expression::Value(Value::Variable(n)) => n == "Symbol",
+        Expression::Value(Value::Binding(Binding::Variable(n))) => n == "Symbol",
         Expression::Member { object, property, .. } => {
-            matches!(&**object, Expression::Value(Value::Variable(n)) if n == "Symbol")
+            matches!(&**object, Expression::Value(Value::Binding(Binding::Variable(n))) if n == "Symbol")
                 && matches!(property, PropertyKey::Ident(p) if p == "for")
         }
         _ => false,
@@ -183,14 +183,14 @@ fn infer_from_call(callee: &Expression, arguments: &[Expression]) -> Option<Stri
                 return Some("context".to_string());
             }
             if method == "create" {
-                if let Expression::Value(Value::Variable(obj_name)) = &**object {
+                if let Expression::Value(Value::Binding(Binding::Variable(obj_name))) = &**object {
                     if obj_name.contains("StyleSheet") {
                         return Some("styles".to_string());
                     }
                 }
             }
             if method == "default" {
-                if let Expression::Value(Value::Variable(obj_name)) = &**object {
+                if let Expression::Value(Value::Binding(Binding::Variable(obj_name))) = &**object {
                     if obj_name.contains("PrivateField") || obj_name.contains("privateField") {
                         if let Some(field_name) = arguments.first().and_then(extract_string_value) {
                             let sanitized = super::suggestions::sanitize_name(&field_name);
@@ -224,7 +224,7 @@ fn infer_from_member(object: &Expression, property: &PropertyKey) -> Option<Stri
     }
 
     if prop == "default" {
-        if let Expression::Value(Value::Variable(obj_name)) = object {
+        if let Expression::Value(Value::Binding(Binding::Variable(obj_name))) = object {
             if !is_closure_name(obj_name) && !is_generic_var_name(obj_name) && obj_name.len() <= 25 {
                 return Some(obj_name.clone());
             }

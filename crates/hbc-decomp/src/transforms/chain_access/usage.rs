@@ -28,7 +28,7 @@ impl<'a, 'c> Visitor<'a> for DefCounter<'c> {
     fn visit_expression(&mut self, expr: &'a Expression) {
         // A compound write target (e.g. inside Expression::Assignment) is a def.
         if let Expression::Assignment { target, .. } = expr {
-            if let Expression::Value(Value::Register(r)) = &**target {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = &**target {
                 *self.counts.entry(*r).or_insert(0) += 1;
             }
         }
@@ -48,7 +48,7 @@ struct RegisterCounter<'c> {
 
 impl<'a, 'c> Visitor<'a> for RegisterCounter<'c> {
     fn visit_expression(&mut self, expr: &'a Expression) {
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             *self.counts.entry(*r).or_insert(0) += 1;
         }
         self.walk_expression(expr);

@@ -49,7 +49,7 @@ impl PipelineContext {
             fn visit_expression(&mut self, e: &crate::ir::Expression) {
                 if matches!(
                     e,
-                    crate::ir::Expression::Value(crate::ir::Value::ClosureVar { .. })
+                    crate::ir::Expression::Value(crate::ir::Value::Binding(Binding::ClosureVar{ .. }))
                 ) {
                     self.0 = true;
                     return;

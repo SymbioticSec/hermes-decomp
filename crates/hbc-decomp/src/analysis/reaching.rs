@@ -138,7 +138,7 @@ mod tests {
             0,
             Expression::constant(Constant::Integer(1)),
         ));
-        builder.emit_return(Some(Expression::Value(Value::Register(0))));
+        builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(0)))));
 
         let cfg = builder.finish();
         let reaching = ReachingDefs::analyze(&cfg);

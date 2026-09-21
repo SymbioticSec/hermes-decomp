@@ -51,12 +51,12 @@ fn inline_in_target(target: AssignTarget, to_inline: &BTreeMap<u32, Expression>)
 
 fn inline_in_expr(expr: Expression, to_inline: &BTreeMap<u32, Expression>) -> Expression {
     match expr {
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
             if let Some(replacement) = to_inline.get(&r) {
                 // Recursively inline in case of nested chains
                 inline_in_expr(replacement.clone(), to_inline)
             } else {
-                Expression::Value(Value::Register(r))
+                Expression::Value(Value::Binding(crate::ir::Binding::Register(r)))
             }
         }
         Expression::Binary { op, left, right } => Expression::Binary {

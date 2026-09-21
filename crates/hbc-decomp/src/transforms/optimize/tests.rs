@@ -7,7 +7,7 @@ mod tests {
     #[test]
     fn test_invert_empty_if() {
         let stmt = Statement::If {
-            condition: Expression::Value(Value::Register(0)),
+            condition: Expression::Value(Value::Binding(crate::ir::Binding::Register(0))),
             then_body: vec![],
             else_body: vec![Statement::Return(Some(Expression::constant(Constant::Integer(1))))],
         };
@@ -28,7 +28,7 @@ mod tests {
     #[test]
     fn test_detect_ternary() {
         let stmts = vec![Statement::If {
-            condition: Expression::Value(Value::Register(0)),
+            condition: Expression::Value(Value::Binding(crate::ir::Binding::Register(0))),
             then_body: vec![Statement::assign_reg(1, Expression::constant(Constant::Integer(10)))],
             else_body: vec![Statement::assign_reg(1, Expression::constant(Constant::Integer(20)))],
         }];

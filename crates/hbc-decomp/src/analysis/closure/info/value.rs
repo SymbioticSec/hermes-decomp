@@ -24,13 +24,13 @@ pub fn value_from_expr(
             // Dedicated variant, only exclusive-RegExp slots become re{N}.
             Some(ClosureSlotValue::RegExp)
         }
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
             reg_values.and_then(|rv| rv.get(r).cloned())
         }
         Expression::Value(Value::Constant(c)) => {
             Some(ClosureSlotValue::Constant(format!("{c}")))
         }
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
             Some(ClosureSlotValue::Variable(name.clone()))
         }
         Expression::Value(Value::Parameter(i)) => {
@@ -43,10 +43,10 @@ pub fn value_from_expr(
             if let Some(prop) = ident_from_property_key(property) {
                 if prop == "default" {
                     match &**object {
-                        Expression::Value(Value::Variable(name)) => {
+                        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
                             return Some(ClosureSlotValue::Variable(name.clone()));
                         }
-                        Expression::Value(Value::Register(r)) => {
+                        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
                             if let Some(rv) = reg_values {
                                 if let Some(ClosureSlotValue::Variable(name)) = rv.get(r) {
                                     return Some(ClosureSlotValue::Variable(name.clone()));

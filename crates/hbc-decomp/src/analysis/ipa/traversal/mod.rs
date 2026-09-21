@@ -119,7 +119,7 @@ fn collect_value_exprs(stmt: &Statement, out: &mut HashMap<String, Expression>) 
 }
 
 fn collect_value_definition(key: &str, value: &Expression, defs: &mut HashMap<String, Definition>) {
-    if let Expression::Value(Value::Variable(name)) = value {
+    if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = value {
         if is_known_require_name(name) || matches!(defs.get(name), Some(Definition::RequireAlias)) {
             defs.insert(key.to_string(), Definition::RequireAlias);
             return;
@@ -187,13 +187,13 @@ fn extract_require_call(expr: &Expression, defs: &HashMap<String, Definition>) -
         };
         if let Expression::Value(Value::Constant(crate::ir::Constant::Integer(n))) = id_arg {
             match callee.as_ref() {
-                Expression::Value(Value::Variable(name))
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(name)))
                     if is_known_require_name(name)
                         || matches!(defs.get(name), Some(Definition::RequireAlias)) =>
                 {
                     return Some(*n as u32)
                 }
-                Expression::Value(Value::Register(r))
+                Expression::Value(Value::Binding(crate::ir::Binding::Register(r)))
                     if matches!(defs.get(&format!("r{r}")), Some(Definition::RequireAlias)) =>
                 {
                     return Some(*n as u32)
@@ -214,8 +214,8 @@ fn is_known_require_name(name: &str) -> bool {
 // `checkProfile.default.loginWithToken(...)` is greppable in the trace.
 fn callee_trace_name(callee: &Expression) -> String {
     match callee {
-        Expression::Value(Value::Variable(n)) => format!("{n}()"),
-        Expression::Value(Value::Register(r)) => format!("r{r}()"),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => format!("{n}()"),
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => format!("r{r}()"),
         Expression::Function { id, .. } => format!("fn{}()", id.0),
         Expression::Member { object, property, .. } => {
             let prop = match property {
@@ -224,7 +224,7 @@ fn callee_trace_name(callee: &Expression) -> String {
                 PropertyKey::Computed(_) => "[computed]".to_string(),
             };
             match object.as_ref() {
-                Expression::Value(Value::Variable(n)) => format!("{n}.{prop}()"),
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => format!("{n}.{prop}()"),
                 Expression::Member { property: PropertyKey::String(b) | PropertyKey::Ident(b), .. } => {
                     format!("{b}.{prop}()")
                 }

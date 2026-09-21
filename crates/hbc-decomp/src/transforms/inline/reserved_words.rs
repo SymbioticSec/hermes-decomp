@@ -97,7 +97,7 @@ fn rename_reserved_in_target(target: &mut AssignTarget) {
 
 fn rename_reserved_in_expr(expr: &mut Expression) {
     match expr {
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(Binding::Variable(name))) => {
             if is_reserved(name) {
                 *name = format!("_{name}");
             }

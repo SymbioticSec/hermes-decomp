@@ -205,7 +205,7 @@ fn record_object_key_for_value(
     value: &Expression,
     usage: &mut BTreeMap<String, ClosureUsageInfo>,
 ) {
-    if let Expression::Value(Value::Variable(name)) = value {
+    if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = value {
         if is_closure_name(name) {
             usage
                 .entry(name.clone())
@@ -312,7 +312,7 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
     match expr {
         // closure_N.property (read) or closure_N[k] (index)
         Expression::Member { object, property, .. } => {
-            if let Expression::Value(Value::Variable(name)) = &**object {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**object {
                 if is_closure_name(name) {
                     match property {
                         PropertyKey::Index(_) | PropertyKey::Computed(_) => {
@@ -339,7 +339,7 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
         Expression::Call { callee, arguments } => {
             // Check for closure_N.method(args), method call
             if let Expression::Member { object, property, .. } = &**callee {
-                if let Expression::Value(Value::Variable(name)) = &**object {
+                if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**object {
                     if is_closure_name(name) {
                         match property {
                             // closure_N[i](…), indexed table / TurboModule shape
@@ -365,7 +365,7 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
                 }
             }
             // Check for closure_N(args), bare call
-            if let Expression::Value(Value::Variable(name)) = &**callee {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**callee {
                 if is_closure_name(name) {
                     usage.entry(name.clone()).or_default().called_as_function = true;
                 }
@@ -414,7 +414,7 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
             collect_closure_usage_in_expr(value, usage);
         }
         Expression::Spread(inner) => {
-            if let Expression::Value(Value::Variable(name)) = inner.as_ref() {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = inner.as_ref() {
                 if is_closure_name(name) {
                     usage.entry(name.clone()).or_default().spread = true;
                 }

@@ -146,7 +146,7 @@ fn iterator_begin(stmt: &Statement) -> Option<(u32, Expression)> {
                         c.as_ref()
                     {
                         if p == "iterator"
-                            && matches!(sym.as_ref(), Expression::Value(Value::Variable(s)) if s == "Symbol")
+                            && matches!(sym.as_ref(), Expression::Value(Value::Binding(Binding::Variable(s))) if s == "Symbol")
                         {
                             return Some((*r, (**object).clone()));
                         }
@@ -192,7 +192,7 @@ fn legacy_iterator_begin(
 
 fn reg_of(e: &Expression) -> Option<u32> {
     match e {
-        Expression::Value(Value::Register(r)) => Some(*r),
+        Expression::Value(Value::Binding(Binding::Register(r))) => Some(*r),
         _ => None,
     }
 }
@@ -232,7 +232,7 @@ fn is_iter_next(value: &Expression, iter_reg: u32) -> bool {
                 callee.as_ref()
             {
                 return p == "next"
-                    && matches!(object.as_ref(), Expression::Value(Value::Register(r)) if *r == iter_reg);
+                    && matches!(object.as_ref(), Expression::Value(Value::Binding(Binding::Register(r))) if *r == iter_reg);
             }
         }
     }
@@ -252,12 +252,12 @@ fn is_iter_return(stmt: &Statement, iter_reg: u32) -> bool {
                 callee.as_ref(),
                 Expression::Member { object, property: PropertyKey::Ident(p), .. }
                     if p == "return"
-                        && matches!(object.as_ref(), Expression::Value(Value::Register(r)) if *r == iter_reg)
+                        && matches!(object.as_ref(), Expression::Value(Value::Binding(Binding::Register(r))) if *r == iter_reg)
             )
         }
         Expression::Member { object, property: PropertyKey::Ident(p), .. } => {
             p == "return"
-                && matches!(object.as_ref(), Expression::Value(Value::Register(r)) if *r == iter_reg)
+                && matches!(object.as_ref(), Expression::Value(Value::Binding(Binding::Register(r))) if *r == iter_reg)
         }
         _ => false,
     }
@@ -291,7 +291,7 @@ fn registers_used_in(stmts: &[Statement]) -> HashSet<u32> {
     struct C(HashSet<u32>);
     impl<'b> Visitor<'b> for C {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Register(r)) = e {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = e {
                 self.0.insert(*r);
             }
             self.walk_expression(e);
@@ -370,7 +370,7 @@ impl WalkState<'_> {
                         continue;
                     }
 
-                    if let Expression::Value(Value::Register(src)) = value {
+                    if let Expression::Value(Value::Binding(Binding::Register(src))) = value {
                         // Copy: dst inherits src's element (if any).
                         if let Some(&idx) = self.reg_to_elem.get(src) {
                             self.reg_to_elem.insert(*dst, idx);

@@ -87,7 +87,7 @@ fn looks_like_state_machine(stmt: &Statement) -> bool {
             right,
         } = condition
         {
-            if matches!(left.as_ref(), Expression::Value(Value::Register(_)))
+            if matches!(left.as_ref(), Expression::Value(Value::Binding(Binding::Register(_))))
                 && matches!(
                     right.as_ref(),
                     Expression::Value(Value::Constant(Constant::Integer(_)))
@@ -247,7 +247,7 @@ mod tests {
         let stmt = Statement::If {
             condition: Expression::Binary {
                 op: BinaryOp::StrictEq,
-                left: Box::new(Expression::Value(Value::Register(0))),
+                left: Box::new(Expression::Value(Value::Binding(Binding::Register(0)))),
                 right: Box::new(Expression::Value(Value::Constant(Constant::Integer(0)))),
             },
             then_body: vec![Statement::Return(Some(Expression::Value(Value::Constant(
@@ -256,7 +256,7 @@ mod tests {
             else_body: vec![Statement::If {
                 condition: Expression::Binary {
                     op: BinaryOp::StrictEq,
-                    left: Box::new(Expression::Value(Value::Register(0))),
+                    left: Box::new(Expression::Value(Value::Binding(Binding::Register(0)))),
                     right: Box::new(Expression::Value(Value::Constant(Constant::Integer(1)))),
                 },
                 then_body: vec![Statement::Return(Some(Expression::Value(Value::Constant(

@@ -257,7 +257,7 @@ struct UseCounter<'a> {
 
 impl<'a> Visitor<'a> for UseCounter<'a> {
     fn visit_expression(&mut self, expr: &'a Expression) {
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             *self.counts.entry(*r).or_insert(0) += 1;
         }
         self.walk_expression(expr);
@@ -277,7 +277,7 @@ impl<'a> Visitor<'a> for DefCounter<'a> {
     }
     fn visit_expression(&mut self, expr: &'a Expression) {
         if let Expression::Assignment { target, .. } = expr {
-            if let Expression::Value(Value::Register(r)) = &**target {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = &**target {
                 *self.counts.entry(*r).or_insert(0) += 1;
             }
         }
@@ -291,7 +291,7 @@ struct UseCollector<'a> {
 
 impl<'a> Visitor<'a> for UseCollector<'a> {
     fn visit_expression(&mut self, expr: &'a Expression) {
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             self.used.insert(*r);
         }
         self.walk_expression(expr);
@@ -305,7 +305,7 @@ struct Inliner<'a> {
 
 impl<'a> MutVisitor for Inliner<'a> {
     fn visit_expression(&mut self, expr: &mut Expression) {
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             if self.to_inline.contains(r) {
                 if let Some(val) = self.values.get(r) {
                     *expr = val.clone();
@@ -349,10 +349,10 @@ impl<'a> Visitor<'a> for TargetUseChecker<'a> {
         }
 
         match (expr, self.target) {
-            (Expression::Value(Value::Register(r1)), AssignTarget::Binding(Binding::Register(r2))) if r1 == r2 => {
+            (Expression::Value(Value::Binding(Binding::Register(r1))), AssignTarget::Binding(Binding::Register(r2))) if r1 == r2 => {
                 self.found = true
             }
-            (Expression::Value(Value::Variable(v1)), AssignTarget::Binding(Binding::Variable(v2))) if v1 == v2 => {
+            (Expression::Value(Value::Binding(Binding::Variable(v1))), AssignTarget::Binding(Binding::Variable(v2))) if v1 == v2 => {
                 self.found = true
             }
             _ => self.walk_expression(expr),

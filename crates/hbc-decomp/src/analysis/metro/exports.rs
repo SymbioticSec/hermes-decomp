@@ -59,14 +59,14 @@ impl<'a> ExpressionTracer<'a> {
             return expr;
         }
         match expr {
-            Expression::Value(Value::Variable(name)) => {
+            Expression::Value(Value::Binding(Binding::Variable(name))) => {
                 if let Some(def) = self.definitions.get(name) {
                     self.resolve_bounded(def, depth - 1)
                 } else {
                     expr
                 }
             }
-            Expression::Value(Value::Register(r)) => {
+            Expression::Value(Value::Binding(Binding::Register(r))) => {
                 let key = format!("r{r}");
                 if let Some(def) = self.definitions.get(&key) {
                     self.resolve_bounded(def, depth - 1)
@@ -272,8 +272,8 @@ fn get_base_and_prop(target: &AssignTarget) -> Option<(String, String)> {
 
 fn get_var_name(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Value(Value::Variable(n)) => Some(n.clone()),
-        Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => Some(n.clone()),
+        Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
         Expression::Value(Value::Parameter(idx)) => Some(format!("p{idx}")), // Normalized param name?
         // Note: Earlier pipeline/propagation normalization might have changed "argN" to "pN" or kept "argN".
         // We should check both or assume standard format. Old code checked "p2", "module".
@@ -308,7 +308,7 @@ mod tests {
         // exports.foo = func(10)
         stmts.push(Statement::Assign {
             target: AssignTarget::Member {
-                object: Expression::Value(Value::Variable("exports".into())),
+                object: Expression::Value(Value::Binding(Binding::Variable("exports".into()))),
                 property: "foo".into(),
             },
             value: make_func_expr(10),
@@ -318,7 +318,7 @@ mod tests {
         stmts.push(Statement::Assign {
             target: AssignTarget::Member {
                 object: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Variable("module".into()))),
+                    object: Box::new(Expression::Value(Value::Binding(Binding::Variable("module".into())))),
                     property: PropertyKey::String("exports".into()),
                     optional: false,
                 },
@@ -330,7 +330,7 @@ mod tests {
         // module.exports = { baz: func(30) }
         stmts.push(Statement::Assign {
             target: AssignTarget::Member {
-                object: Expression::Value(Value::Variable("module".into())),
+                object: Expression::Value(Value::Binding(Binding::Variable("module".into()))),
                 property: "exports".into(),
             },
             value: Expression::Object {

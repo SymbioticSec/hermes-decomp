@@ -93,7 +93,7 @@ fn is_put_index(stmt: &Statement, arr_reg: u32) -> Option<(u32, Expression)> {
     if let Statement::Assign {
         target:
             AssignTarget::Index {
-                object: Expression::Value(Value::Register(r)),
+                object: Expression::Value(Value::Binding(Binding::Register(r))),
                 key,
             },
         value,

@@ -323,7 +323,7 @@ fn param_index_from_slot_store_stmt(
 fn param_index_of_expr(value: &Expression, param_names: Option<&[Option<String>]>) -> Option<u32> {
     match value {
         Expression::Value(Value::Parameter(idx)) => Some(*idx),
-        Expression::Value(Value::Variable(n)) => {
+        Expression::Value(Value::Binding(Binding::Variable(n))) => {
             if let Some(idx) = FactoryRoles::extract_param_index(n) {
                 return Some(idx);
             }
@@ -534,7 +534,7 @@ impl<'a> Visitor<'a> for ObjectKeyHits {
 impl ObjectKeyHits {
     fn record(&mut self, key: String, value: &Expression) {
         match value {
-            Expression::Value(Value::Variable(n)) => self.0.push(ObjectKeyHit {
+            Expression::Value(Value::Binding(Binding::Variable(n))) => self.0.push(ObjectKeyHit {
                 key,
                 var: Some(n.clone()),
                 param: None,
@@ -710,7 +710,7 @@ fn collect_names_in_stmt(stmt: &Statement, names: &mut std::collections::HashSet
 
 fn collect_names_in_expr(expr: &Expression, names: &mut std::collections::HashSet<String>) {
     match expr {
-        Expression::Value(Value::Variable(v)) => {
+        Expression::Value(Value::Binding(Binding::Variable(v))) => {
             if !is_closure_name(v) {
                 names.insert(v.clone());
             }
@@ -760,7 +760,7 @@ mod tests {
     use crate::ir::{ObjectProperty, PropertyKey};
 
     fn var(name: &str) -> Expression {
-        Expression::Value(Value::Variable(name.to_string()))
+        Expression::Value(Value::Binding(Binding::Variable(name.to_string())))
     }
 
     fn object_with(key: &str, value: Expression) -> Expression {

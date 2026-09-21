@@ -32,7 +32,7 @@ fn escape_js_string(s: &str) -> String {
 // The `#field` name behind a computed key, when the key is just that name. Any
 // other computed expression keeps bracket syntax.
 pub fn private_field_name(expr: &Expression) -> Option<&str> {
-    let Expression::Value(crate::ir::Value::Variable(name)) = expr else {
+    let Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(name))) = expr else {
         return None;
     };
     let rest = name.strip_prefix('#')?;
@@ -123,7 +123,7 @@ fn format_property(prop: &super::ObjectProperty) -> String {
     use crate::ir::Value;
 
     if let PropertyKey::Ident(key_name) = &prop.key {
-        if let Expression::Value(Value::Variable(var_name)) = &prop.value {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(var_name))) = &prop.value {
             if key_name == var_name {
                 return key_name.clone();
             }
@@ -166,7 +166,7 @@ fn format_call(callee: &Expression, arguments: &[Expression], extra_suffix: &str
             first,
             Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::Undefined))
             | Expression::Value(crate::ir::Value::Global)
-        ) || matches!(first, Expression::Value(crate::ir::Value::Variable(v)) if v == "globalThis");
+        ) || matches!(first, Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis");
 
         if is_trivial_this {
             format!("{}({}){}", callee_str, join_exprs(rest), extra_suffix)
@@ -222,7 +222,7 @@ pub fn format_expr(expr: &Expression) -> String {
                         }
                     }
                 }
-                if let Expression::Value(crate::ir::Value::Variable(v)) = &**object {
+                if let Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(v))) = &**object {
                     if v == "globalThis" {
                         if let PropertyKey::Ident(name) = property {
                             if is_builtin_global(name) {
@@ -381,7 +381,7 @@ mod tests {
         // Ensure format_expr and Display produce identical output
         let expr = Expression::binary(
             BinaryOp::Add,
-            Expression::Value(Value::Register(0)),
+            Expression::Value(Value::Binding(crate::ir::Binding::Register(0))),
             Expression::Value(Value::Constant(Constant::Integer(42))),
         );
         assert_eq!(format_expr(&expr), format!("{expr}"));
@@ -418,13 +418,13 @@ mod tests {
     fn special_property_names_use_brackets() {
         use crate::ir::Value;
         let expr = Expression::Member {
-            object: Box::new(Expression::Value(Value::Variable("obj".into()))),
+            object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj".into())))),
             property: PropertyKey::Ident("#private".into()),
             optional: false,
         };
         assert_eq!(format!("{expr}"), "obj[\"#private\"]");
         let expr = Expression::Member {
-            object: Box::new(Expression::Value(Value::Variable("obj".into()))),
+            object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj".into())))),
             property: PropertyKey::Ident("@wry/context:Slot".into()),
             optional: false,
         };

@@ -79,7 +79,7 @@ fn collect_param_props_expr(
         Expression::Member { object, property: PropertyKey::Ident(prop), .. } => {
             let param_idx = match &**object {
                 Expression::Value(Value::Parameter(idx)) => Some(*idx),
-                Expression::Value(Value::Variable(name)) => FactoryRoles::extract_param_index(name),
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => FactoryRoles::extract_param_index(name),
                 _ => None,
             };
             if let Some(idx) = param_idx {

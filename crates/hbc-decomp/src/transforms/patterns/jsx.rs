@@ -82,7 +82,7 @@ fn rewrite_stmt_calls(stmt: &mut Statement, objects: &BTreeMap<String, Expressio
 fn subst_jsx_props_in_expr(expr: &mut Expression, objects: &BTreeMap<String, Expression>) {
     match expr {
         Expression::Call { callee, arguments } if is_jsx_call(callee) && arguments.len() >= 2 => {
-            if let Expression::Value(Value::Variable(name)) = &arguments[1] {
+            if let Expression::Value(Value::Binding(Binding::Variable(name))) = &arguments[1] {
                 if let Some(obj) = objects.get(name) {
                     arguments[1] = obj.clone();
                 }
@@ -178,7 +178,7 @@ fn jsx_factory_name(callee: &Expression) -> Option<&str> {
             property: PropertyKey::Ident(p) | PropertyKey::String(p),
             ..
         } => p.as_str(),
-        Expression::Value(Value::Variable(n)) => n.as_str(),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => n.as_str(),
         _ => return None,
     };
     // Strip leading underscores and common runtime prefixes.
@@ -214,9 +214,9 @@ fn build_jsx_element(callee: &Expression, arguments: &[Expression]) -> Option<Ex
     // valid JSX tag forms, leave those as jsx()/createElement() calls.
     let tag_name = match &arguments[0] {
         Expression::Value(Value::Constant(Constant::String(s))) => s.clone(),
-        Expression::Value(Value::Variable(v)) => v.clone(),
+        Expression::Value(Value::Binding(Binding::Variable(v))) => v.clone(),
         Expression::Member { object, property, .. } => {
-            if let (Expression::Value(Value::Variable(obj_name)), PropertyKey::Ident(prop_name)) =
+            if let (Expression::Value(Value::Binding(Binding::Variable(obj_name))), PropertyKey::Ident(prop_name)) =
                 (object.as_ref(), property)
             {
                 format!("{obj_name}.{prop_name}")
@@ -323,7 +323,7 @@ mod tests {
     fn test_classic_jsx_element() {
         let mut expr = Expression::call(
             Expression::member(
-                Expression::Value(Value::Variable("React".to_string())),
+                Expression::Value(Value::Binding(Binding::Variable("React".to_string()))),
                 "createElement",
             ),
             vec![
@@ -355,10 +355,10 @@ mod tests {
                 kind: VarKind::Let,
             },
             Statement::Expr(Expression::call(
-                Expression::Value(Value::Variable("_jsx".into())),
+                Expression::Value(Value::Binding(Binding::Variable("_jsx".into()))),
                 vec![
                     Expression::constant(Constant::String("div".into())),
-                    Expression::Value(Value::Variable("p".into())),
+                    Expression::Value(Value::Binding(Binding::Variable("p".into()))),
                 ],
             )),
         ];
@@ -375,16 +375,16 @@ mod tests {
     #[test]
     fn test_modern_key_third_arg() {
         let mut expr = Expression::call(
-            Expression::Value(Value::Variable("_jsx".into())),
+            Expression::Value(Value::Binding(Binding::Variable("_jsx".into()))),
             vec![
-                Expression::Value(Value::Variable("Foo".into())),
+                Expression::Value(Value::Binding(Binding::Variable("Foo".into()))),
                 Expression::Object {
                     properties: vec![ObjectProperty {
                         key: PropertyKey::Ident("title".into()),
                         value: Expression::constant(Constant::String("x".into())),
                     }],
                 },
-                Expression::Value(Value::Variable("k".into())),
+                Expression::Value(Value::Binding(Binding::Variable("k".into()))),
             ],
         );
         JSXReconstructor::new().visit_expression(&mut expr);
@@ -399,14 +399,14 @@ mod tests {
     #[test]
     fn test_fragment_empty_tag() {
         let mut expr = Expression::call(
-            Expression::Value(Value::Variable("jsxs".into())),
+            Expression::Value(Value::Binding(Binding::Variable("jsxs".into()))),
             vec![
-                Expression::Value(Value::Variable("_Fragment".into())),
+                Expression::Value(Value::Binding(Binding::Variable("_Fragment".into()))),
                 Expression::Object {
                     properties: vec![ObjectProperty {
                         key: PropertyKey::Ident("children".into()),
                         value: Expression::Array {
-                            elements: vec![Some(Expression::Value(Value::Variable("a".into())))],
+                            elements: vec![Some(Expression::Value(Value::Binding(Binding::Variable("a".into()))))],
                         },
                     }],
                 },
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn test_modern_jsx_member_factory() {
         let mut expr = Expression::call(
-            Expression::member(Expression::Value(Value::Variable("jsxProd".into())), "jsxs"),
+            Expression::member(Expression::Value(Value::Binding(Binding::Variable("jsxProd".into()))), "jsxs"),
             vec![
                 Expression::constant(Constant::String("ul".into())),
                 Expression::Object {
@@ -438,8 +438,8 @@ mod tests {
                             key: PropertyKey::Ident("children".into()),
                             value: Expression::Array {
                                 elements: vec![
-                                    Some(Expression::Value(Value::Variable("a".into()))),
-                                    Some(Expression::Value(Value::Variable("b".into()))),
+                                    Some(Expression::Value(Value::Binding(Binding::Variable("a".into())))),
+                                    Some(Expression::Value(Value::Binding(Binding::Variable("b".into())))),
                                 ],
                             },
                         },

@@ -54,7 +54,7 @@ fn existing_names(stmts: &[Statement]) -> std::collections::HashSet<String> {
     struct C<'a>(&'a mut std::collections::HashSet<String>);
     impl<'b> Visitor<'b> for C<'_> {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) = e {
                 self.0.insert(n.clone());
             }
             self.walk_expression(e);
@@ -101,10 +101,10 @@ mod tests {
             },
             Statement::Assign {
                 target: AssignTarget::Member {
-                    object: Expression::Value(Value::Variable("obj".to_string())),
+                    object: Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj".to_string()))),
                     property: "variations".to_string(),
                 },
-                value: Expression::Value(Value::Variable("obj1".to_string())),
+                value: Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj1".to_string()))),
             },
         ];
         let out = infer_variable_names(stmts);
@@ -125,8 +125,8 @@ mod tests {
         let stmts = vec![Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Call {
-                callee: Box::new(Expression::Value(Value::Variable("fetch".to_string()))),
-                arguments: vec![Expression::Value(Value::Variable("url".to_string()))],
+                callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("fetch".to_string())))),
+                arguments: vec![Expression::Value(Value::Binding(crate::ir::Binding::Variable("url".to_string())))],
             },
         }];
 
@@ -145,7 +145,7 @@ mod tests {
         let stmts = vec![Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Member {
-                object: Box::new(Expression::Value(Value::Variable("obj".to_string()))),
+                object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj".to_string())))),
                 property: PropertyKey::Ident("length".to_string()),
                 optional: false,
             },
@@ -168,11 +168,11 @@ mod tests {
                 properties: vec![
                     crate::ir::ObjectProperty {
                         key: PropertyKey::Ident("url".into()),
-                        value: Expression::Value(Value::Variable("u".into())),
+                        value: Expression::Value(Value::Binding(crate::ir::Binding::Variable("u".into()))),
                     },
                     crate::ir::ObjectProperty {
                         key: PropertyKey::Ident("query".into()),
-                        value: Expression::Value(Value::Variable("q".into())),
+                        value: Expression::Value(Value::Binding(crate::ir::Binding::Variable("q".into()))),
                     },
                 ],
             },
@@ -194,7 +194,7 @@ mod tests {
         let stmts = vec![Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::New {
-                callee: Box::new(Expression::Value(Value::Variable("Date".to_string()))),
+                callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("Date".to_string())))),
                 arguments: vec![],
             },
         }];
@@ -215,8 +215,8 @@ mod tests {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Binary {
                 op: crate::ir::BinaryOp::Add,
-                left: Box::new(Expression::Value(Value::Variable("a".to_string()))),
-                right: Box::new(Expression::Value(Value::Variable("b".to_string()))),
+                left: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("a".to_string())))),
+                right: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("b".to_string())))),
             },
         }];
 
@@ -235,7 +235,7 @@ mod tests {
         let stmts = vec![Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Member {
-                object: Box::new(Expression::Value(Value::Variable("items".to_string()))),
+                object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("items".to_string())))),
                 property: PropertyKey::Index(0),
                 optional: false,
             },
@@ -257,14 +257,14 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Variable("fetch".to_string()))),
+                    callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("fetch".to_string())))),
                     arguments: vec![],
                 },
             },
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Variable("fetch".to_string()))),
+                    callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("fetch".to_string())))),
                     arguments: vec![],
                 },
             },

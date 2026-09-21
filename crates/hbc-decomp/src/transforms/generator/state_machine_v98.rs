@@ -224,7 +224,7 @@ fn collect_state_vars(body: &[Statement]) -> std::collections::HashSet<String> {
             if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = e {
                 for (a, b) in [(left, right), (right, left)] {
                     if int_const(a).is_some() {
-                        if let Expression::Value(Value::Variable(n)) = b.as_ref() {
+                        if let Expression::Value(Value::Binding(Binding::Variable(n))) = b.as_ref() {
                             self.0.insert(n.clone());
                         }
                     }
@@ -357,7 +357,7 @@ fn is_bookkeeping(s: &Statement, state_vars: &std::collections::HashSet<String>)
         if matches!(value, Expression::Value(Value::Constant(Constant::Undefined))) {
             return true;
         }
-        if let Expression::Value(Value::Variable(src)) = value {
+        if let Expression::Value(Value::Binding(Binding::Variable(src))) = value {
             if state_vars.contains(src) {
                 return true;
             }
@@ -382,7 +382,7 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
     // folding used to turn the 3-statement form below into this, which made the
     // whole generator pass bail and leave the raw v98 state machine in the dump.
     if stmts.len() >= 2 {
-        if let Statement::Return(Some(Expression::Value(Value::Variable(o2)))) = &stmts[1] {
+        if let Statement::Return(Some(Expression::Value(Value::Binding(Binding::Variable(o2))))) = &stmts[1] {
             if let Some((o1, obj_expr)) = assigned_object(&stmts[0]) {
                 if o1 == o2 {
                     if let Some((v, d)) = parse_result_object(obj_expr) {
@@ -397,10 +397,10 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
         if let (
             Statement::Assign { target: AssignTarget::Binding(Binding::Variable(o1)), value: Expression::Object { properties } },
             Statement::Assign { target: value_target, value: real_value },
-            Statement::Return(Some(Expression::Value(Value::Variable(o3)))),
+            Statement::Return(Some(Expression::Value(Value::Binding(Binding::Variable(o3))))),
         ) = (&stmts[0], &stmts[1], &stmts[2])
         {
-            let obj_is = |e: &Expression, name: &str| matches!(e, Expression::Value(Value::Variable(v)) if v == name);
+            let obj_is = |e: &Expression, name: &str| matches!(e, Expression::Value(Value::Binding(Binding::Variable(v))) if v == name);
             // The fill of the `value` slot reaches here either as the raw slot
             // index the bytecode emits or, once slot indexes have been renamed
             // against the object shape, as the named member. Both are the same
@@ -541,7 +541,7 @@ fn is_var(e: &Expression) -> bool {
     // this stage are `ClosureVar`; a `tmp` copy of the label is a plain Variable.
     matches!(
         e,
-        Expression::Value(Value::Variable(_)) | Expression::Value(Value::ClosureVar { .. })
+        Expression::Value(Value::Binding(Binding::Variable(_))) | Expression::Value(Value::Binding(Binding::ClosureVar{ .. }))
     )
 }
 
@@ -648,7 +648,7 @@ mod tests {
     use crate::ir::ObjectProperty;
 
     fn var(n: &str) -> Expression {
-        Expression::Value(Value::Variable(n.into()))
+        Expression::Value(Value::Binding(Binding::Variable(n.into())))
     }
     fn param(i: u32) -> Expression {
         Expression::Value(Value::Parameter(i))

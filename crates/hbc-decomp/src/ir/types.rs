@@ -90,11 +90,7 @@ impl fmt::Display for Binding {
 
 impl From<Binding> for Value {
     fn from(b: Binding) -> Self {
-        match b {
-            Binding::Register(r) => Value::Register(r),
-            Binding::Variable(n) => Value::Variable(n),
-            Binding::ClosureVar { level, slot } => Value::ClosureVar { level, slot },
-        }
+        Value::Binding(b)
     }
 }
 
@@ -103,12 +99,7 @@ impl Value {
     /// or `arguments` designates no storage location and yields `None`.
     pub fn as_binding(&self) -> Option<Binding> {
         match self {
-            Value::Register(r) => Some(Binding::Register(*r)),
-            Value::Variable(n) => Some(Binding::Variable(n.clone())),
-            Value::ClosureVar { level, slot } => Some(Binding::ClosureVar {
-                level: *level,
-                slot: *slot,
-            }),
+            Value::Binding(b) => Some(b.clone()),
             _ => None,
         }
     }
@@ -116,13 +107,13 @@ impl Value {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
-    Register(u32),
-    Variable(String),
+    /// A read of a named location: a register, a variable or an environment
+    /// slot. Everything else here designates no storage at all.
+    Binding(Binding),
     Constant(Constant),
     This,
     Global,
     Parameter(u32),
-    ClosureVar { level: u32, slot: u32 },
     Arguments,
     NewTarget,
     // The `super` keyword (ES6 class). Only valid inside a class method body;
@@ -150,19 +141,11 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Register(r) => write!(f, "r{r}"),
-            Value::Variable(name) => {
-                // Sanitize identifiers (handles @@symbols, invalid chars, etc.)
-                let sanitized = crate::util::sanitize_identifier(name);
-                write!(f, "{sanitized}")
-            }
+            Value::Binding(b) => write!(f, "{b}"),
             Value::Constant(c) => write!(f, "{c}"),
             Value::This => write!(f, "this"),
             Value::Global => write!(f, "globalThis"),
             Value::Parameter(i) => write!(f, "arg{i}"),
-            Value::ClosureVar { level, slot } => {
-                write!(f, "{}", Self::closure_var_name(*level, *slot))
-            }
             Value::Arguments => write!(f, "arguments"),
             Value::NewTarget => write!(f, "new.target"),
             Value::Super => write!(f, "super"),
@@ -176,13 +159,13 @@ mod binding_tests {
 
     #[test]
     fn a_value_that_reads_a_location_yields_its_binding() {
-        assert_eq!(Value::Register(5).as_binding(), Some(Binding::Register(5)));
+        assert_eq!(Value::Binding(Binding::Register(5)).as_binding(), Some(Binding::Register(5)));
         assert_eq!(
-            Value::Variable("env".into()).as_binding(),
+            Value::Binding(Binding::Variable("env".into())).as_binding(),
             Some(Binding::Variable("env".into()))
         );
         assert_eq!(
-            Value::ClosureVar { level: 1, slot: 2 }.as_binding(),
+            Value::Binding(Binding::ClosureVar{ level: 1, slot: 2 }).as_binding(),
             Some(Binding::ClosureVar { level: 1, slot: 2 })
         );
     }

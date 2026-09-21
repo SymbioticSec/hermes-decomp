@@ -71,8 +71,8 @@ pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
 fn is_trivial_value(e: &Expression) -> bool {
     use crate::ir::Constant;
     match e {
-        Expression::Value(Value::Variable(_))
-        | Expression::Value(Value::Register(_))
+        Expression::Value(Value::Binding(Binding::Variable(_)))
+        | Expression::Value(Value::Binding(Binding::Register(_)))
         | Expression::Value(Value::Parameter(_))
         | Expression::Value(Value::This) => true,
         Expression::Value(Value::Constant(c)) => !matches!(c, Constant::String(_) | Constant::BigInt(_)),
@@ -162,7 +162,7 @@ fn stmt_uses_variable(stmt: &Statement, name: &str) -> bool {
     }
     impl<'a> Visitor<'a> for V<'_> {
         fn visit_expression(&mut self, e: &'a Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(Binding::Variable(n))) = e {
                 if n == self.name {
                     self.found = true;
                 }
@@ -183,7 +183,7 @@ mod tests {
     fn call(name: &str) -> Expression {
         // A call has side effects by default in `has_side_effects`.
         Expression::Call {
-            callee: Box::new(Expression::Value(Value::Variable(name.into()))),
+            callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(name.into())))),
             arguments: vec![Expression::Value(Value::Constant(Constant::Integer(0)))],
         }
     }
@@ -207,8 +207,8 @@ mod tests {
         let stmts = vec![
             Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("f") },
             Statement::Expr(Expression::Call {
-                callee: Box::new(Expression::Value(Value::Variable("g".into()))),
-                arguments: vec![Expression::Value(Value::Variable("x".into()))],
+                callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("g".into())))),
+                arguments: vec![Expression::Value(Value::Binding(Binding::Variable("x".into())))],
             }),
         ];
         let out = remove_dead_assignments(stmts);
@@ -222,10 +222,10 @@ mod tests {
             Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("f") },
             Statement::Assign {
                 target: AssignTarget::Member {
-                    object: Expression::Value(Value::Variable("y".into())),
+                    object: Expression::Value(Value::Binding(Binding::Variable("y".into()))),
                     property: "k".into(),
                 },
-                value: Expression::Value(Value::Variable("x".into())),
+                value: Expression::Value(Value::Binding(Binding::Variable("x".into()))),
             },
             Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("g") },
         ];

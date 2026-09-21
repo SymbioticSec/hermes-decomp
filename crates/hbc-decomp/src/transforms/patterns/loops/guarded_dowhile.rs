@@ -212,7 +212,7 @@ fn has_labeled_jump(stmts: &[Statement]) -> bool {
 
 fn substitute_var(expr: Expression, var: &str, repl: &Expression) -> Expression {
     match expr {
-        Expression::Value(Value::Variable(ref n)) if n == var => repl.clone(),
+        Expression::Value(Value::Binding(Binding::Variable(ref n))) if n == var => repl.clone(),
         Expression::Binary { op, left, right } => Expression::Binary {
             op,
             left: Box::new(substitute_var(*left, var, repl)),
@@ -233,7 +233,7 @@ fn substitute_var(expr: Expression, var: &str, repl: &Expression) -> Expression 
 
 fn expr_mentions_var(expr: &Expression, var: &str) -> bool {
     match expr {
-        Expression::Value(Value::Variable(n)) => n == var,
+        Expression::Value(Value::Binding(Binding::Variable(n))) => n == var,
         Expression::Binary { left, right, .. } => {
             expr_mentions_var(left, var) || expr_mentions_var(right, var)
         }
@@ -303,7 +303,7 @@ mod tests {
     use crate::ir::{BinaryOp, Constant};
 
     fn var(n: &str) -> Expression {
-        Expression::Value(Value::Variable(n.to_string()))
+        Expression::Value(Value::Binding(Binding::Variable(n.to_string())))
     }
     fn lt(l: Expression, r: Expression) -> Expression {
         Expression::Binary { op: BinaryOp::Lt, left: Box::new(l), right: Box::new(r) }

@@ -54,12 +54,12 @@ impl UseCounter {
 
 impl<'a> Visitor<'a> for UseCounter {
     fn visit_expression(&mut self, expr: &'a Expression) {
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             *self.use_count.entry(*r).or_insert(0) += 1;
         }
         // A compound write target (e.g. inside Expression::Assignment) is a def.
         if let Expression::Assignment { target, .. } = expr {
-            if let Expression::Value(Value::Register(r)) = &**target {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = &**target {
                 *self.def_count.entry(*r).or_insert(0) += 1;
             }
         }
@@ -176,7 +176,7 @@ impl MutVisitor for ExpressionInliner {
         self.walk_expression(expr);
 
         // Then modify this expression if it's a register use
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             if let Some(def) = self.definitions.get(r) {
                 *expr = def.clone();
             }
@@ -197,7 +197,7 @@ fn stmt_uses(stmt: &Statement, reg: u32) -> bool {
             self.walk_assign_target(target);
         }
         fn visit_expression(&mut self, expr: &'a Expression) {
-            if let Expression::Value(Value::Register(r)) = expr {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
                 if *r == self.0 {
                     self.1 = true;
                 }
@@ -235,7 +235,7 @@ fn stmt_redefines_source(stmt: &Statement, value: &Expression) -> bool {
         }
         fn visit_expression(&mut self, expr: &'a Expression) {
             if let Expression::Assignment { target, .. } = expr {
-                if let Expression::Value(Value::Register(r)) = &**target {
+                if let Expression::Value(Value::Binding(Binding::Register(r))) = &**target {
                     if self.reads.contains(r) {
                         self.found = true;
                     }
@@ -253,7 +253,7 @@ fn collect_read_regs(expr: &Expression, out: &mut HashSet<u32>) {
     struct Collector<'a>(&'a mut HashSet<u32>);
     impl<'a> Visitor<'a> for Collector<'_> {
         fn visit_expression(&mut self, expr: &'a Expression) {
-            if let Expression::Value(Value::Register(r)) = expr {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
                 self.0.insert(*r);
             }
             self.walk_expression(expr);
@@ -278,7 +278,7 @@ mod tests {
             Statement::assign_reg(
                 1,
                 Expression::Member {
-                    object: Box::new(Expression::Value(Value::Register(0))),
+                    object: Box::new(Expression::Value(Value::Binding(Binding::Register(0)))),
                     property: PropertyKey::Ident("length".to_string()),
                     optional: false,
                 },

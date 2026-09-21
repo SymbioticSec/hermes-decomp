@@ -33,7 +33,7 @@ pub(super) fn infer_module_name_from_stmts(
                 let is_export = match target {
                     crate::ir::AssignTarget::Binding(Binding::Variable(n)) => FactoryRoles::matches_exports_name(n),
                     crate::ir::AssignTarget::Member { object, .. } => match object {
-                        Expression::Value(Value::Variable(n)) => {
+                        Expression::Value(Value::Binding(Binding::Variable(n))) => {
                             FactoryRoles::matches_module_name(n) || FactoryRoles::matches_exports_name(n)
                         }
                         Expression::Value(Value::Parameter(idx)) => {
@@ -50,7 +50,7 @@ pub(super) fn infer_module_name_from_stmts(
                     }
                     if let crate::ir::AssignTarget::Member { property, .. } = target {
                         if property == "default" {
-                            if let Expression::Value(Value::Variable(v)) = value {
+                            if let Expression::Value(Value::Binding(Binding::Variable(v))) = value {
                                 if is_meaningful_name(v) && is_meaningful_require_name(v) {
                                     return Some(v.clone());
                                 }
@@ -96,7 +96,7 @@ pub(super) fn infer_module_name_from_stmts(
         };
         if let Some(Expression::Call { callee, arguments }) = call {
             let is_export_star = match &**callee {
-                Expression::Value(Value::Variable(n)) => n.contains("exportStar") || n.contains("__export"),
+                Expression::Value(Value::Binding(Binding::Variable(n))) => n.contains("exportStar") || n.contains("__export"),
                 _ => false,
             };
             if is_export_star && !arguments.is_empty() {
@@ -113,7 +113,7 @@ pub(super) fn infer_module_name_from_stmts(
             let is_default_export = match target {
                 crate::ir::AssignTarget::Member { object, property } => {
                     property == "default" && match object {
-                        Expression::Value(Value::Variable(n)) => FactoryRoles::matches_exports_name(n),
+                        Expression::Value(Value::Binding(Binding::Variable(n))) => FactoryRoles::matches_exports_name(n),
                         _ => false,
                     }
                 }
@@ -194,7 +194,7 @@ pub(super) fn infer_module_name_from_stmts(
         if let Statement::Assign { target, .. } = stmt {
             if let crate::ir::AssignTarget::Member { object, property } = target {
                 let is_exports = match object {
-                    Expression::Value(Value::Variable(obj_name)) => {
+                    Expression::Value(Value::Binding(Binding::Variable(obj_name))) => {
                         FactoryRoles::matches_exports_name(obj_name)
                     }
                     Expression::Value(Value::Parameter(idx)) => {
@@ -347,7 +347,7 @@ pub(super) fn infer_from_expr(
             None
         }
         Expression::Call { callee, .. } => infer_from_expr(callee, functions, visited),
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(Binding::Variable(name))) => {
             if is_meaningful_name(name) && is_meaningful_require_name(name) {
                 Some(name.clone())
             } else {

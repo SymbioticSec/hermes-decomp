@@ -111,11 +111,11 @@ fn is_default_key(property: &PropertyKey) -> bool {
 
 fn is_var_or_default_of_var(expr: &Expression) -> bool {
     match expr {
-        Expression::Value(Value::Variable(_)) => true,
+        Expression::Value(Value::Binding(Binding::Variable(_))) => true,
         Expression::Member {
             object, property, ..
         } if is_default_key(property) => {
-            matches!(object.as_ref(), Expression::Value(Value::Variable(_)))
+            matches!(object.as_ref(), Expression::Value(Value::Binding(Binding::Variable(_))))
         }
         _ => false,
     }
@@ -166,7 +166,7 @@ fn is_get_key(key: &PropertyKey) -> bool {
 fn function_id_of(expr: &Expression, var_fns: &HashMap<String, u32>) -> Option<u32> {
     match expr {
         Expression::Function { id, .. } => Some(id.0),
-        Expression::Value(Value::Variable(n)) => var_fns.get(n).copied(),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => var_fns.get(n).copied(),
         _ => None,
     }
 }
@@ -246,14 +246,14 @@ fn is_lazy_plumbing_value(
         return true;
     }
     match expr {
-        Expression::Value(Value::Variable(_)) => true,
+        Expression::Value(Value::Binding(Binding::Variable(_))) => true,
         Expression::Member {
             object, property, ..
         } if is_default_key(property) => is_lazy_plumbing_value(object, aliases, deps),
         Expression::Call { callee, arguments } => {
             // Allow interop wrappers around a loader: _interopRequireDefault(require(N))
             let callee_ok = match callee.as_ref() {
-                Expression::Value(Value::Variable(n)) => {
+                Expression::Value(Value::Binding(Binding::Variable(n))) => {
                     n.contains("interop")
                         || n == "_interopRequireDefault"
                         || n == "_interopDefault"

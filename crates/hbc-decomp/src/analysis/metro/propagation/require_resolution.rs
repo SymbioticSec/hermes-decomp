@@ -14,7 +14,7 @@ pub(super) fn resolve_require_module(
 ) -> Option<u32> {
     if let Expression::Call { callee, arguments } = expr {
         let is_require = match &**callee {
-            Expression::Value(Value::Variable(name)) => FactoryRoles::matches_require_loader_name(name),
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => FactoryRoles::matches_require_loader_name(name),
             Expression::Value(Value::Parameter(idx)) if *idx == 1 => true,
             _ => false,
         };
@@ -37,8 +37,8 @@ pub(super) fn resolve_require_module(
 
                 // Sub-case 1.2: Register (Dynamic Require via Dependency Array)
                 let reg_name = match arg {
-                    Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
-                    Expression::Value(Value::Variable(n)) => Some(n.clone()),
+                    Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
+                    Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => Some(n.clone()),
                     _ => None,
                 };
 
@@ -71,8 +71,8 @@ pub(super) fn resolve_require_module(
                 }) = arg_expr
                 {
                     let base_name = match &**object {
-                        Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
-                        Expression::Value(Value::Variable(n)) => Some(n.clone()),
+                        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
+                        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => Some(n.clone()),
                         Expression::Value(Value::Parameter(i)) => Some(format!("arg{i}")),
                         _ => None,
                     };
@@ -129,7 +129,7 @@ pub(super) fn extract_require_module_id(expr: &Expression) -> Option<u32> {
 // Check if callee is a require function
 fn is_require_callee(callee: &Expression) -> bool {
     match callee {
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
             FactoryRoles::matches_require_loader_name(name) || name.starts_with("require_")
         }
         Expression::Value(Value::Parameter(idx)) => *idx == 1,
@@ -140,7 +140,7 @@ fn is_require_callee(callee: &Expression) -> bool {
 // Check if callee is an interop default wrapper
 fn is_interop_callee(callee: &Expression) -> bool {
     match callee {
-        Expression::Value(Value::Variable(name)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
             name.contains("interop") || name.contains("_interop")
         }
         _ => false,
@@ -156,7 +156,7 @@ fn extract_module_id_from_arg(arg: &Expression) -> Option<u32> {
         Expression::Member {
             object, property, ..
         } => {
-            if let Expression::Value(Value::Variable(name)) = object.as_ref() {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref() {
                 if is_dep_array_name(name, &FactoryRoles::from_param_count(7))
                     || is_dep_array_name(name, &FactoryRoles::from_param_count(5))
                 {

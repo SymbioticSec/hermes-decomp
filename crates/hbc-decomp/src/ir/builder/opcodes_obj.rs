@@ -57,7 +57,7 @@ pub fn handle_create_class(
     let proto_assign = Statement::Assign {
         target: AssignTarget::Binding(Binding::Register(home_reg)),
         value: Expression::member(
-            Expression::Value(crate::ir::Value::Register(class_reg)),
+            Expression::Value(crate::ir::Value::Binding(Binding::Register(class_reg))),
             "prototype",
         ),
     };
@@ -79,15 +79,15 @@ pub fn handle_create_class(
             let super_tmp = 0xFFFF_0000u32 | (func_idx & 0xFFFF);
             let capture = Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(super_tmp)),
-                value: Expression::Value(crate::ir::Value::Register(super_reg)),
+                value: Expression::Value(crate::ir::Value::Binding(Binding::Register(super_reg))),
             };
             let extends_marker = Statement::Expr(Expression::Call {
-                callee: Box::new(Expression::Value(crate::ir::Value::Variable(
+                callee: Box::new(Expression::Value(crate::ir::Value::Binding(Binding::Variable(
                     EXTENDS_MARKER.to_string(),
-                ))),
+                )))),
                 arguments: vec![
-                    Expression::Value(crate::ir::Value::Register(class_reg)),
-                    Expression::Value(crate::ir::Value::Register(super_tmp)),
+                    Expression::Value(crate::ir::Value::Binding(Binding::Register(class_reg))),
+                    Expression::Value(crate::ir::Value::Binding(Binding::Register(super_tmp))),
                 ],
             });
             return Some(Statement::Block(vec![
@@ -522,9 +522,9 @@ pub fn handle_iterator_begin(inst: &Instruction) -> Option<Statement> {
             callee: Box::new(Expression::Member {
                 object: Box::new(source),
                 property: PropertyKey::Computed(Box::new(Expression::Member {
-                    object: Box::new(Expression::Value(crate::ir::Value::Variable(
+                    object: Box::new(Expression::Value(crate::ir::Value::Binding(Binding::Variable(
                         "Symbol".to_string(),
-                    ))),
+                    )))),
                     property: PropertyKey::Ident("iterator".to_string()),
                     optional: false,
                 })),
@@ -571,7 +571,7 @@ pub fn handle_get_pname_list(inst: &Instruction) -> Option<Statement> {
         target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(Expression::member(
-                Expression::Value(crate::ir::Value::Variable("Object".to_string())),
+                Expression::Value(crate::ir::Value::Binding(Binding::Variable("Object".to_string()))),
                 "keys",
             )),
             arguments: vec![obj],

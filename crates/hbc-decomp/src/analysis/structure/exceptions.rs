@@ -43,7 +43,7 @@ fn extract_catch_param(stmts: &[Statement]) -> Option<String> {
 fn is_exception_value(value: &crate::ir::Expression) -> bool {
     matches!(
         value,
-        crate::ir::Expression::Value(Value::Variable(name)) if name == "__exception"
+        crate::ir::Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) if name == "__exception"
     )
 }
 
@@ -52,7 +52,7 @@ fn strip_exception_assign(structure: Structure) -> Structure {
         Structure::Block(id, stmts) => {
             let filtered: Vec<_> = stmts.into_iter().filter(|s| {
                 if let Statement::Assign { value, .. } = s {
-                    if let crate::ir::Expression::Value(Value::Variable(name)) = value {
+                    if let crate::ir::Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = value {
                         return name != "__exception";
                     }
                 }

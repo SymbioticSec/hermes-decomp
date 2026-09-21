@@ -157,7 +157,7 @@ pub fn propagate_copies(cfg: &mut CFG) {
         for (i, stmt) in block.statements.iter().enumerate() {
             if let Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(a)),
-                value: Expression::Value(Value::Register(b)),
+                value: Expression::Value(Value::Binding(Binding::Register(b))),
             } = stmt
             {
                 if a != b && def_count.get(a).copied().unwrap_or(0) == 1 {
@@ -230,7 +230,7 @@ pub fn propagate_copies(cfg: &mut CFG) {
                 let sig = signatures.get(a)?;
                 let now = cur.get(b).cloned().unwrap_or_default();
                 if &now == sig {
-                    Some((*a, Expression::Value(Value::Register(*b))))
+                    Some((*a, Expression::Value(Value::Binding(Binding::Register(*b)))))
                 } else {
                     None
                 }

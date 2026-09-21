@@ -6,7 +6,7 @@ pub(super) fn remove_redundant_assignments(stmts: Vec<Statement>) -> Vec<Stateme
         .filter(|stmt| {
             if let Statement::Assign {
                 target: AssignTarget::Binding(Binding::Register(r)),
-                value: Expression::Value(Value::Register(r2)),
+                value: Expression::Value(Value::Binding(Binding::Register(r2))),
             } = stmt
             {
                 return r != r2;

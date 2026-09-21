@@ -292,7 +292,7 @@ impl<'a> ClassAnalyzer<'a> {
             // Pattern: __hermes_class_extends__(Class, Super), the synthetic marker
             // emitted by CreateDerivedClass desugaring (HBC >=97 `class B extends A`).
             Statement::Expr(Expression::Call { callee, arguments })
-                if matches!(callee.as_ref(), Expression::Value(Value::Variable(n)) if n == crate::ir::EXTENDS_MARKER) =>
+                if matches!(callee.as_ref(), Expression::Value(Value::Binding(Binding::Variable(n))) if n == crate::ir::EXTENDS_MARKER) =>
             {
                 if let [class_arg, super_arg] = arguments.as_slice() {
                     if let Some(class_name) = extract_name(class_arg) {
@@ -317,7 +317,7 @@ impl<'a> ClassAnalyzer<'a> {
                 if arguments.len() >= 2 {
                     if let Some((class_name, super_name)) = extract_inheritance(&arguments[0], &arguments[1]) {
                         if let Some(builder) = self.classes.get_mut(&class_name) {
-                            builder.super_class = Some(Expression::Value(Value::Variable(super_name)));
+                            builder.super_class = Some(Expression::Value(Value::Binding(Binding::Variable(super_name))));
                         }
                         self.consume(&class_name, idx);
                     }

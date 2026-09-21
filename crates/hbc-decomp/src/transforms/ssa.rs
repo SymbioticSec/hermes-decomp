@@ -274,7 +274,7 @@ fn collect_reg_reads(expr: &Expression, out: &mut HashSet<u32>) {
     struct C<'a>(&'a mut HashSet<u32>);
     impl<'a, 'b> Visitor<'b> for C<'a> {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Register(r)) = e {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = e {
                 self.0.insert(*r);
             }
             self.walk_expression(e);
@@ -319,7 +319,7 @@ fn rewrite_reads_in_terminator(term: &mut Terminator, map: &BTreeMap<u32, u32>) 
 struct ReadRewriter<'a>(&'a BTreeMap<u32, u32>);
 impl MutVisitor for ReadRewriter<'_> {
     fn visit_expression(&mut self, expr: &mut Expression) {
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
             if let Some(&v) = self.0.get(r) {
                 *r = v;
             }
@@ -410,7 +410,7 @@ mod tests {
 
         // Check that uses refer to correct versions
         if let Expression::Binary { left, .. } = val1 {
-            if let Expression::Value(Value::Register(u)) = **left {
+            if let Expression::Value(Value::Binding(Binding::Register(u))) = **left {
                 assert_eq!(u, *def1, "First use should refer to first definition");
             } else {
                 panic!("Expected register use")
@@ -418,7 +418,7 @@ mod tests {
         }
 
         if let Expression::Binary { left, .. } = val3 {
-            if let Expression::Value(Value::Register(u)) = **left {
+            if let Expression::Value(Value::Binding(Binding::Register(u))) = **left {
                 assert_eq!(u, *def2, "Second use should refer to second definition");
             } else {
                 panic!("Expected register use")

@@ -65,7 +65,7 @@ fn collect_immutable_aliases(
                 } => Some((name, value)),
                 _ => None,
             };
-            if let Some((name, Expression::Value(Value::Variable(v)))) = alias {
+            if let Some((name, Expression::Value(Value::Binding(Binding::Variable(v))))) = alias {
                 if v != name
                     && is_inlinable_name(name)
                     && self.def_count.get(name).copied() == Some(1)
@@ -305,7 +305,7 @@ fn is_simple_pure_expr_depth(expr: &Expression, depth: u8) -> bool {
         return false;
     }
     match expr {
-        Expression::Value(Value::Variable(_))
+        Expression::Value(Value::Binding(Binding::Variable(_)))
         | Expression::Value(Value::Parameter(_))
         | Expression::Value(Value::Constant(_))
         | Expression::Value(Value::Global)

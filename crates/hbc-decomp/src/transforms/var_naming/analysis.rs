@@ -157,7 +157,7 @@ fn analyze_expr_with_suggestion(
     suggestion: Option<&str>,
 ) {
     match expr {
-        Expression::Value(Value::Variable(var_name)) => {
+        Expression::Value(Value::Binding(Binding::Variable(var_name))) => {
             if let Some(s) = suggestion {
                 namer.suggest_name(var_name, s);
             }

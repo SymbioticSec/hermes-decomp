@@ -18,7 +18,7 @@ impl Codegen {
                     return String::new();
                 }
                 // Skip self-assignments (const x = x)
-                if let crate::ir::Expression::Value(crate::ir::Value::Variable(v)) = value {
+                if let crate::ir::Expression::Value(crate::ir::Value::Binding(Binding::Variable(v))) = value {
                     if crate::util::sanitize_identifier(v) == name {
                         return String::new();
                     }
@@ -62,7 +62,7 @@ impl Codegen {
                         return String::new();
                     }
                     // Also skip self-assignments: `x = x;`
-                    if let crate::ir::Expression::Value(crate::ir::Value::Variable(v)) = value {
+                    if let crate::ir::Expression::Value(crate::ir::Value::Binding(Binding::Variable(v))) = value {
                         if v == name {
                             return String::new();
                         }

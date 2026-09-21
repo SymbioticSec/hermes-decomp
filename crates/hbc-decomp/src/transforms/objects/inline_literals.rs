@@ -75,7 +75,7 @@ fn substitute_registers_in_stmt(stmt: &mut Statement, map: &std::collections::Ha
     struct S<'a>(&'a std::collections::HashMap<u32, Expression>);
     impl<'a> MutVisitor for S<'a> {
         fn visit_expression(&mut self, e: &mut Expression) {
-            if let Expression::Value(Value::Register(r)) = e {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = e {
                 if let Some(v) = self.0.get(r) {
                     *e = v.clone();
                     return;
@@ -96,7 +96,7 @@ fn substitute_registers_in_expr(
     struct S<'a>(&'a std::collections::HashMap<u32, Expression>, Option<u32>);
     impl<'a> MutVisitor for S<'a> {
         fn visit_expression(&mut self, e: &mut Expression) {
-            if let Expression::Value(Value::Register(r)) = e {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = e {
                 if Some(*r) != self.1 {
                     if let Some(v) = self.0.get(r) {
                         *e = v.clone();
@@ -115,7 +115,7 @@ fn is_pure_literal(expr: &Expression) -> bool {
         Expression::Object { properties } => properties.iter().all(|p| is_pure_literal(&p.value)),
         Expression::Array { elements } => elements.iter().flatten().all(is_pure_literal),
         Expression::Value(Value::Constant(_)) => true,
-        Expression::Value(Value::Register(_)) => true,
+        Expression::Value(Value::Binding(Binding::Register(_))) => true,
         _ => false,
     }
 }
@@ -137,7 +137,7 @@ fn collect_value_reg_uses(stmt: &Statement, counts: &mut std::collections::HashM
             }
         }
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Register(r)) = e {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = e {
                 *self.0.entry(*r).or_insert(0) += 1;
             }
             self.walk_expression(e);

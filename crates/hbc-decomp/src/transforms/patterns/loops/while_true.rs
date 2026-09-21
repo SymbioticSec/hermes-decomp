@@ -211,7 +211,7 @@ mod tests {
     use super::*;
 
     fn var(n: &str) -> Expression {
-        Expression::Value(Value::Variable(n.to_string()))
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n.to_string())))
     }
     fn cmp(op: BinaryOp, l: &str, r: &str) -> Expression {
         Expression::Binary { op, left: Box::new(var(l)), right: Box::new(var(r)) }

@@ -26,7 +26,7 @@ pub fn transform_spread_rest(stmts: &mut Vec<Statement>) {
             if let Some(args) = is_builtin_call(value, "copyRestArgs") {
                 let all_args = || Expression::Array {
                     elements: vec![Some(Expression::Spread(Box::new(Expression::Value(
-                        Value::Variable("arguments".to_string()),
+                        Value::Binding(Binding::Variable("arguments".to_string())),
                     ))))],
                 };
                 let n_is_zero = matches!(
@@ -191,7 +191,7 @@ fn resolve_array_elements(expr: &Expression, before: &[Statement]) -> Option<Vec
     if let Expression::Array { elements } = expr {
         return Some(elements.iter().flatten().cloned().collect());
     }
-    if let Expression::Value(Value::Register(r)) = expr {
+    if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
         for stmt in before.iter().rev() {
             if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(tr)), value } = stmt {
                 if tr == r {
@@ -228,7 +228,7 @@ fn arr_spread_into(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> O
     };
     let args = is_builtin_call(value, "arraySpread")?;
     if args.len() >= 2 {
-        if let Expression::Value(Value::Register(r)) = &args[0] {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = &args[0] {
             if arrs.contains(r) {
                 return Some(args[1].clone());
             }
@@ -240,7 +240,7 @@ fn arr_spread_into(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> O
 // `arr[..] = val` targeting the array -> Some(val).
 fn put_into_array(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> Option<Expression> {
     if let Statement::Assign { target: AssignTarget::Index { object, .. }, value } = stmt {
-        if let Expression::Value(Value::Register(r)) = object {
+        if let Expression::Value(Value::Binding(Binding::Register(r))) = object {
             if arrs.contains(r) {
                 return Some(value.clone());
             }
@@ -268,7 +268,7 @@ fn is_skippable_setup(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -
 fn alias_copy(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> Option<u32> {
     if let Statement::Assign {
         target: AssignTarget::Binding(Binding::Register(dst)),
-        value: Expression::Value(Value::Register(src)),
+        value: Expression::Value(Value::Binding(Binding::Register(src))),
     } = stmt
     {
         if arrs.contains(src) {
@@ -300,7 +300,7 @@ fn is_hermes_builtin_obj(expr: &Expression) -> bool {
     }
     match expr {
         // bare `HermesBuiltin` / `HermesInternal`
-        Expression::Value(Value::Variable(n)) => is_name(n),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => is_name(n),
         // `globalThis.HermesBuiltin`
         Expression::Member { object, property: PropertyKey::Ident(p), .. } => {
             is_name(p) && matches!(object.as_ref(), Expression::Value(Value::Global))

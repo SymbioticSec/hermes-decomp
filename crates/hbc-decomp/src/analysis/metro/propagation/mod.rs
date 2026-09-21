@@ -262,7 +262,7 @@ pub fn propagate_module_names(
                     // Try to infer parameter index from value
                     let param_idx = match value {
                         Expression::Value(Value::Parameter(idx)) => Some(*idx),
-                        Expression::Value(Value::Variable(v)) => {
+                        Expression::Value(Value::Binding(Binding::Variable(v))) => {
                             FactoryRoles::extract_param_index(v)
                         }
                         _ => None,
@@ -279,8 +279,8 @@ pub fn propagate_module_names(
                             ..
                         } => {
                             let base_name = match &**object {
-                                Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
-                                Expression::Value(Value::Variable(n)) => Some(n.clone()),
+                                Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
+                                Expression::Value(Value::Binding(Binding::Variable(n))) => Some(n.clone()),
                                 Expression::Value(Value::Parameter(i)) => Some(format!("arg{i}")),
                                 _ => None,
                             };
@@ -288,7 +288,7 @@ pub fn propagate_module_names(
                                 reg_props.insert(name.clone(), (base, *idx as u32));
                             }
                         }
-                        Expression::Value(Value::Register(r)) => {
+                        Expression::Value(Value::Binding(Binding::Register(r))) => {
                             let r_name = format!("r{r}");
                             if let Some(prop) = reg_props.get(&r_name) {
                                 let val = prop.clone();
@@ -298,7 +298,7 @@ pub fn propagate_module_names(
                                 reg_params.insert(name.clone(), *param);
                             }
                         }
-                        Expression::Value(Value::Variable(v)) => {
+                        Expression::Value(Value::Binding(Binding::Variable(v))) => {
                             if let Some(prop) = reg_props.get(v) {
                                 let val = prop.clone();
                                 reg_props.insert(name.clone(), val);
@@ -341,12 +341,12 @@ pub fn propagate_module_names(
                     }
                 } else if matches!(
                     value,
-                    Expression::Value(Value::Variable(_)) | Expression::Value(Value::Register(_))
+                    Expression::Value(Value::Binding(Binding::Variable(_))) | Expression::Value(Value::Binding(Binding::Register(_)))
                 ) {
                     // Case 2: Simple assignment (x = y)
                     let source_name = match value {
-                        Expression::Value(Value::Variable(v)) => Some(v.clone()),
-                        Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
+                        Expression::Value(Value::Binding(Binding::Variable(v))) => Some(v.clone()),
+                        Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
                         _ => None,
                     };
 
@@ -403,8 +403,8 @@ pub fn propagate_module_names(
                         if propagated_name.is_none() {
                             if let Expression::Value(val) = arg_expr {
                                 let arg_name = match val {
-                                    Value::Variable(v) => Some(v.clone()),
-                                    Value::Register(r) => Some(format!("r{r}")),
+                                    Value::Binding(Binding::Variable(v)) => Some(v.clone()),
+                                    Value::Binding(Binding::Register(r)) => Some(format!("r{r}")),
                                     _ => None,
                                 };
                                 if let Some(arg_v) = arg_name {

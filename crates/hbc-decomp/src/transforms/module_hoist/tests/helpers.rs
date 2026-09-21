@@ -8,7 +8,7 @@ pub(super) fn int(n: i32) -> Expression {
 }
 
 pub(super) fn var(n: &str) -> Expression {
-    Expression::Value(Value::Variable(n.to_string()))
+    Expression::Value(Value::Binding(crate::ir::Binding::Variable(n.to_string())))
 }
 
 pub(super) fn call(callee: &str, arg: Expression) -> Expression {

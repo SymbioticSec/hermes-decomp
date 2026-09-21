@@ -132,7 +132,7 @@ fn collect_terminator_uses(
 
 fn collect_expr_uses(expr: &Expression, uses: &mut HashSet<u32>, defs: &HashSet<u32>) {
     match expr {
-        Expression::Value(Value::Register(r)) if !defs.contains(r) => {
+        Expression::Value(Value::Binding(Binding::Register(r))) if !defs.contains(r) => {
             uses.insert(*r);
         }
         Expression::Binary { left, right, .. } => {
@@ -163,7 +163,7 @@ mod tests {
             0,
             Expression::constant(Constant::Integer(1)),
         ));
-        builder.emit_return(Some(Expression::Value(Value::Register(0))));
+        builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(0)))));
 
         let cfg = builder.finish();
         let liveness = LivenessInfo::analyze(&cfg);

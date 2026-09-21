@@ -20,7 +20,7 @@ pub fn transform_default_params(stmts: &mut [Statement]) {
                     let target = AssignTarget::Binding(Binding::Register(param_reg));
                     let expr = Expression::binary(
                         BinaryOp::NullishCoalesce,
-                        Expression::Value(Value::Register(param_reg)),
+                        Expression::Value(Value::Binding(Binding::Register(param_reg))),
                         value.clone(),
                     );
                     replacement = Some(Statement::Assign {
@@ -80,7 +80,7 @@ fn match_default_pattern<'a>(
 use super::patterns::utils::{is_null, is_undefined};
 
 fn get_reg(expr: &Expression) -> Option<u32> {
-    if let Expression::Value(Value::Register(r)) = expr {
+    if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
         Some(*r)
     } else {
         None

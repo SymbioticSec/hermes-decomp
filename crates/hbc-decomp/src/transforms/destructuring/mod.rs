@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn test_object_destructuring_detection() {
         // r1 = obj.x; r2 = obj.y;
-        let obj = Expression::Value(Value::Register(0));
+        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Register(0)));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn test_array_destructuring_detection() {
         // r1 = arr[0]; r2 = arr[1]; r3 = arr[2];
-        let arr = Expression::Value(Value::Register(0));
+        let arr = Expression::Value(Value::Binding(crate::ir::Binding::Register(0)));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn test_computed_index_destructuring() {
         // r1 = arr[0]; r2 = arr[1]; using Computed property keys
-        let arr = Expression::Value(Value::Register(0));
+        let arr = Expression::Value(Value::Binding(crate::ir::Binding::Register(0)));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn test_non_consecutive_indices_not_destructured() {
         // r1 = arr[0]; r2 = arr[2]; (skip index 1)
-        let arr = Expression::Value(Value::Register(0));
+        let arr = Expression::Value(Value::Binding(crate::ir::Binding::Register(0)));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn test_single_access_not_destructured() {
         // r1 = obj.x; (single property - should not destructure)
-        let obj = Expression::Value(Value::Register(0));
+        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Register(0)));
         let stmts = vec![Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
             value: Expression::Member {
@@ -285,7 +285,7 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Register(0))),
+                    object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Register(0)))),
                     property: PropertyKey::Ident("x".to_string()),
                     optional: false,
                 },
@@ -293,7 +293,7 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Register(10))),
+                    object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Register(10)))),
                     property: PropertyKey::Ident("y".to_string()),
                     optional: false,
                 },
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_nested_destructuring() {
         // Inside an if block
-        let obj = Expression::Value(Value::Register(0));
+        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Register(0)));
         let stmts = vec![Statement::If {
             condition: Expression::constant(Constant::Bool(true)),
             then_body: vec![
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn test_optional_member_not_destructured() {
         // r1 = obj?.x; r2 = obj?.y; (optional chaining should not destructure)
-        let obj = Expression::Value(Value::Register(0));
+        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Register(0)));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_three_properties_destructuring() {
-        let obj = Expression::Value(Value::Variable("data".to_string()));
+        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Variable("data".to_string())));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Variable("x".to_string())),
@@ -424,7 +424,7 @@ mod tests {
             assert_eq!(props[1].0, "y");
             assert_eq!(props[2].0, "z");
             // Check value is the original object
-            if let Expression::Value(Value::Variable(name)) = value {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = value {
                 assert_eq!(name, "data");
             } else {
                 panic!("Expected variable 'data'");
@@ -437,7 +437,7 @@ mod tests {
     #[test]
     fn test_default_value_destructuring() {
         use crate::ir::{BinaryOp, Constant, Value};
-        let obj = Expression::Value(Value::Variable("param".to_string()));
+        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Variable("param".to_string())));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Variable("x".to_string())),
@@ -450,7 +450,7 @@ mod tests {
             Statement::If {
                 condition: Expression::Binary {
                     op: BinaryOp::StrictEq,
-                    left: Box::new(Expression::Value(Value::Variable("x".to_string()))),
+                    left: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("x".to_string())))),
                     right: Box::new(Expression::constant(Constant::Undefined)),
                 },
                 then_body: vec![Statement::Assign {

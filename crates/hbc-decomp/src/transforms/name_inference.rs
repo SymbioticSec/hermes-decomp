@@ -88,7 +88,7 @@ fn suggest_name(expr: &Expression) -> Option<String> {
         Expression::Array { .. } => Some("arr".to_string()),
         Expression::Object { .. } => Some("obj".to_string()),
         Expression::New { callee, .. } => {
-            if let Expression::Value(Value::Variable(cls)) = &**callee {
+            if let Expression::Value(Value::Binding(Binding::Variable(cls))) = &**callee {
                 Some(cls.to_lowercase())
             } else {
                 Some("inst".to_string())

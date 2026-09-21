@@ -49,8 +49,8 @@ pub(super) fn run(
 fn param_forwarded_by_arg(arg: &Expression, defs: &HashMap<String, Definition>) -> Option<u32> {
     match arg {
         Expression::Value(Value::Parameter(idx)) => Some(*idx),
-        Expression::Value(Value::Variable(name)) => param_index_of(name, defs),
-        Expression::Value(Value::Register(r)) => param_index_of(&format!("r{r}"), defs),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => param_index_of(name, defs),
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => param_index_of(&format!("r{r}"), defs),
         _ => None,
     }
 }
@@ -84,13 +84,13 @@ impl IpaVisitor<'_> {
             return Some(fid);
         }
         // Variable reference to a known function
-        if let Expression::Value(Value::Variable(name)) = expr {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = expr {
             if let Some(Definition::Function(fid)) = self.defs.get(name) {
                 return Some(*fid);
             }
         }
         // Register reference to a known function
-        if let Expression::Value(Value::Register(r)) = expr {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) = expr {
             if let Some(Definition::Function(fid)) = self.defs.get(&format!("r{r}")) {
                 return Some(*fid);
             }
@@ -218,13 +218,13 @@ impl IpaVisitor<'_> {
             let mut resolved_param = None;
 
             match arg {
-                Expression::Value(Value::Variable(name)) => {
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
                     if let Some(Definition::Parameter(idx)) = self.defs.get(name) {
                         resolved_param = Some(*idx);
                     }
                     arg_names.push(Some(name.clone()));
                 }
-                Expression::Value(Value::Register(r)) => {
+                Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
                     let r_name = format!("r{r}");
                     if let Some(Definition::Parameter(idx)) = self.defs.get(&r_name) {
                         resolved_param = Some(*idx);

@@ -93,7 +93,7 @@ fn expr_var_reads(expr: &Expression) -> Vec<String> {
     struct R(Vec<String>);
     impl<'b> Visitor<'b> for R {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(Binding::Variable(n))) = e {
                 self.0.push(n.clone());
             }
             self.walk_expression(e);
@@ -207,7 +207,7 @@ pub(super) fn collect_expr_vars(expr: &Expression, out: &mut Vec<String>) {
     struct VarCollector<'a>(&'a mut Vec<String>);
     impl<'a, 'b> Visitor<'b> for VarCollector<'a> {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Variable(v)) = e {
+            if let Expression::Value(Value::Binding(Binding::Variable(v))) = e {
                 self.0.push(v.clone());
             }
             self.walk_expression(e);

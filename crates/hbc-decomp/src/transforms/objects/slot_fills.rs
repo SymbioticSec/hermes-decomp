@@ -147,8 +147,8 @@ fn named_member_fill(stmt: &Statement, obj: &ObjRef) -> Option<(String, Expressi
         return None;
     };
     let obj_now = match object {
-        Expression::Value(Value::Register(r)) => ObjRef::Register(*r),
-        Expression::Value(Value::Variable(n)) => ObjRef::Name(n.clone()),
+        Expression::Value(Value::Binding(Binding::Register(r))) => ObjRef::Register(*r),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => ObjRef::Name(n.clone()),
         _ => return None,
     };
     if !obj_ref_eq(&obj_now, obj) {
@@ -197,8 +197,8 @@ fn rewrite_slot_index_names_in(
                 _ => return None,
             };
             let obj_now = match object {
-                Expression::Value(Value::Register(r)) => ObjRef::Register(*r),
-                Expression::Value(Value::Variable(name)) => ObjRef::Name(name.clone()),
+                Expression::Value(Value::Binding(Binding::Register(r))) => ObjRef::Register(*r),
+                Expression::Value(Value::Binding(Binding::Variable(name))) => ObjRef::Name(name.clone()),
                 _ => return None,
             };
             shapes.iter().find(|(o, _)| obj_ref_eq(o, &obj_now)).and_then(|(_, keys)| {
@@ -347,8 +347,8 @@ fn slot_index_fill(stmt: &Statement, obj: &ObjRef, prop_count: usize) -> Option<
         return None;
     };
     let matches_obj = match (obj, object) {
-        (ObjRef::Register(r), Expression::Value(Value::Register(r2))) => r == r2,
-        (ObjRef::Name(n), Expression::Value(Value::Variable(n2))) => n == n2,
+        (ObjRef::Register(r), Expression::Value(Value::Binding(Binding::Register(r2)))) => r == r2,
+        (ObjRef::Name(n), Expression::Value(Value::Binding(Binding::Variable(n2)))) => n == n2,
         _ => false,
     };
     if !matches_obj {
@@ -388,8 +388,8 @@ fn val_refs_forward(val: &Expression, regs: &[u32], vars: &[String]) -> bool {
     impl Visitor<'_> for C<'_> {
         fn visit_expression(&mut self, e: &Expression) {
             match e {
-                Expression::Value(Value::Register(r)) if self.regs.contains(r) => self.found = true,
-                Expression::Value(Value::Variable(n)) if self.vars.iter().any(|v| v == n) => {
+                Expression::Value(Value::Binding(Binding::Register(r))) if self.regs.contains(r) => self.found = true,
+                Expression::Value(Value::Binding(Binding::Variable(n))) if self.vars.iter().any(|v| v == n) => {
                     self.found = true
                 }
                 _ => {}
@@ -463,7 +463,7 @@ fn expr_uses_var(expr: &Expression, name: &str) -> bool {
     struct C<'a>(&'a str, bool);
     impl Visitor<'_> for C<'_> {
         fn visit_expression(&mut self, e: &Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(Binding::Variable(n))) = e {
                 if n == self.0 {
                     self.1 = true;
                     return;

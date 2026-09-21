@@ -99,7 +99,7 @@ impl Expression {
     }
 
     pub fn register(r: u32) -> Self {
-        Expression::Value(Value::Register(r))
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r)))
     }
 
     pub fn binary(op: BinaryOp, left: Expression, right: Expression) -> Self {
