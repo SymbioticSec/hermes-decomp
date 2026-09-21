@@ -7,7 +7,7 @@ impl Codegen {
     //
     // Local bindings are always sanitized to valid JS identifiers (e.g.
     // Metro names like `get ActivityIndicator` → `get_ActivityIndicator`) so
-    // they match `Value::Variable` Display / body codegen.
+    // they match `Binding::Variable` Display / body codegen.
     pub(super) fn try_import_from_expr(&self, var_name: &str, value: &crate::ir::Expression) -> Option<String> {
         use crate::ir::Expression;
 

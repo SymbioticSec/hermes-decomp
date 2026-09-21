@@ -79,7 +79,7 @@ impl fmt::Display for Binding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Binding::Register(r) => write!(f, "r{r}"),
-            // Matches `Value::Variable`, which sanitises on the way out.
+            // Sanitised on the way out, as the codegen expects.
             Binding::Variable(name) => write!(f, "{}", crate::util::sanitize_identifier(name)),
             Binding::ClosureVar { level, slot } => {
                 write!(f, "{}", Value::closure_var_name(*level, *slot))

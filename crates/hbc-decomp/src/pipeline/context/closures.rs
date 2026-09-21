@@ -8,8 +8,8 @@ impl PipelineContext {
     /// Resolve `ClosureVar` nodes using the closure context slot maps.
     ///
     /// `reanalyze`: when true, rebuild slot maps + parent edges from the current
-    /// IR (must still contain `AssignTarget::ClosureVar` / raw env stores). Use
-    /// this on the **first** resolve pass only. A second pass after variables are
+    /// IR (must still contain `Binding::ClosureVar` targets / raw env stores).
+    /// Use this on the **first** resolve pass only. A second pass after variables are
     /// already renamed must set `reanalyze: false` — re-scanning then would drop
     /// env-slot stores (they became plain `Variable` names) and wipe parent maps.
     pub(super) fn resolve_all_closures(
