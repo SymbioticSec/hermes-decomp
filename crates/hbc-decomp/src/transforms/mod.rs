@@ -50,7 +50,7 @@ pub use objects::{fold_slot_index_fills, transform_object_literals};
 mod collapse_registry;
 pub use collapse_registry::collapse_metro_registry;
 pub use optimize::{optimize_statements, eliminate_dead_stores, remove_dead_temp_bindings};
-pub use patterns::{convert_while_true_loops, detect_for_in_loops, detect_for_of_loops, detect_legacy_for_of, detect_patterns, fold_guarded_loops, reconstruct_jsx};
+pub use patterns::{convert_while_true_loops, detect_short_circuit_logic, detect_for_in_loops, detect_for_of_loops, detect_legacy_for_of, detect_patterns, fold_guarded_loops, reconstruct_jsx};
 pub use propagate::{propagate, propagate_copies, resolve_global_reads, PropagationConfig};
 pub use simplify::{simplify_expr, simplify_statements, simplify_stmt};
 pub use logic_patterns::transform_logic;

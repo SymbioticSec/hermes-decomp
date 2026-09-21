@@ -243,7 +243,12 @@ impl PipelineContext {
                 // rewritten its own inputs into a runtime helper call. A bundle
                 // built through Babel carries both.
                 let body = transforms::reconstruct_v98_array_destructuring(body);
-                all_ir.insert(*fid, transforms::reconstruct_babel_array_destructuring(body));
+                let body = transforms::reconstruct_babel_array_destructuring(body);
+                // Short circuit folding also runs before naming, where the pattern
+                // is still spelled in registers. Naming and the later transforms
+                // introduce it again on named bindings, so it runs a second time
+                // here, once every body is in its final form.
+                all_ir.insert(*fid, transforms::detect_short_circuit_logic(body));
             }
         }
 
