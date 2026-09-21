@@ -260,3 +260,43 @@ fn observation_visits_a_statement_in_each_arm_of_an_if() {
     });
     assert_eq!(seen, vec!["a".to_string(), "b".to_string()]);
 }
+
+// Structure recovery emits statements that cannot run, typically after an if whose
+// arms both jump. A call sitting there still tells a naming client what the binary
+// passes to that function, so the walk has to report it even though no fact it
+// produces may be believed.
+#[test]
+fn a_statement_in_unreachable_code_is_still_reported() {
+    let body = vec![
+        let_int("x", 1),
+        Statement::If {
+            condition: truthy(),
+            then_body: vec![Statement::Break(None)],
+            else_body: vec![Statement::Continue(None)],
+        },
+        Statement::Comment("dead".into()),
+        assign_int("x", 2),
+        Statement::Comment("also dead".into()),
+    ];
+    let extract = extractor();
+    let analysis = ReachingDefinitions::new(extract.as_ref());
+    let mut seen = Vec::new();
+    let out = solve_observed(&analysis, &body, Defs::new(), &mut |stmt, fact| {
+        if let Statement::Comment(c) = stmt {
+            seen.push((c.clone(), fact.get("x").copied()));
+        }
+    });
+    assert_eq!(
+        seen,
+        vec![
+            ("dead".to_string(), Some(1)),
+            ("also dead".to_string(), Some(1)),
+        ],
+        "both unreachable statements are reported, with the last fact that held"
+    );
+    assert_eq!(
+        out.get("x"),
+        Some(&1),
+        "the unreachable write must not reach the end of the body"
+    );
+}

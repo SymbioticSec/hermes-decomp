@@ -103,13 +103,22 @@ fn run_body<A: Analysis>(
     observe: &mut Option<&mut Observer<'_, A::Fact>>,
 ) {
     for stmt in body {
-        if !state.live {
-            return;
-        }
         if let Some(f) = observe.as_mut() {
             f(stmt, &state.fact);
         }
-        run_stmt(analysis, stmt, state, observe);
+        if state.live {
+            run_stmt(analysis, stmt, state, observe);
+        } else {
+            // The walk carries on so the statement and everything nested in it are
+            // still reported, and the fact is put back so nothing unreachable can
+            // claim to hold. Reachability decides what a fact may say, not what the
+            // binary contains: a call sitting in dead code still names its
+            // arguments, and a client harvesting evidence has to be shown it.
+            let frozen = state.fact.clone();
+            run_stmt(analysis, stmt, state, observe);
+            state.fact = frozen;
+            state.live = false;
+        }
     }
 }
 
