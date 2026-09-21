@@ -53,7 +53,7 @@ mod tests {
             "../../examples/react-native/v98/expressions/generator/bytecode.hbc",
         ] {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-            if !path.exists() {
+            if !crate::write::corpus_fixture_present(&path.to_string_lossy()) {
                 continue;
             }
             let bytes = std::fs::read(&path).unwrap();

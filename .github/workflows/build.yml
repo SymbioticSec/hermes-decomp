@@ -6,6 +6,24 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
   build:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -34,6 +52,15 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release --workspace
+
+      # The round trip corpus is built locally from the tracked snippets by
+      # scripts/build/fetch_hermesc.sh then build_corpus.sh, and the toolchains
+      # it downloads are too large to pull on every run. The handful of tests
+      # that read a compiled fixture opt out here and stay a local gate.
+      - name: Run tests
+        env:
+          HBC_CORPUS_OPTIONAL: "1"
+        run: cargo test --workspace --release
 
       - name: Collect binaries (Unix)
         if: runner.os != 'Windows'

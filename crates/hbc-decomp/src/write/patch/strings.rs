@@ -544,7 +544,7 @@ mod tests {
 
     #[test]
     fn patch_string_same_length_v96() {
-        if !std::path::Path::new(FIXTURE).exists() {
+        if !crate::write::corpus_fixture_present(FIXTURE) {
             return;
         }
         let (mut file, format) = load(FIXTURE);
@@ -576,7 +576,7 @@ mod tests {
 
     #[test]
     fn patch_string_resize_grow_reparses() {
-        if !std::path::Path::new(FIXTURE).exists() {
+        if !crate::write::corpus_fixture_present(FIXTURE) {
             return;
         }
         let (mut file, format) = load(FIXTURE);
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn patch_string_packed_falls_back_to_resize() {
-        if !std::path::Path::new(FIXTURE).exists() {
+        if !crate::write::corpus_fixture_present(FIXTURE) {
             return;
         }
         let (mut file, format) = load(FIXTURE);
@@ -621,7 +621,7 @@ mod tests {
     // guards the encoding-by-content rule (a real v98 VM confirmed the round trip).
     #[test]
     fn patch_ascii_to_non_ascii_becomes_utf16() {
-        if !std::path::Path::new(FIXTURE).exists() {
+        if !crate::write::corpus_fixture_present(FIXTURE) {
             return;
         }
         let (mut file, format) = load(FIXTURE);
@@ -651,7 +651,7 @@ mod tests {
     // A patch that stays pure ASCII keeps the one-byte encoding.
     #[test]
     fn patch_ascii_stays_one_byte() {
-        if !std::path::Path::new(FIXTURE).exists() {
+        if !crate::write::corpus_fixture_present(FIXTURE) {
             return;
         }
         let (mut file, format) = load(FIXTURE);

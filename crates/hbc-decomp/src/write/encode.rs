@@ -140,8 +140,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../examples/react-native/v96/expressions/generator/bytecode.hbc"
         );
-        if !std::path::Path::new(path).exists() {
-            eprintln!("skip: fixture missing");
+        if !crate::write::corpus_fixture_present(path) {
             return;
         }
         let (file, format) = load_fixture(path);
@@ -167,8 +166,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../examples/react-native/v98/expressions/generator/bytecode.hbc"
         );
-        if !std::path::Path::new(path).exists() {
-            eprintln!("skip: fixture missing");
+        if !crate::write::corpus_fixture_present(path) {
             return;
         }
         let (file, format) = load_fixture(path);
