@@ -18,9 +18,23 @@ Thumbs.db
 decompiled*.js
 debug_output.js
 global_snippet.js
-examples/**/*.js
-!examples/**/*.original.js
-examples/
+
+# Corpus. The inputs are tracked so it can be rebuilt from the repo
+# (fetch_hermesc.sh then build_corpus.sh). Everything the build compiles or
+# decompiles is generated and stays local.
+/examples/*
+!/examples/react-native/
+/examples/react-native/*
+!/examples/react-native/README.md
+!/examples/react-native/sample.js
+!/examples/react-native/metro_sample.js
+!/examples/react-native/expressions/
+/examples/react-native/expressions/*
+!/examples/react-native/expressions/*.js
+
+# Throwaway example binaries, kept local.
+/crates/hbc-decomp/examples/bench_git/
+/crates/hbc-decomp/examples/debug_buffer.rs
 
 # Logs and debug artifacts
 *.log
@@ -44,7 +58,14 @@ device_test.sh
 **/CLAUDE.md
 PLAN.md
 THIRD_PARTY_NOTICES.md
-scripts/
+# Validation scripts are the quality gates, so they are tracked. Anything else
+# under scripts/ stays local.
+/scripts/*
+!/scripts/build/
+/scripts/build/*
+!/scripts/build/*.sh
+!/scripts/build/*.mjs
+!/scripts/build/*.cpp
 # IDE / AI tooling
 .claude/
 .cursor/

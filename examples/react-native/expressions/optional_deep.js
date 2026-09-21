@@ -1,0 +1,1 @@
+var o={a:{b:{c:42}}}; print(o?.a?.b?.c ?? -1); print(o?.x?.y ?? "none"); var n=null; print(n?.foo?.bar ?? "nil");
