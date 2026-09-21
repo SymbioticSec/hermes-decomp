@@ -513,3 +513,63 @@ mod offset_prefix_tests {
         assert_eq!(strip_offset_prefix("0000  ", &known()), None);
     }
 }
+
+#[cfg(test)]
+mod hand_written_hasm_tests {
+    use super::parse_hasm_function;
+    use crate::opcode::BytecodeFormat;
+    use std::collections::HashMap;
+
+    fn parse(text: &str) -> Vec<String> {
+        let format = BytecodeFormat::for_version(98).expect("v98 table");
+        let lookup = HashMap::new();
+        let insns = parse_hasm_function(text, &format, &lookup).expect("parses");
+        insns
+            .iter()
+            .map(|i| {
+                format
+                    .definitions
+                    .get(i.opcode as usize)
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_file_without_offsets_keeps_whole_mnemonics() {
+        // What the reporter wrote by hand. Before the fix the leading hex digit
+        // letters were eaten as an offset, so `Call2` reached the opcode lookup as
+        // `ll2` and the whole file was rejected.
+        let text = "\
+LoadParam r2, 1
+Call2 r1, r1, r3, r2
+Dec r0, r1
+Ret r2
+";
+        assert_eq!(parse(text), vec!["LoadParam", "Call2", "Dec", "Ret"]);
+    }
+
+    #[test]
+    fn the_same_file_with_offsets_parses_identically() {
+        let text = "\
+0000  LoadParam r2, 1
+0003  Call2 r1, r1, r3, r2
+0008  Dec r0, r1
+000b  Ret r2
+";
+        assert_eq!(parse(text), vec!["LoadParam", "Call2", "Dec", "Ret"]);
+    }
+
+    #[test]
+    fn mnemonics_spelled_entirely_in_hex_digits_survive() {
+        // `Add` and `Dec` are made only of hex digits, so a rule based on the
+        // trailing whitespace alone would read them as an offset.
+        let text = "\
+Add r0, r1, r2
+Dec r0, r1
+Ret r0
+";
+        assert_eq!(parse(text), vec!["Add", "Dec", "Ret"]);
+    }
+}
