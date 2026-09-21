@@ -80,3 +80,34 @@ done
 
 echo "TOTAL: pass=$total_pass fail=$total_fail"
 echo "Per-version detail in v*/roundtrip.tsv; re-run corpus_report to fold into CORPUS_REPORT.md."
+
+# Compare what failed against the recorded list. The check runs both ways: a
+# failure nobody wrote down is a regression, and a recorded failure that now
+# passes means the list is stale and has to shrink.
+KNOWN="$ROOT/scripts/build/roundtrip_known_failures.tsv"
+[ -f "$KNOWN" ] || exit 0
+
+actual="$(for tsv in "$RN"/v*/roundtrip.tsv; do
+  v="$(basename "$(dirname "$tsv")")"
+  awk -F'\t' -v v="$v" '$2=="FAIL" {print v"\t"$1}' "$tsv"
+done | sort)"
+expected="$(grep -v '^#' "$KNOWN" | awk -F'\t' 'NF>=2 {print $1"\t"$2}' | sort)"
+
+unexpected="$(comm -23 <(printf '%s\n' "$actual") <(printf '%s\n' "$expected") | grep -v '^$')"
+fixed="$(comm -13 <(printf '%s\n' "$actual") <(printf '%s\n' "$expected") | grep -v '^$')"
+
+status=0
+if [ -n "$unexpected" ]; then
+  echo
+  echo "FAIL: these are not in roundtrip_known_failures.tsv:"
+  printf '%s\n' "$unexpected" | sed 's/^/  /'
+  status=1
+fi
+if [ -n "$fixed" ]; then
+  echo
+  echo "FAIL: these are recorded as failing but now pass, remove them:"
+  printf '%s\n' "$fixed" | sed 's/^/  /'
+  status=1
+fi
+[ "$status" -eq 0 ] && echo "known failures: $(printf '%s\n' "$expected" | grep -c . ) recorded, all accounted for"
+exit "$status"
