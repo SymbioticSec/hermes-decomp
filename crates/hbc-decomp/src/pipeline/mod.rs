@@ -271,15 +271,74 @@ pub(crate) fn params_from_names(
     while count < names.len() && body_uses_param(body, count as u32) {
         count += 1;
     }
-    (0..count)
-        .map(|idx| {
-            names
-                .get(idx)
-                .cloned()
-                .flatten()
-                .unwrap_or_else(|| format!("arg{idx}"))
+    make_params_distinct((0..count).map(|idx| {
+        names
+            .get(idx)
+            .cloned()
+            .flatten()
+            .unwrap_or_else(|| format!("arg{idx}"))
+    }))
+}
+
+// One name per position, even when two positions recovered the same one.
+//
+// A module is always strict, so `function f(arr, arr)` is a syntax error rather
+// than merely confusing, and the whole module then fails to parse. The first
+// position keeps the recovered name and later ones take a suffix, which says they
+// are distinct without claiming to know what they hold.
+pub(crate) fn make_params_distinct(names: impl Iterator<Item = String>) -> Vec<String> {
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    names
+        .map(|base| {
+            if used.insert(base.clone()) {
+                return base;
+            }
+            let mut n = 2u32;
+            loop {
+                let candidate = format!("{base}{n}");
+                if used.insert(candidate.clone()) {
+                    return candidate;
+                }
+                n += 1;
+            }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod param_name_tests {
+    use super::make_params_distinct;
+
+    fn run(v: &[&str]) -> Vec<String> {
+        make_params_distinct(v.iter().map(|s| (*s).to_string()))
+    }
+
+    #[test]
+    fn a_repeated_name_is_suffixed_rather_than_repeated() {
+        // `function f(arr, arr)` does not parse, and the module goes down with it.
+        assert_eq!(run(&["arr", "arr"]), vec!["arr", "arr2"]);
+        assert_eq!(
+            run(&["overshootClamping", "overshootClamping"]),
+            vec!["overshootClamping", "overshootClamping2"]
+        );
+    }
+
+    #[test]
+    fn three_of_a_kind_keep_counting() {
+        assert_eq!(run(&["x", "x", "x"]), vec!["x", "x2", "x3"]);
+    }
+
+    #[test]
+    fn distinct_names_are_left_exactly_as_recovered() {
+        assert_eq!(run(&["self", "email", "arg2"]), vec!["self", "email", "arg2"]);
+    }
+
+    #[test]
+    fn a_suffix_that_is_already_taken_is_skipped() {
+        // Handing out `x2` when the signature already carries one would only move
+        // the collision.
+        assert_eq!(run(&["x", "x2", "x"]), vec!["x", "x2", "x3"]);
+    }
 }
 
 // Whether the body reads `Parameter(idx)`. Must run on the IR before parameter
