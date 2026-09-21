@@ -165,6 +165,29 @@ pub fn generate_name(info: &RegisterInfo, used_names: &mut HashSet<String>) -> S
     make_unique(base.to_string(), used_names)
 }
 
+
+fn make_unique(base: String, used: &mut HashSet<String>) -> String {
+    if !used.contains(&base) {
+        used.insert(base.clone());
+        return base;
+    }
+
+    // Unbounded: a function with hundreds of same-role registers (e.g. a Lottie
+    // animation data module with deeply nested array/object literals) needs more
+    // than a fixed handful of suffixes. A previous `2..100` cap fell back to the
+    // bare `base` once exhausted, so distinct live arrays collapsed to one name and
+    // produced self-referential garbage like `items[3] = items`.
+    let mut i = 2u32;
+    loop {
+        let name = format!("{base}{i}");
+        if !used.contains(&name) {
+            used.insert(name.clone());
+            return name;
+        }
+        i += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,27 +378,5 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(generate_name(&info, &mut used), "_default");
-    }
-}
-
-fn make_unique(base: String, used: &mut HashSet<String>) -> String {
-    if !used.contains(&base) {
-        used.insert(base.clone());
-        return base;
-    }
-
-    // Unbounded: a function with hundreds of same-role registers (e.g. a Lottie
-    // animation data module with deeply nested array/object literals) needs more
-    // than a fixed handful of suffixes. A previous `2..100` cap fell back to the
-    // bare `base` once exhausted, so distinct live arrays collapsed to one name and
-    // produced self-referential garbage like `items[3] = items`.
-    let mut i = 2u32;
-    loop {
-        let name = format!("{base}{i}");
-        if !used.contains(&name) {
-            used.insert(name.clone());
-            return name;
-        }
-        i += 1;
     }
 }

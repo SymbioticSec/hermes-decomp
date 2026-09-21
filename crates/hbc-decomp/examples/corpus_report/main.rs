@@ -7,6 +7,7 @@
 //!     decompile-error comments, line count),
 //!   * tallies the expression suite (compiled / gap / decompiled),
 //!   * folds in `roundtrip.tsv` if present (PASS/FAIL per expression).
+//!
 //! Writes `v<N>/quality.json` and an aggregate `CORPUS_REPORT.md`.
 //!
 //! Run: cargo run --release -p hbc-decomp --example corpus_report

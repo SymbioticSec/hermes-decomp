@@ -333,13 +333,10 @@ impl App {
             return "No second file loaded".to_string();
         }
 
-        let content = if self.pipeline_ctx2.is_some() {
+        let content = if let Some(ctx) = self.pipeline_ctx2.as_ref() {
             // Use full pipeline context if available (IPA, Metro, naming)
             let file2 = self.file2.as_ref().unwrap();
-            self.pipeline_ctx2
-                .as_ref()
-                .unwrap()
-                .generate_function_code(file2, function_id)
+            ctx.generate_function_code(file2, function_id)
         } else {
             // Fast fallback while the pipeline builds, no whole-file work on
             // the UI thread (see decompile_content for why).

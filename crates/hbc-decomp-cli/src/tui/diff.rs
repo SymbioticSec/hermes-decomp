@@ -238,7 +238,7 @@ pub fn spawn_diff_status_worker(
         for (name, status) in worker_rx {
             done += 1;
             diff_status.insert(name.clone(), status.clone());
-            if done % 500 == 0 || done == total {
+            if done.is_multiple_of(500) || done == total {
                 debug_log(&format!("[TUI] Diff progress: {done}/{total}"));
             }
             let _ = tx.send(DiffProgressMsg::Item {

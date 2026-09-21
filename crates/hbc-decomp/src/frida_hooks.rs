@@ -403,9 +403,11 @@ mod tests {
     fn generate_script_contains_module_id() {
         let registry = MetroRegistry::new();
         // Insert a fake module if API allows, otherwise empty hooks still generate.
-        let mut opts = FridaHookOptions::default();
-        opts.module_id = 42;
-        opts.exports = vec!["API_BASE".into(), "default".into()];
+        let opts = FridaHookOptions {
+            module_id: 42,
+            exports: vec!["API_BASE".into(), "default".into()],
+            ..FridaHookOptions::default()
+        };
         let bundle = generate_frida_hooks(&registry, opts).unwrap();
         assert!(bundle.before_js.contains("MODULE_ID = 42"));
         assert!(bundle.before_js.contains("API_BASE"));

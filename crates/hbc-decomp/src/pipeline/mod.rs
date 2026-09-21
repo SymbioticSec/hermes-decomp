@@ -312,41 +312,6 @@ pub(crate) fn make_params_distinct(names: impl Iterator<Item = String>) -> Vec<S
         .collect()
 }
 
-#[cfg(test)]
-mod param_name_tests {
-    use super::make_params_distinct;
-
-    fn run(v: &[&str]) -> Vec<String> {
-        make_params_distinct(v.iter().map(|s| (*s).to_string()))
-    }
-
-    #[test]
-    fn a_repeated_name_is_suffixed_rather_than_repeated() {
-        // `function f(arr, arr)` does not parse, and the module goes down with it.
-        assert_eq!(run(&["arr", "arr"]), vec!["arr", "arr2"]);
-        assert_eq!(
-            run(&["overshootClamping", "overshootClamping"]),
-            vec!["overshootClamping", "overshootClamping2"]
-        );
-    }
-
-    #[test]
-    fn three_of_a_kind_keep_counting() {
-        assert_eq!(run(&["x", "x", "x"]), vec!["x", "x2", "x3"]);
-    }
-
-    #[test]
-    fn distinct_names_are_left_exactly_as_recovered() {
-        assert_eq!(run(&["self", "email", "arg2"]), vec!["self", "email", "arg2"]);
-    }
-
-    #[test]
-    fn a_suffix_that_is_already_taken_is_skipped() {
-        // Handing out `x2` when the signature already carries one would only move
-        // the collision.
-        assert_eq!(run(&["x", "x2", "x"]), vec!["x", "x2", "x3"]);
-    }
-}
 
 // Whether the body reads `Parameter(idx)`. Must run on the IR before parameter
 // renaming, which rewrites those nodes into named variables.
@@ -395,4 +360,40 @@ fn build_function_name_index(file: &BytecodeFile) -> crate::analysis::FunctionNa
     }
 
     index
+}
+
+#[cfg(test)]
+mod param_name_tests {
+    use super::make_params_distinct;
+
+    fn run(v: &[&str]) -> Vec<String> {
+        make_params_distinct(v.iter().map(|s| (*s).to_string()))
+    }
+
+    #[test]
+    fn a_repeated_name_is_suffixed_rather_than_repeated() {
+        // `function f(arr, arr)` does not parse, and the module goes down with it.
+        assert_eq!(run(&["arr", "arr"]), vec!["arr", "arr2"]);
+        assert_eq!(
+            run(&["overshootClamping", "overshootClamping"]),
+            vec!["overshootClamping", "overshootClamping2"]
+        );
+    }
+
+    #[test]
+    fn three_of_a_kind_keep_counting() {
+        assert_eq!(run(&["x", "x", "x"]), vec!["x", "x2", "x3"]);
+    }
+
+    #[test]
+    fn distinct_names_are_left_exactly_as_recovered() {
+        assert_eq!(run(&["self", "email", "arg2"]), vec!["self", "email", "arg2"]);
+    }
+
+    #[test]
+    fn a_suffix_that_is_already_taken_is_skipped() {
+        // Handing out `x2` when the signature already carries one would only move
+        // the collision.
+        assert_eq!(run(&["x", "x2", "x"]), vec!["x", "x2", "x3"]);
+    }
 }

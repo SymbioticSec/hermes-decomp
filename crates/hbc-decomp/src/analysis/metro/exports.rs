@@ -303,43 +303,43 @@ mod tests {
 
     #[test]
     fn test_export_assignments() {
-        let mut stmts = Vec::new();
-
-        // exports.foo = func(10)
-        stmts.push(Statement::Assign {
-            target: AssignTarget::Member {
-                object: Expression::Value(Value::Binding(Binding::Variable("exports".into()))),
-                property: "foo".into(),
-            },
-            value: make_func_expr(10),
-        });
-
-        // module.exports.bar = func(20) - This pattern is now handled by the general member assignment
-        stmts.push(Statement::Assign {
-            target: AssignTarget::Member {
-                object: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Binding(Binding::Variable("module".into())))),
-                    property: PropertyKey::String("exports".into()),
-                    optional: false,
+        let stmts = vec![
+            // exports.foo = func(10)
+            Statement::Assign {
+                target: AssignTarget::Member {
+                    object: Expression::Value(Value::Binding(Binding::Variable("exports".into()))),
+                    property: "foo".into(),
                 },
-                property: "bar".into(),
+                value: make_func_expr(10),
             },
-            value: make_func_expr(20),
-        });
-
-        // module.exports = { baz: func(30) }
-        stmts.push(Statement::Assign {
-            target: AssignTarget::Member {
-                object: Expression::Value(Value::Binding(Binding::Variable("module".into()))),
-                property: "exports".into(),
+            // module.exports.bar = func(20), handled by the general member assignment
+            Statement::Assign {
+                target: AssignTarget::Member {
+                    object: Expression::Member {
+                        object: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+                            "module".into(),
+                        )))),
+                        property: PropertyKey::String("exports".into()),
+                        optional: false,
+                    },
+                    property: "bar".into(),
+                },
+                value: make_func_expr(20),
             },
-            value: Expression::Object {
-                properties: vec![crate::ir::ObjectProperty {
-                    key: PropertyKey::String("baz".into()),
-                    value: make_func_expr(30),
-                }],
+            // module.exports = { baz: func(30) }
+            Statement::Assign {
+                target: AssignTarget::Member {
+                    object: Expression::Value(Value::Binding(Binding::Variable("module".into()))),
+                    property: "exports".into(),
+                },
+                value: Expression::Object {
+                    properties: vec![crate::ir::ObjectProperty {
+                        key: PropertyKey::String("baz".into()),
+                        value: make_func_expr(30),
+                    }],
+                },
             },
-        });
+        ];
 
         let mut module = MetroModule {
             module_id: 1,

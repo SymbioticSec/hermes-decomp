@@ -5,6 +5,7 @@ mod empty_blocks;
 pub(crate) mod undefined;
 pub(crate) mod redundant;
 mod ensure_return;
+#[cfg(test)]
 mod tests;
 
 use crate::ir::Statement;

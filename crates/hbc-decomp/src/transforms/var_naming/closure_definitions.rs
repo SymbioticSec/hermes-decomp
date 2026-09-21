@@ -934,7 +934,7 @@ mod tests {
         let mut param_names = BTreeMap::new();
         rename_closure_variables_cross_function(&mut all_ir, &mut ctx, &mut param_names);
         assert!(
-            param_names.get(&1).is_none()
+            !param_names.contains_key(&1)
                 || param_names[&1].iter().all(|n| n.as_deref() != Some("login")),
             "must not steal the require slot name from an object key"
         );

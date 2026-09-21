@@ -202,6 +202,23 @@ fn try_load(path: &Path, want: &CacheHeader) -> Option<PipelineContext> {
     Some(PipelineContext::from_snapshot(snap))
 }
 
+
+fn try_save(path: &Path, header: &CacheHeader, ctx: &PipelineContext) -> std::io::Result<()> {
+    // Write to a temp file then rename, so a concurrent reader never sees a
+    // half-written cache.
+    let tmp = path.with_extension("hdcache.tmp");
+    {
+        let f = std::fs::File::create(&tmp)?;
+        let mut writer = BufWriter::new(f);
+        let map_err = |e: rmp_serde::encode::Error| std::io::Error::other(e.to_string());
+        rmp_serde::encode::write(&mut writer, header).map_err(map_err)?;
+        rmp_serde::encode::write(&mut writer, &ctx.to_snapshot()).map_err(map_err)?;
+        use std::io::Write;
+        writer.flush()?;
+    }
+    std::fs::rename(&tmp, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,20 +324,4 @@ mod tests {
         assert_ne!(a, [0u8; 32]);
         assert_ne!(a, [0xFF; 32]);
     }
-}
-
-fn try_save(path: &Path, header: &CacheHeader, ctx: &PipelineContext) -> std::io::Result<()> {
-    // Write to a temp file then rename, so a concurrent reader never sees a
-    // half-written cache.
-    let tmp = path.with_extension("hdcache.tmp");
-    {
-        let f = std::fs::File::create(&tmp)?;
-        let mut writer = BufWriter::new(f);
-        let map_err = |e: rmp_serde::encode::Error| std::io::Error::other(e.to_string());
-        rmp_serde::encode::write(&mut writer, header).map_err(map_err)?;
-        rmp_serde::encode::write(&mut writer, &ctx.to_snapshot()).map_err(map_err)?;
-        use std::io::Write;
-        writer.flush()?;
-    }
-    std::fs::rename(&tmp, path)
 }

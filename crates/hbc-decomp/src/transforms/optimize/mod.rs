@@ -3,6 +3,7 @@ pub(crate) mod ternary;
 mod dead_assign;
 mod dead_bindings;
 mod merge_returns;
+#[cfg(test)]
 mod tests;
 
 use crate::ir::Statement;
