@@ -39,6 +39,11 @@ pub struct DecompileOptionsV2 {
     /// a hash of their stable content instead of the volatile Metro id, so the same
     /// module keeps the same name across builds.
     pub stable: bool,
+    /// Path to a proposal artifact whose names are applied once the bytecode has
+    /// confirmed them (see `crate::cascade`). A proposal the bytecode refuses
+    /// changes nothing. The on-disk analysis cache does not key on this, so a run
+    /// that sets it has to bypass the cache.
+    pub cascade: Option<std::path::PathBuf>,
 }
 
 impl DecompileOptionsV2 {
@@ -52,6 +57,7 @@ impl DecompileOptionsV2 {
             assembly_mode: false,
             deep: false,
             stable: false,
+            cascade: None,
         }
     }
 
@@ -65,6 +71,7 @@ impl DecompileOptionsV2 {
             assembly_mode: false,
             deep: false,
             stable: false,
+            cascade: None,
         }
     }
 }

@@ -169,6 +169,9 @@ impl PipelineContext {
             inline_bodies: Arc::new(snap.inline_bodies),
             child_functions,
             ancestor_env_slots: BTreeMap::new(),
+            // A cached context was built without an artifact: the cache key does
+            // not carry one, so a run that wants confirmed names bypasses it.
+            cascade_names: BTreeMap::new(),
             worklet_sources: snap.worklet_sources,
         };
         // Also derived from closure_ctx; recompute rather than serialize.
@@ -236,6 +239,9 @@ mod tests {
             inline_bodies: Arc::new(BTreeMap::from([(42u32, "body".to_string())])),
             child_functions: BTreeMap::new(),
             ancestor_env_slots: BTreeMap::new(),
+            // A cached context was built without an artifact: the cache key does
+            // not carry one, so a run that wants confirmed names bypasses it.
+            cascade_names: BTreeMap::new(),
             worklet_sources: BTreeMap::new(),
         };
 

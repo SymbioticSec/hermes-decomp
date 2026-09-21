@@ -62,6 +62,7 @@ pub mod pipeline;
 pub mod util;
 
 pub mod analysis;
+pub mod cascade;
 pub mod constants;
 pub mod frida_hooks;
 pub mod inspect;

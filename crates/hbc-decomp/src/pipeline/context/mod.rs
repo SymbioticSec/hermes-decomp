@@ -44,6 +44,11 @@ pub struct PipelineContext {
     // Recovered Reanimated worklet sources (function name → original source),
     // extracted from `__initData.code` string constants in the bundle.
     pub(super) worklet_sources: BTreeMap<String, String>,
+    // Names a proposal artifact supplied and the bytecode confirmed. Empty unless
+    // a run asked for one. The rendered header name otherwise comes from the
+    // bytecode's own string table, which is where a confirmed name has to override
+    // it: a function Hermes stored no name for renders as `fN`.
+    pub(super) cascade_names: BTreeMap<u32, String>,
 }
 
 impl PipelineContext {
@@ -61,6 +66,7 @@ impl PipelineContext {
             include_offsets: user_options.include_offsets || user_options.assembly_mode,
             deep: user_options.deep,
             stable: user_options.stable,
+            cascade: user_options.cascade.clone(),
             ..DecompileOptionsV2::optimized()
         };
 
@@ -87,6 +93,14 @@ impl PipelineContext {
         let phase = super::progress::Phase::start(format!("IR generation ({n_funcs} functions)"));
         let mut all_ir = Self::generate_all_optimized_ir(file, format, &options, &mut closure_ctx);
         phase.finish();
+
+        // STAGE W4b: Apply the names a proposal artifact carries, for the ones this
+        // bytecode confirms. Runs before naming so a confirmed name reaches the call
+        // resolution index and the rendered bodies like any name the bytecode gave.
+        let cascade_names = match &options.cascade {
+            Some(path) => apply_cascade_artifact(path, file, &mut all_ir),
+            None => BTreeMap::new(),
+        };
 
         // STAGE W5-W11: Name resolution (module names, closures, exports, IPA)
         let phase = super::progress::Phase::start("naming / IPA / closures");
@@ -154,6 +168,7 @@ impl PipelineContext {
             child_functions,
             ancestor_env_slots: BTreeMap::new(),
             worklet_sources,
+            cascade_names,
         };
         // Precompute the ancestor env-slot names once (top-down, O(n)); both the
         // bulk render path and the per-function path read this instead of rebuilding.
@@ -174,4 +189,43 @@ impl PipelineContext {
 
         Ok(ctx)
     }
+}
+
+// Load a proposal artifact, verify it against this bundle, and set the names it
+// confirmed. A failure to read or parse is reported and otherwise ignored: an
+// unusable artifact must not stop a decompilation, it just names nothing.
+fn apply_cascade_artifact(
+    path: &std::path::Path,
+    file: &BytecodeFile,
+    all_ir: &mut std::collections::BTreeMap<u32, Vec<crate::ir::Statement>>,
+) -> BTreeMap<u32, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) => {
+            log::warn!(target: "cascade", "cannot read {}: {e}", path.display());
+            return BTreeMap::new();
+        }
+    };
+    let artifact: crate::cascade::Artifact = match serde_json::from_str(&text) {
+        Ok(artifact) => artifact,
+        Err(e) => {
+            log::warn!(target: "cascade", "cannot parse {}: {e}", path.display());
+            return BTreeMap::new();
+        }
+    };
+    let verified = crate::cascade::verify::verify_against_file(&artifact, file, all_ir);
+    let applied = crate::cascade::apply(all_ir, &verified);
+    for (proposal, reason) in &verified.rejected {
+        log::info!(
+            target: "cascade",
+            "refused fn{} as {}: {reason}",
+            proposal.function_id, proposal.name
+        );
+    }
+    super::progress::status(format!(
+        "cascade: {} of {} proposals confirmed, {applied} names applied",
+        verified.confirmed(),
+        verified.total()
+    ));
+    verified.names
 }

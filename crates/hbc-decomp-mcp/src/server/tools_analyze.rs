@@ -80,6 +80,7 @@ impl HermesService {
                 assembly_mode: params.assembly,
                 deep: false,
                 stable: false,
+                cascade: None,
             };
             let code = if params.resolve_closures {
                 let closure_ctx =

@@ -157,7 +157,12 @@ impl PipelineContext {
         transforms::rename_reserved_words(&mut statements);
 
         // Get function name
-        let function_name = get_function_name(file, function_id);
+        // A name the bytecode confirmed for a proposal wins over the one the
+        // string table carries, which for an obfuscated helper is absent anyway.
+        let function_name = match self.cascade_names.get(&function_id) {
+            Some(name) => name.clone(),
+            None => get_function_name(file, function_id),
+        };
 
         // Get params with IPA names
         let params = if let Some(names) = self.global_analysis.param_names.get(&function_id) {

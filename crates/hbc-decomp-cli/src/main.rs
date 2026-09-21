@@ -174,6 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             from_module,
             module_depth,
             no_cache,
+            cascade,
         } => {
             // Progress on stderr so long full-bundle runs are not silent.
             // Still quiet for tiny single-function dumps unless writing to a file.
@@ -207,7 +208,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 assembly_mode: assembly,
                 deep,
                 stable,
+                cascade: cascade.clone(),
             };
+            // The analysis cache does not key on the artifact, so a cached context
+            // would be served with none of the confirmed names applied.
+            let no_cache = no_cache || cascade.is_some();
 
             if check_dead_code {
                 let analysis = hbc_decomp::analyze_module(&file, &format)?;
@@ -453,6 +458,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let file = load_file(&input, layout, function_layout)?;
             commands::dump_cmd::run_dump(&file, kind, json);
+        }
+        Command::Cascade { action } => {
+            use cli_args::CascadeAction;
+            let (input, format_version) = match &action {
+                CascadeAction::Extract { input, format_version, .. }
+                | CascadeAction::Verify { input, format_version, .. } => (input.clone(), *format_version),
+            };
+            let (file, bytes) = helpers::load_file_with_bytes(
+                &input,
+                cli_args::LayoutArg::Auto,
+                cli_args::FunctionLayoutArg::Auto,
+            )?;
+            let format = load_format(&file, format_version)?;
+            let cache_path = hbc_decomp::default_cache_path(&input);
+            match action {
+                CascadeAction::Extract { output, .. } => commands::cascade_cmd::run_extract(
+                    &file,
+                    &format,
+                    &bytes,
+                    &cache_path,
+                    output.as_deref(),
+                )?,
+                CascadeAction::Verify { artifact, .. } => commands::cascade_cmd::run_verify(
+                    &file,
+                    &format,
+                    &bytes,
+                    &cache_path,
+                    &artifact,
+                )?,
+            }
         }
         Command::Callgraph {
             input,

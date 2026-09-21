@@ -1,5 +1,6 @@
 pub mod bindiff_cmd;
 pub mod callgraph_cmd;
+pub mod cascade_cmd;
 pub mod debug_cmd;
 pub mod decompile_cmd;
 pub mod dump_cmd;

@@ -162,6 +162,11 @@ pub enum Command {
         /// Disable the on-disk analysis cache (`<input>.hdcache`); always re-analyze.
         #[arg(long)]
         no_cache: bool,
+        /// Apply the names in a proposal artifact (see `cascade extract` / `cascade verify`)
+        /// for the proposals this bytecode confirms. Implies --no-cache, since the cache
+        /// does not key on the artifact.
+        #[arg(long)]
+        cascade: Option<PathBuf>,
     },
     /// Show closure mappings for a function (what each closure_X refers to).
     Closures {
@@ -337,6 +342,15 @@ pub enum Command {
         function_layout: FunctionLayoutArg,
     },
     /// Print the bundle call graph (caller → callee edges).
+    /// Extract the functions worth proposing a name for, or verify proposals against the bytecode.
+    ///
+    /// The proposal itself is made offline: nothing here contacts a network, and a
+    /// proposal only changes the output once the bytecode confirms it.
+    Cascade {
+        #[command(subcommand)]
+        action: CascadeAction,
+    },
+
     Callgraph {
         /// Path to the .hbc file or .bundle.
         input: PathBuf,
@@ -536,4 +550,29 @@ pub enum FunctionLayoutArg {
     Auto,
     Legacy16,
     Modern12,
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum CascadeAction {
+    /// Write out the candidate functions, as JSON, for a reader to propose names for.
+    Extract {
+        /// Path to the .hbc file or .bundle.
+        input: PathBuf,
+        /// Write to this file instead of standard output.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Override the detected HBC bytecode version.
+        #[arg(long)]
+        format_version: Option<u32>,
+    },
+    /// Check a proposal artifact against the bytecode and report what it confirms.
+    Verify {
+        /// Path to the .hbc file or .bundle.
+        input: PathBuf,
+        /// Path to the proposal artifact (JSON).
+        artifact: PathBuf,
+        /// Override the detected HBC bytecode version.
+        #[arg(long)]
+        format_version: Option<u32>,
+    },
 }
