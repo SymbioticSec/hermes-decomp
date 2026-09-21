@@ -357,7 +357,7 @@ impl Codegen {
         // exported value is a different expression from the local, so the local
         // cannot simply be promoted: the export takes a private binding and is
         // published under the name it always had.
-        dedupe_const_export_collisions(&mut body_stmts, &mut exports);
+        dedupe_const_export_collisions(&imports, &mut body_stmts, &mut exports);
 
         // A hoisted `let X;` in front of a `class X` or `function X` redeclares it,
         // which a parser rejects and takes the whole module down with it. The hoist
@@ -767,9 +767,43 @@ mod const_export_tests {
         // collides with, so promoting the local would change what is exported.
         let mut body = v(&["const StackToolbar = load();\n"]);
         let mut exports = v(&["export const StackToolbar = StackToolbar.default;"]);
-        dedupe_const_export_collisions(&mut body, &mut exports);
+        dedupe_const_export_collisions(&[], &mut body, &mut exports);
         assert_eq!(exports, v(&["export { StackToolbar_export as StackToolbar };"]));
         assert_eq!(body[1], "const StackToolbar_export = StackToolbar.default;\n");
+    }
+
+    // An interop unwrap comes out as `import X from "X"` then
+    // `export const X = X.X`, which binds X twice at module level and loses the
+    // whole module. The import binds the name just as a local const does.
+    #[test]
+    fn an_export_colliding_with_an_import_takes_a_private_binding() {
+        let imports = v(&["import BasicAlertDialog from \"BasicAlertDialog\";"]);
+        let mut body = v(&[]);
+        let mut exports = v(&[
+            "export const BasicAlertDialog = BasicAlertDialog.BasicAlertDialog;",
+        ]);
+        dedupe_const_export_collisions(&imports, &mut body, &mut exports);
+        assert_eq!(
+            exports,
+            v(&["export { BasicAlertDialog_export as BasicAlertDialog };"])
+        );
+        assert_eq!(
+            body[0],
+            "const BasicAlertDialog_export = BasicAlertDialog.BasicAlertDialog;\n"
+        );
+    }
+
+    #[test]
+    fn a_named_import_specifier_binds_its_local_name() {
+        assert_eq!(
+            super::import_bound_names("import a, { b, c as d } from \"m\";"),
+            vec!["a".to_string(), "b".to_string(), "d".to_string()]
+        );
+        assert_eq!(
+            super::import_bound_names("import * as ns from \"m\";"),
+            vec!["ns".to_string()]
+        );
+        assert!(super::import_bound_names("const x = 1;").is_empty());
     }
 
     #[test]
@@ -777,7 +811,7 @@ mod const_export_tests {
         let mut body = v(&["const other = 1;\n"]);
         let before = v(&["export const StackToolbar = load();"]);
         let mut exports = before.clone();
-        dedupe_const_export_collisions(&mut body, &mut exports);
+        dedupe_const_export_collisions(&[], &mut body, &mut exports);
         assert_eq!(exports, before);
         assert_eq!(body.len(), 1, "nothing should be appended");
     }
@@ -786,7 +820,7 @@ mod const_export_tests {
     fn a_taken_alias_is_skipped() {
         let mut body = v(&["const X = 1;\n", "const X_export = 2;\n"]);
         let mut exports = v(&["export const X = X.default;"]);
-        dedupe_const_export_collisions(&mut body, &mut exports);
+        dedupe_const_export_collisions(&[], &mut body, &mut exports);
         assert_eq!(exports, v(&["export { X_export2 as X };"]));
     }
 
@@ -796,7 +830,7 @@ mod const_export_tests {
         let mut body = v(&["export const X = 1;\n"]);
         let before = v(&["export const X = load();"]);
         let mut exports = before.clone();
-        dedupe_const_export_collisions(&mut body, &mut exports);
+        dedupe_const_export_collisions(&[], &mut body, &mut exports);
         assert_eq!(exports, before);
     }
 }
@@ -1064,10 +1098,70 @@ fn drop_hoists_shadowed_by_declarations(body: &mut [String]) {
 // here is an expression of its own, often reading the very local it collides with
 // (`export const X = X.default`). The value therefore moves into a private
 // binding, and the export publishes that binding under the original name.
-fn dedupe_const_export_collisions(body_stmts: &mut Vec<String>, exports: &mut [String]) {
+// `const X = ...` in the body, or `import X from ...`, plus `export const X = ...`
+// binds X twice at module level and a parser rejects the whole module. The export
+// takes a private binding and is published under the name it always had.
+//
+// The import side matters as much as the body side: an interop unwrap comes out as
+// `import X from "X"` followed by `export const X = X.X`, and that shape alone
+// accounted for 40 of the modules that would not parse.
+// The names an import line binds: the default, the namespace, and each specifier
+// under its local name when it is aliased.
+fn import_bound_names(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let t = line.trim();
+    let Some(rest) = t.strip_prefix("import ") else {
+        return out;
+    };
+    let Some(head) = rest.split(" from ").next() else {
+        return out;
+    };
+    let head = head.trim();
+    let mut push = |name: &str| {
+        let name = name.trim();
+        let local = name.rsplit(" as ").next().unwrap_or(name).trim();
+        if crate::util::is_valid_identifier(local) {
+            out.push(local.to_string());
+        }
+    };
+    if let Some(ns) = head.strip_prefix("* as ") {
+        push(ns);
+        return out;
+    }
+    // `X`, `{ a, b as c }`, or `X, { a }`.
+    let (default_part, braced) = match head.find('{') {
+        Some(i) => (&head[..i], Some(&head[i..])),
+        None => (head, None),
+    };
+    for part in default_part.split(',') {
+        if !part.trim().is_empty() {
+            push(part);
+        }
+    }
+    if let Some(braced) = braced {
+        let inner = braced.trim_start_matches('{').trim_end_matches('}');
+        for spec in inner.split(',') {
+            if !spec.trim().is_empty() {
+                push(spec);
+            }
+        }
+    }
+    out
+}
+
+fn dedupe_const_export_collisions(
+    imports: &[String],
+    body_stmts: &mut Vec<String>,
+    exports: &mut [String],
+) {
     use std::collections::HashSet;
 
     let mut declared: HashSet<String> = HashSet::new();
+    for line in imports {
+        for name in import_bound_names(line) {
+            declared.insert(name);
+        }
+    }
     for body in body_stmts.iter() {
         for line in body.lines() {
             let t = line.trim_start();

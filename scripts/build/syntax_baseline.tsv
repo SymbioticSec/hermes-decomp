@@ -3,4 +3,4 @@
 # A bundle that is not on this machine is skipped, not failed: the large
 # inputs are local. Lower a ceiling whenever the real number drops, so a
 # regression cannot hide under an old allowance.
-morning.index.android.bundle	--stable --deep	251
+morning.index.android.bundle	--stable --deep	211
