@@ -342,6 +342,13 @@ impl Codegen {
         // `function name(){…}` + `export const name = …` → `export function name`
         dedupe_function_export_collisions(&mut body_stmts, &mut exports);
 
+        // `const X = ...` in the body plus `export const X = ...` binds X twice at
+        // module level, which a parser rejects and the whole module is lost. The
+        // exported value is a different expression from the local, so the local
+        // cannot simply be promoted: the export takes a private binding and is
+        // published under the name it always had.
+        dedupe_const_export_collisions(&mut body_stmts, &mut exports);
+
         // A hoisted `let X;` in front of a `class X` or `function X` redeclares it,
         // which a parser rejects and takes the whole module down with it. The hoist
         // is inserted per function, before the class reconstruction has turned the
@@ -736,6 +743,55 @@ fn undeclared_assignments(imports: &[String], body: &[String], exports: &[String
 }
 
 #[cfg(test)]
+mod const_export_tests {
+    use super::dedupe_const_export_collisions;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|x| (*x).to_string()).collect()
+    }
+
+    #[test]
+    fn an_export_colliding_with_a_local_takes_a_private_binding() {
+        // `const X` plus `export const X` binds X twice at module level, and the
+        // module stops parsing. The exported value reads the very local it
+        // collides with, so promoting the local would change what is exported.
+        let mut body = v(&["const StackToolbar = load();\n"]);
+        let mut exports = v(&["export const StackToolbar = StackToolbar.default;"]);
+        dedupe_const_export_collisions(&mut body, &mut exports);
+        assert_eq!(exports, v(&["export { StackToolbar_export as StackToolbar };"]));
+        assert_eq!(body[1], "const StackToolbar_export = StackToolbar.default;\n");
+    }
+
+    #[test]
+    fn an_export_with_no_local_of_that_name_is_untouched() {
+        let mut body = v(&["const other = 1;\n"]);
+        let before = v(&["export const StackToolbar = load();"]);
+        let mut exports = before.clone();
+        dedupe_const_export_collisions(&mut body, &mut exports);
+        assert_eq!(exports, before);
+        assert_eq!(body.len(), 1, "nothing should be appended");
+    }
+
+    #[test]
+    fn a_taken_alias_is_skipped() {
+        let mut body = v(&["const X = 1;\n", "const X_export = 2;\n"]);
+        let mut exports = v(&["export const X = X.default;"]);
+        dedupe_const_export_collisions(&mut body, &mut exports);
+        assert_eq!(exports, v(&["export { X_export2 as X };"]));
+    }
+
+    #[test]
+    fn a_declaration_already_exported_is_not_counted_as_a_local() {
+        // `export const X` in the body is the export itself, not a competing local.
+        let mut body = v(&["export const X = 1;\n"]);
+        let before = v(&["export const X = load();"]);
+        let mut exports = before.clone();
+        dedupe_const_export_collisions(&mut body, &mut exports);
+        assert_eq!(exports, before);
+    }
+}
+
+#[cfg(test)]
 mod hoist_tests {
     use super::drop_hoists_shadowed_by_declarations;
 
@@ -990,4 +1046,64 @@ fn drop_hoists_shadowed_by_declarations(body: &mut [String]) {
             *chunk = rebuilt;
         }
     }
+}
+
+// Resolve `const X` in the body colliding with `export const X`.
+//
+// Unlike a function, whose declaration can simply be promoted, the exported value
+// here is an expression of its own, often reading the very local it collides with
+// (`export const X = X.default`). The value therefore moves into a private
+// binding, and the export publishes that binding under the original name.
+fn dedupe_const_export_collisions(body_stmts: &mut Vec<String>, exports: &mut [String]) {
+    use std::collections::HashSet;
+
+    let mut declared: HashSet<String> = HashSet::new();
+    for body in body_stmts.iter() {
+        for line in body.lines() {
+            let t = line.trim_start();
+            if t.starts_with("export ") {
+                continue;
+            }
+            let rest = ["const ", "let ", "var "]
+                .iter()
+                .find_map(|kw| t.strip_prefix(*kw));
+            let Some(rest) = rest else { continue };
+            if let Some(name) = rest
+                .split(|c: char| c == '=' || c == ';' || c.is_whitespace())
+                .next()
+            {
+                if !name.is_empty() && crate::util::is_valid_identifier(name) {
+                    declared.insert(name.to_string());
+                }
+            }
+        }
+    }
+    if declared.is_empty() {
+        return;
+    }
+
+    let mut extra: Vec<String> = Vec::new();
+    for exp in exports.iter_mut() {
+        let Some(rest) = exp.strip_prefix("export const ") else {
+            continue;
+        };
+        let Some((name, value)) = rest.split_once(" = ") else {
+            continue;
+        };
+        let name = name.trim().to_string();
+        if !declared.contains(&name) {
+            continue;
+        }
+        let value = value.trim_end().trim_end_matches(';');
+        let mut alias = format!("{name}_export");
+        let mut n = 2u32;
+        while declared.contains(&alias) {
+            alias = format!("{name}_export{n}");
+            n += 1;
+        }
+        declared.insert(alias.clone());
+        extra.push(format!("const {alias} = {value};\n"));
+        *exp = format!("export {{ {alias} as {name} }};");
+    }
+    body_stmts.extend(extra);
 }
