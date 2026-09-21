@@ -139,6 +139,37 @@ pub enum MethodKind {
     Setter,
 }
 
+
+impl From<crate::ir::Binding> for AssignTarget {
+    fn from(b: crate::ir::Binding) -> Self {
+        match b {
+            crate::ir::Binding::Register(r) => AssignTarget::Register(r),
+            crate::ir::Binding::Variable(n) => AssignTarget::Variable(n),
+            crate::ir::Binding::ClosureVar { level, slot } => {
+                AssignTarget::ClosureVar { level, slot }
+            }
+        }
+    }
+}
+
+impl AssignTarget {
+    /// The binding this target writes, when it names one directly. A member, an
+    /// index or a destructuring pattern writes through something else and yields
+    /// `None`, which is exactly the distinction a caller needs before treating a
+    /// target as a plain name.
+    pub fn as_binding(&self) -> Option<crate::ir::Binding> {
+        match self {
+            AssignTarget::Register(r) => Some(crate::ir::Binding::Register(*r)),
+            AssignTarget::Variable(n) => Some(crate::ir::Binding::Variable(n.clone())),
+            AssignTarget::ClosureVar { level, slot } => Some(crate::ir::Binding::ClosureVar {
+                level: *level,
+                slot: *slot,
+            }),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AssignTarget {
     Variable(String),
