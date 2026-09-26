@@ -1,16 +1,27 @@
+use super::define_property::{
+    infer_name_from_all_define_properties, infer_name_from_define_property,
+};
 use super::is_meaningful_require_name;
-use super::define_property::{infer_name_from_all_define_properties, infer_name_from_define_property};
 use crate::analysis::metro::detection::is_meaningful_name;
 use crate::analysis::metro::registry::FactoryRoles;
-use crate::ir::{Binding, target_to_key, Expression, PropertyKey, Statement, Value};
-use std::collections::HashMap;
+use crate::ir::{target_to_key, Binding, Expression, PropertyKey, Statement, Value};
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+
+// A module name and whether it is the function name of the module's default
+// export, the one source that identifies the module itself: a Babel helper
+// module is `module.exports = function _slicedToArray`, and fourteen copies
+// of it are all `_slicedToArray`.
+pub(super) struct InferredName {
+    pub name: String,
+    pub from_default_export: bool,
+}
 
 pub(super) fn infer_module_name_from_stmts(
     stmts: &[Statement],
     functions: &BTreeMap<u32, Vec<Statement>>,
     visited: &mut std::collections::HashSet<u32>,
-) -> Option<String> {
+) -> Option<InferredName> {
     // Pre-pass: collect variable definitions for descriptor/value lookup
     let mut var_defs: HashMap<String, &Expression> = HashMap::new();
     for stmt in stmts {
@@ -27,14 +38,119 @@ pub(super) fn infer_module_name_from_stmts(
         }
     }
 
+    // The default export's own function name comes first, before any
+    // export key or incidental function: `exports.default = function toDate`
+    // named its module `_typeof` after the helper declared above it.
+    for stmt in stmts {
+        let Statement::Assign { target, value } = stmt else {
+            continue;
+        };
+        if !is_default_export_target(target) {
+            continue;
+        }
+        let function_name = match value {
+            Expression::Function { name: Some(n), .. } => Some(n.clone()),
+            Expression::Value(Value::Binding(Binding::Variable(v))) => match var_defs.get(v) {
+                Some(Expression::Function { name: Some(n), .. }) => Some(n.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(n) = function_name {
+            if is_meaningful_name(&n) && is_meaningful_require_name(&n) {
+                return Some(InferredName {
+                    name: n,
+                    from_default_export: true,
+                });
+            }
+        }
+    }
+
+    infer_module_name_from_stmts_heuristic(stmts, functions, visited, &var_defs).map(|name| {
+        InferredName {
+            name,
+            from_default_export: false,
+        }
+    })
+}
+
+// The function name of the module's default export, if it has one.
+pub(super) fn default_export_function_name(stmts: &[Statement]) -> Option<String> {
+    let mut var_defs: HashMap<String, &Expression> = HashMap::new();
+    for stmt in stmts {
+        match stmt {
+            Statement::Let { name, value, .. } => {
+                var_defs.insert(name.clone(), value);
+            }
+            Statement::Assign { target, value } => {
+                if let Some(name) = target_to_key(target) {
+                    var_defs.insert(name, value);
+                }
+            }
+            _ => {}
+        }
+    }
+    for stmt in stmts {
+        let Statement::Assign { target, value } = stmt else {
+            continue;
+        };
+        if !is_default_export_target(target) {
+            continue;
+        }
+        let function_name = match value {
+            Expression::Function { name: Some(n), .. } => Some(n.clone()),
+            Expression::Value(Value::Binding(Binding::Variable(v))) => match var_defs.get(v) {
+                Some(Expression::Function { name: Some(n), .. }) => Some(n.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(n) = function_name {
+            if is_meaningful_name(&n) && is_meaningful_require_name(&n) {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+// `module.exports = …` or `exports.default = …`, under any spelling of the
+// factory parameters.
+fn is_default_export_target(target: &crate::ir::AssignTarget) -> bool {
+    let crate::ir::AssignTarget::Member { object, property } = target else {
+        return false;
+    };
+    let (is_module, is_exports) = match object {
+        Expression::Value(Value::Binding(Binding::Variable(n))) => (
+            FactoryRoles::matches_module_name(n),
+            FactoryRoles::matches_exports_name(n),
+        ),
+        Expression::Value(Value::Parameter(idx)) => (
+            FactoryRoles::is_module_idx(*idx),
+            FactoryRoles::is_exports_idx(*idx),
+        ),
+        _ => (false, false),
+    };
+    (is_module && property == "exports") || (is_exports && property == "default")
+}
+
+fn infer_module_name_from_stmts_heuristic(
+    stmts: &[Statement],
+    functions: &BTreeMap<u32, Vec<Statement>>,
+    visited: &mut std::collections::HashSet<u32>,
+    var_defs: &HashMap<String, &Expression>,
+) -> Option<String> {
     for stmt in stmts {
         match stmt {
             Statement::Assign { target, value } => {
                 let is_export = match target {
-                    crate::ir::AssignTarget::Binding(Binding::Variable(n)) => FactoryRoles::matches_exports_name(n),
+                    crate::ir::AssignTarget::Binding(Binding::Variable(n)) => {
+                        FactoryRoles::matches_exports_name(n)
+                    }
                     crate::ir::AssignTarget::Member { object, .. } => match object {
                         Expression::Value(Value::Binding(Binding::Variable(n))) => {
-                            FactoryRoles::matches_module_name(n) || FactoryRoles::matches_exports_name(n)
+                            FactoryRoles::matches_module_name(n)
+                                || FactoryRoles::matches_exports_name(n)
                         }
                         Expression::Value(Value::Parameter(idx)) => {
                             FactoryRoles::is_module_idx(*idx) || FactoryRoles::is_exports_idx(*idx)
@@ -58,30 +174,26 @@ pub(super) fn infer_module_name_from_stmts(
                         }
                     }
                     if let crate::ir::AssignTarget::Member { property, .. } = target {
-                        if property != "default" && property != "exports" && property != "__esModule"
+                        if property != "default"
+                            && property != "exports"
+                            && property != "__esModule"
                             && is_meaningful_name(property)
                         {
                             return Some(property.clone());
                         }
                     }
                 }
-
-                if let Some(name) = infer_from_expr(value, functions, visited) {
-                    return Some(name);
-                }
+                // A value stored anywhere else names nothing: `_typeof = function
+                // _typeof` above the real export, `hooks` inside moment's wrapper.
             }
             Statement::Expr(expr) => {
-                if let Some(name) = infer_name_from_define_property(expr, &var_defs, functions, visited) {
+                if let Some(name) =
+                    infer_name_from_define_property(expr, var_defs, functions, visited)
+                {
                     return Some(name);
                 }
-                if let Some(name) = infer_from_expr(expr, functions, visited) {
-                    return Some(name);
-                }
-            }
-            Statement::Return(Some(value)) => {
-                if let Some(name) = infer_from_expr(value, functions, visited) {
-                    return Some(name);
-                }
+                // A bare call names nothing: `registerAsset({…})` in every
+                // packaged asset module gave 3 030 modules one name.
             }
             _ => {}
         }
@@ -96,7 +208,9 @@ pub(super) fn infer_module_name_from_stmts(
         };
         if let Some(Expression::Call { callee, arguments }) = call {
             let is_export_star = match &**callee {
-                Expression::Value(Value::Binding(Binding::Variable(n))) => n.contains("exportStar") || n.contains("__export"),
+                Expression::Value(Value::Binding(Binding::Variable(n))) => {
+                    n.contains("exportStar") || n.contains("__export")
+                }
                 _ => false,
             };
             if is_export_star && !arguments.is_empty() {
@@ -112,10 +226,13 @@ pub(super) fn infer_module_name_from_stmts(
         if let Statement::Assign { target, value } = stmt {
             let is_default_export = match target {
                 crate::ir::AssignTarget::Member { object, property } => {
-                    property == "default" && match object {
-                        Expression::Value(Value::Binding(Binding::Variable(n))) => FactoryRoles::matches_exports_name(n),
-                        _ => false,
-                    }
+                    property == "default"
+                        && match object {
+                            Expression::Value(Value::Binding(Binding::Variable(n))) => {
+                                FactoryRoles::matches_exports_name(n)
+                            }
+                            _ => false,
+                        }
                 }
                 _ => false,
             };
@@ -127,7 +244,9 @@ pub(super) fn infer_module_name_from_stmts(
                             _ => None,
                         };
                         if let Some(k) = key_name {
-                            if k.starts_with(|c: char| c.is_ascii_uppercase()) && is_meaningful_name(k) {
+                            if k.starts_with(|c: char| c.is_ascii_uppercase())
+                                && is_meaningful_name(k)
+                            {
                                 return Some(k.to_string());
                             }
                         }
@@ -153,26 +272,8 @@ pub(super) fn infer_module_name_from_stmts(
         return Some(name);
     }
 
-    // Final fallback: first meaningful Let/const function definition
-    for stmt in stmts {
-        if let Statement::Let { name, value, .. } = stmt {
-            if matches!(value, Expression::Function { .. }) && is_meaningful_name(name) {
-                return Some(name.clone());
-            }
-            if let Expression::Function { name: Some(fname), .. } = value {
-                if is_meaningful_name(fname) {
-                    return Some(fname.clone());
-                }
-            }
-        }
-        if let Statement::Assign { target: crate::ir::AssignTarget::Binding(Binding::Variable(_)), value } = stmt {
-            if let Expression::Function { name: Some(fname), .. } = value {
-                if is_meaningful_name(fname) {
-                    return Some(fname.clone());
-                }
-            }
-        }
-    }
+    // No fallback on the first function declared in the body: `noop`, `n`,
+    // `apply` named react, chroma and lodash after an incidental helper.
 
     // Try naming from requireModule.get/getEnforcing("Name")
     for stmt in stmts {
@@ -224,7 +325,9 @@ pub(super) fn infer_module_name_from_stmts(
                 };
                 if method == "registerComponent" || method == "registerCallableModule" {
                     for arg in arguments {
-                        if let Expression::Value(Value::Constant(crate::ir::Constant::String(s))) = arg {
+                        if let Expression::Value(Value::Constant(crate::ir::Constant::String(s))) =
+                            arg
+                        {
                             if is_meaningful_name(s) {
                                 return Some(s.clone());
                             }
@@ -240,7 +343,9 @@ pub(super) fn infer_module_name_from_stmts(
         if let Statement::Assign { target, value } = stmt {
             if let crate::ir::AssignTarget::Member { property, .. } = target {
                 if property == "displayName" {
-                    if let Expression::Value(Value::Constant(crate::ir::Constant::String(s))) = value {
+                    if let Expression::Value(Value::Constant(crate::ir::Constant::String(s))) =
+                        value
+                    {
                         if is_meaningful_name(s) {
                             return Some(s.clone());
                         }
@@ -253,7 +358,9 @@ pub(super) fn infer_module_name_from_stmts(
     // Try naming from first meaningful Let variable name
     for stmt in stmts {
         if let Statement::Let { name, .. } = stmt {
-            if is_meaningful_name(name) && name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+            if is_meaningful_name(name)
+                && name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            {
                 return Some(name.clone());
             }
         }
@@ -304,7 +411,11 @@ fn collect_call_exprs_from_stmts(stmts: &[Statement]) -> Vec<&Expression> {
             Statement::Expr(e) => result.push(e),
             Statement::Assign { value, .. } => result.push(value),
             Statement::Let { value, .. } => result.push(value),
-            Statement::If { then_body, else_body, .. } => {
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 result.extend(collect_call_exprs_from_stmts(then_body));
                 result.extend(collect_call_exprs_from_stmts(else_body));
             }
@@ -314,7 +425,12 @@ fn collect_call_exprs_from_stmts(stmts: &[Statement]) -> Vec<&Expression> {
             Statement::For { body, .. } => {
                 result.extend(collect_call_exprs_from_stmts(body));
             }
-            Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
                 result.extend(collect_call_exprs_from_stmts(try_body));
                 result.extend(collect_call_exprs_from_stmts(catch_body));
                 result.extend(collect_call_exprs_from_stmts(finally_body));
@@ -340,13 +456,13 @@ pub(super) fn infer_from_expr(
             if visited.insert(id.0) {
                 if let Some(body) = functions.get(&id.0) {
                     if let Some(inner) = infer_module_name_from_stmts(body, functions, visited) {
-                        return Some(inner);
+                        return Some(inner.name);
                     }
                 }
             }
             None
         }
-        Expression::Call { callee, .. } => infer_from_expr(callee, functions, visited),
+        // A call's callee names the helper, not the value.
         Expression::Value(Value::Binding(Binding::Variable(name))) => {
             if is_meaningful_name(name) && is_meaningful_require_name(name) {
                 Some(name.clone())

@@ -2,8 +2,8 @@ mod display;
 
 use super::{BlockId, Expression};
 
-use serde::{Deserialize, Serialize};
 use crate::ir::Binding;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum VarKind {
@@ -140,7 +140,6 @@ pub enum MethodKind {
     Setter,
 }
 
-
 impl From<crate::ir::Binding> for AssignTarget {
     fn from(b: crate::ir::Binding) -> Self {
         AssignTarget::Binding(b)
@@ -177,7 +176,6 @@ pub enum AssignTarget {
         object: Expression,
         key: Expression,
     },
-
 
     DestructuringArray(Vec<Option<(AssignTarget, Option<Expression>)>>),
 

@@ -1,4 +1,6 @@
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
+
+mod apply;
 
 // Reconstruct spread syntax from the Hermes spread/apply protocol.
 //
@@ -15,7 +17,7 @@ use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value
 //   -> f.apply(thisArg, args)  (otherwise)
 pub fn transform_spread_rest(stmts: &mut Vec<Statement>) {
     fold_array_spreads(stmts);
-    reconstruct_apply(stmts);
+    apply::reconstruct_apply(stmts);
 
     // Rest args: `r = HermesBuiltin.copyRestArgs(N)` is `arguments` from index N as
     // a real array. N == 0 -> `[...arguments]`; otherwise
@@ -31,8 +33,9 @@ pub fn transform_spread_rest(stmts: &mut Vec<Statement>) {
                 };
                 let n_is_zero = matches!(
                     args.first(),
-                    Some(Expression::Value(Value::Constant(crate::ir::Constant::Integer(0))))
-                        | None
+                    Some(Expression::Value(Value::Constant(
+                        crate::ir::Constant::Integer(0)
+                    ))) | None
                 );
                 *value = if n_is_zero {
                     all_args() // [...arguments]
@@ -67,7 +70,7 @@ fn fold_array_spreads(stmts: &mut Vec<Statement>) {
         let mut aliases: std::collections::HashSet<u32> = std::collections::HashSet::new();
         aliases.insert(arr_reg);
 
-        let mut elements: Vec<Option<Expression>> = Vec::new();
+        let mut elements: Vec<Option<Expression>> = existing_elements(&stmts[i]);
         let mut remove: Vec<usize> = Vec::new();
         let mut saw_spread = false;
         let mut j = i + 1;
@@ -106,94 +109,20 @@ fn fold_array_spreads(stmts: &mut Vec<Statement>) {
     }
 }
 
-// `HermesBuiltin.apply(f, args, thisArg)` -> `f(...)` / `f.apply(thisArg, args)`,
-// anywhere in each statement's expressions (the apply is often nested as a call
-// argument, e.g. `print(apply(f, args, undefined))`).
-fn reconstruct_apply(stmts: &mut [Statement]) {
-    for idx in 0..stmts.len() {
-        // Resolve the args array against the statements BEFORE this one.
-        let (before, rest) = stmts.split_at_mut(idx);
-        let stmt = &mut rest[0];
-        rewrite_applies_in_stmt(stmt, before);
-    }
-}
-
-fn rewrite_applies_in_stmt(stmt: &mut Statement, before: &[Statement]) {
-    match stmt {
-        Statement::Assign { value, .. }
-        | Statement::Expr(value)
-        | Statement::Return(Some(value))
-        | Statement::Throw(value) => rewrite_applies_in_expr(value, before),
-        _ => {}
-    }
-}
-
-fn rewrite_applies_in_expr(expr: &mut Expression, before: &[Statement]) {
-    // Bottom-up: rewrite children first.
-    match expr {
-        Expression::Call { callee, arguments } | Expression::New { callee, arguments } => {
-            rewrite_applies_in_expr(callee, before);
-            for a in arguments.iter_mut() {
-                rewrite_applies_in_expr(a, before);
-            }
-        }
-        Expression::Member { object, .. } => rewrite_applies_in_expr(object, before),
-        Expression::Binary { left, right, .. } => {
-            rewrite_applies_in_expr(left, before);
-            rewrite_applies_in_expr(right, before);
-        }
-        Expression::Unary { operand, .. } => rewrite_applies_in_expr(operand, before),
-        Expression::Spread(inner) => rewrite_applies_in_expr(inner, before),
-        _ => {}
-    }
-    if let Some(call) = apply_to_call(expr, before) {
-        *expr = call;
-    }
-}
-
-// If `value` is `HermesBuiltin.apply(f, args, thisArg)`, build the equivalent call.
-fn apply_to_call(value: &Expression, before: &[Statement]) -> Option<Expression> {
-    let args = match is_builtin_call(value, "apply") {
-        Some(a) if a.len() >= 2 => a,
-        _ => return None,
-    };
-    let func = args[0].clone();
-    let args_array = &args[1];
-    let this_arg = args.get(2);
-
-    // Resolve the args array to a literal: either inline, or a register defined
-    // earlier as an array literal.
-    let elements = resolve_array_elements(args_array, before)?;
-
-    let this_is_undefined = matches!(
-        this_arg,
-        None | Some(Expression::Value(Value::Constant(crate::ir::Constant::Undefined)))
-    );
-
-    if this_is_undefined {
-        // f(...elements)
-        Some(Expression::Call {
-            callee: Box::new(func),
-            arguments: elements,
-        })
-    } else {
-        // f.apply(thisArg, argsArray)
-        Some(Expression::Call {
-            callee: Box::new(Expression::member(func, "apply")),
-            arguments: vec![this_arg.cloned().unwrap(), args_array.clone()],
-        })
-    }
-}
-
-// Resolve an expression to array elements: an inline Array literal, or a
-// register whose nearest preceding definition is an array literal.
-fn resolve_array_elements(expr: &Expression, before: &[Statement]) -> Option<Vec<Expression>> {
+pub(super) fn resolve_array_elements(
+    expr: &Expression,
+    before: &[Statement],
+) -> Option<Vec<Expression>> {
     if let Expression::Array { elements } = expr {
         return Some(elements.iter().flatten().cloned().collect());
     }
     if let Expression::Value(Value::Binding(Binding::Register(r))) = expr {
         for stmt in before.iter().rev() {
-            if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(tr)), value } = stmt {
+            if let Statement::Assign {
+                target: AssignTarget::Binding(Binding::Register(tr)),
+                value,
+            } = stmt
+            {
                 if tr == r {
                     if let Expression::Array { elements } = value {
                         return Some(elements.iter().flatten().cloned().collect());
@@ -206,17 +135,33 @@ fn resolve_array_elements(expr: &Expression, before: &[Statement]) -> Option<Vec
     None
 }
 
-// `reg = [..]` / `reg = NewArray` -> the register, if the literal is empty or all
-// holes (a size hint to be filled by the following spreads/puts).
+// `reg = [..]` -> the register. An empty literal is the Hermes size hint. A
+// literal that already has elements is the head of `[head, ...rest]`.
 fn array_literal_reg(stmt: &Statement) -> Option<u32> {
-    if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
-        if let Expression::Array { elements } = value {
-            if elements.iter().all(|e| e.is_none()) {
-                return Some(*r);
-            }
+    if let Statement::Assign {
+        target: AssignTarget::Binding(Binding::Register(r)),
+        value,
+    } = stmt
+    {
+        if matches!(value, Expression::Array { .. }) {
+            return Some(*r);
         }
     }
     None
+}
+
+fn existing_elements(stmt: &Statement) -> Vec<Option<Expression>> {
+    if let Statement::Assign {
+        value: Expression::Array { elements },
+        ..
+    } = stmt
+    {
+        // A size hint (`[,]` / holes only) is not a head. Real elements are.
+        if elements.iter().any(|e| e.is_some()) {
+            return elements.clone();
+        }
+    }
+    Vec::new()
 }
 
 // `_ = HermesBuiltin.arraySpread(arr, src, _)` targeting the array -> Some(src).
@@ -227,19 +172,34 @@ fn arr_spread_into(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> O
         _ => return None,
     };
     let args = is_builtin_call(value, "arraySpread")?;
-    if args.len() >= 2 {
-        if let Expression::Value(Value::Binding(Binding::Register(r))) = &args[0] {
-            if arrs.contains(r) {
-                return Some(args[1].clone());
-            }
-        }
+    // `[target, source, ...]` is the real call. CallBuiltin also keeps the
+    // frame's `this` slot, so the same call can arrive as
+    // `[this, target, source, ...]`. The target is whichever of the first two
+    // arguments is the array being filled.
+    let source_at = if reg_in(&args.first(), arrs) {
+        1
+    } else if args.len() >= 3 && reg_in(&args.get(1), arrs) {
+        2
+    } else {
+        return None;
+    };
+    args.get(source_at).cloned()
+}
+
+fn reg_in(expr: &Option<&Expression>, arrs: &std::collections::HashSet<u32>) -> bool {
+    match expr {
+        Some(Expression::Value(Value::Binding(Binding::Register(r)))) => arrs.contains(r),
+        _ => false,
     }
-    None
 }
 
 // `arr[..] = val` targeting the array -> Some(val).
 fn put_into_array(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> Option<Expression> {
-    if let Statement::Assign { target: AssignTarget::Index { object, .. }, value } = stmt {
+    if let Statement::Assign {
+        target: AssignTarget::Index { object, .. },
+        value,
+    } = stmt
+    {
         if let Expression::Value(Value::Binding(Binding::Register(r))) = object {
             if arrs.contains(r) {
                 return Some(value.clone());
@@ -253,13 +213,19 @@ fn put_into_array(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> Op
 // over while scanning for the array's spread/put statements (e.g. the source
 // register and zero index loaded into the arraySpread call frame).
 fn is_skippable_setup(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> bool {
-    if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(dst)), value } = stmt {
+    if let Statement::Assign {
+        target: AssignTarget::Binding(Binding::Register(dst)),
+        value,
+    } = stmt
+    {
         if arrs.contains(dst) || value.has_side_effects() {
             return false;
         }
         // Don't step over a statement that reads the array (it might consume it
         // in a way we don't model).
-        return !arrs.iter().any(|&r| crate::ir::expr_uses_register(value, r));
+        return !arrs
+            .iter()
+            .any(|&r| crate::ir::expr_uses_register(value, r));
     }
     false
 }
@@ -281,9 +247,14 @@ fn alias_copy(stmt: &Statement, arrs: &std::collections::HashSet<u32>) -> Option
 // If `value` is a call to `HermesBuiltin.<name>(...)`, return its arguments. The
 // callee object is lowered as `globalThis.HermesBuiltin` (Member on Global) or a
 // bare `HermesBuiltin` variable.
-fn is_builtin_call(value: &Expression, name: &str) -> Option<Vec<Expression>> {
+pub(super) fn is_builtin_call(value: &Expression, name: &str) -> Option<Vec<Expression>> {
     if let Expression::Call { callee, arguments } = value {
-        if let Expression::Member { object, property: PropertyKey::Ident(p), .. } = &**callee {
+        if let Expression::Member {
+            object,
+            property: PropertyKey::Ident(p),
+            ..
+        } = &**callee
+        {
             if p == name && is_hermes_builtin_obj(object) {
                 return Some(arguments.clone());
             }
@@ -302,9 +273,11 @@ fn is_hermes_builtin_obj(expr: &Expression) -> bool {
         // bare `HermesBuiltin` / `HermesInternal`
         Expression::Value(Value::Binding(Binding::Variable(n))) => is_name(n),
         // `globalThis.HermesBuiltin`
-        Expression::Member { object, property: PropertyKey::Ident(p), .. } => {
-            is_name(p) && matches!(object.as_ref(), Expression::Value(Value::Global))
-        }
+        Expression::Member {
+            object,
+            property: PropertyKey::Ident(p),
+            ..
+        } => is_name(p) && matches!(object.as_ref(), Expression::Value(Value::Global)),
         _ => false,
     }
 }

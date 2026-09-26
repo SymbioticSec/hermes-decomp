@@ -1,6 +1,6 @@
+use super::types::ClosureSlotValue;
 use crate::ir::{Expression, Value};
 use std::collections::BTreeMap;
-use super::types::ClosureSlotValue;
 
 // This is the canonical implementation used by both `ClosureInfo::analyze` and
 // `ClosureContext::analyze_stmt_context`.
@@ -27,9 +27,7 @@ pub fn value_from_expr(
         Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
             reg_values.and_then(|rv| rv.get(r).cloned())
         }
-        Expression::Value(Value::Constant(c)) => {
-            Some(ClosureSlotValue::Constant(format!("{c}")))
-        }
+        Expression::Value(Value::Constant(c)) => Some(ClosureSlotValue::Constant(format!("{c}"))),
         Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
             Some(ClosureSlotValue::Variable(name.clone()))
         }
@@ -39,7 +37,9 @@ pub fn value_from_expr(
         Expression::Value(Value::This) if resolve_members => {
             Some(ClosureSlotValue::Variable("self".to_string()))
         }
-        Expression::Member { object, property, .. } if resolve_members => {
+        Expression::Member {
+            object, property, ..
+        } if resolve_members => {
             if let Some(prop) = ident_from_property_key(property) {
                 if prop == "default" {
                     match &**object {
@@ -66,8 +66,11 @@ pub fn value_from_expr(
                             };
                         }
                     }
-                } else if !prop.is_empty() && prop.len() <= 25
-                    && prop != "prototype" && prop != "exports" && prop != "__esModule"
+                } else if !prop.is_empty()
+                    && prop.len() <= 25
+                    && prop != "prototype"
+                    && prop != "exports"
+                    && prop != "__esModule"
                 {
                     return Some(ClosureSlotValue::Variable(prop));
                 }

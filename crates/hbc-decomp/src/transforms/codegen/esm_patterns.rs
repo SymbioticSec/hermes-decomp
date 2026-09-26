@@ -1,4 +1,4 @@
-use super::{Codegen, DescriptorInfo, is_exports_like};
+use super::{is_exports_like, Codegen, DescriptorInfo};
 use crate::util::{escape_js_string_bare, is_valid_identifier, sanitize_identifier};
 
 impl Codegen {
@@ -8,7 +8,11 @@ impl Codegen {
     // Local bindings are always sanitized to valid JS identifiers (e.g.
     // Metro names like `get ActivityIndicator` → `get_ActivityIndicator`) so
     // they match `Binding::Variable` Display / body codegen.
-    pub(super) fn try_import_from_expr(&self, var_name: &str, value: &crate::ir::Expression) -> Option<String> {
+    pub(super) fn try_import_from_expr(
+        &self,
+        var_name: &str,
+        value: &crate::ir::Expression,
+    ) -> Option<String> {
         use crate::ir::Expression;
 
         let local = sanitize_identifier(var_name);
@@ -18,11 +22,17 @@ impl Codegen {
 
         // Pattern 1: require(N) or arg1(dependencyMap[N]) -> import var from "ModName"
         if let Some((mod_name, id)) = self.resolve_require_module_id(value) {
-            return Some(format!("import {local} from \"{mod_name}\"{};", id_comment(id)));
+            return Some(format!(
+                "import {local} from \"{mod_name}\"{};",
+                id_comment(id)
+            ));
         }
 
         // Pattern 2: require(N).prop or arg1(dependencyMap[N]).prop -> import { prop as var } from "ModName"
-        if let Expression::Member { object, property, .. } = value {
+        if let Expression::Member {
+            object, property, ..
+        } = value
+        {
             if let Some((mod_name, id)) = self.resolve_require_module_id(object) {
                 let prop = crate::ir::expr::display::format_key(property);
                 return Some(format_named_import(&prop, &local, &mod_name, Some(id)));
@@ -34,13 +44,19 @@ impl Codegen {
         if let Expression::Call { arguments, .. } = value {
             for arg in Self::effective_args(arguments) {
                 if let Some((mod_name, id)) = self.resolve_require_module_id(arg) {
-                    return Some(format!("import {local} from \"{mod_name}\"{};", id_comment(id)));
+                    return Some(format!(
+                        "import {local} from \"{mod_name}\"{};",
+                        id_comment(id)
+                    ));
                 }
             }
         }
 
         // Pattern 4: wrapper(require(N)).prop -> import { prop as var } from "ModName"
-        if let Expression::Member { object, property, .. } = value {
+        if let Expression::Member {
+            object, property, ..
+        } = value
+        {
             if let Expression::Call { arguments, .. } = object.as_ref() {
                 for arg in Self::effective_args(arguments) {
                     if let Some((mod_name, id)) = self.resolve_require_module_id(arg) {
@@ -72,7 +88,7 @@ impl Codegen {
         expr: &crate::ir::Expression,
         descriptor_vars: &std::collections::HashMap<String, DescriptorInfo>,
     ) -> Option<String> {
-        use crate::ir::{Expression, Value, Constant};
+        use crate::ir::{Constant, Expression, Value};
 
         let (callee, arguments) = match expr {
             Expression::Call { callee, arguments } => (callee, arguments),
@@ -164,7 +180,12 @@ pub(super) fn id_comment(id: u32) -> String {
 // ensuring the local binding is a valid identifier. Invalid export names
 // (spaces, etc.) use a string-named import when possible. An optional module id
 // is appended as a `/* id */` comment for path re-mapping.
-pub(super) fn format_named_import(prop: &str, local: &str, mod_name: &str, id: Option<u32>) -> String {
+pub(super) fn format_named_import(
+    prop: &str,
+    local: &str,
+    mod_name: &str,
+    id: Option<u32>,
+) -> String {
     let comment = id.map(id_comment).unwrap_or_default();
     if is_valid_identifier(prop) {
         if prop == local {

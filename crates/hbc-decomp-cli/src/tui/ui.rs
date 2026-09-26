@@ -309,10 +309,7 @@ fn draw_content_pane(
     content: Text<'static>,
     title: &str,
 ) {
-    let max_scroll = content
-        .lines
-        .len()
-        .saturating_sub(area.height as usize) as u32;
+    let max_scroll = content.lines.len().saturating_sub(area.height as usize) as u32;
 
     if app.scroll > max_scroll {
         app.scroll = max_scroll;
@@ -350,11 +347,7 @@ fn draw_content_pane(
             if term_row < sel_sr || term_row > sel_er {
                 continue;
             }
-            let col_start = if term_row == sel_sr {
-                sel_sc
-            } else {
-                inner.x
-            };
+            let col_start = if term_row == sel_sr { sel_sc } else { inner.x };
             let col_end = if term_row == sel_er {
                 (sel_ec + 1).min(inner.x + inner.width)
             } else {
@@ -451,11 +444,7 @@ fn highlight_line_with_search(line: Line<'static>, query: Option<&str>) -> Line<
 
 // Apply reverse-video highlight to character range [start, end) on a line.
 // Splits spans at boundaries so only the selected portion is highlighted.
-fn apply_selection_styling(
-    line: &Line<'static>,
-    start: usize,
-    end: usize,
-) -> Line<'static> {
+fn apply_selection_styling(line: &Line<'static>, start: usize, end: usize) -> Line<'static> {
     let sel = Style::default().add_modifier(Modifier::REVERSED);
     let mut out = Vec::new();
     let mut col = 0usize;
@@ -568,7 +557,10 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
         )
     };
     let title = Paragraph::new(Line::from(vec![
-        Span::styled(" Git Diff ", Style::default().fg(Color::Black).bg(Color::Cyan)),
+        Span::styled(
+            " Git Diff ",
+            Style::default().fg(Color::Black).bg(Color::Cyan),
+        ),
         Span::raw(format!("  base (file 1) vs modified (file 2), {kind}")),
         Span::styled(progress, Style::default().fg(Color::Yellow)),
         Span::styled(search, Style::default().fg(Color::Cyan)),
@@ -588,7 +580,11 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
         Span::styled(" asm/code ", Style::default().fg(Color::DarkGray)),
         Span::styled("c", Style::default().fg(Color::White)),
         Span::styled(
-            if app.git_syntax { " syntax " } else { " plain " },
+            if app.git_syntax {
+                " syntax "
+            } else {
+                " plain "
+            },
             Style::default().fg(Color::DarkGray),
         ),
         Span::styled("i", Style::default().fg(Color::White)),
@@ -615,11 +611,7 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
             "\n   No diff available yet…".to_string()
         };
         frame.render_widget(
-            Paragraph::new(msg).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Loading "),
-            ),
+            Paragraph::new(msg).block(Block::default().borders(Borders::ALL).title(" Loading ")),
             outer[1],
         );
         return;
@@ -655,7 +647,9 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
     for &ri in &app.git_visible[start..end] {
         match &app.git_rows[ri] {
             GitRow::Header(name) => {
-                let s = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+                let s = Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
                 // ▶ when folded, ▼ when expanded (click the header to toggle).
                 let marker = if app.git_folded.contains(&ri) {
                     "  \u{25b6} "
@@ -688,7 +682,15 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
                 right,
             } => {
                 left_lines.push(git_side_line('-', red, Some(*old), left, red, q, syntax));
-                right_lines.push(git_side_line('+', green, Some(*new), right, green, q, syntax));
+                right_lines.push(git_side_line(
+                    '+',
+                    green,
+                    Some(*new),
+                    right,
+                    green,
+                    q,
+                    syntax,
+                ));
             }
             GitRow::Removed { old, text } => {
                 left_lines.push(git_side_line('-', red, Some(*old), text, red, q, syntax));
@@ -696,7 +698,15 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
             }
             GitRow::Added { new, text } => {
                 left_lines.push(blank());
-                right_lines.push(git_side_line('+', green, Some(*new), text, green, q, syntax));
+                right_lines.push(git_side_line(
+                    '+',
+                    green,
+                    Some(*new),
+                    text,
+                    green,
+                    q,
+                    syntax,
+                ));
             }
             GitRow::Blank => {
                 left_lines.push(Line::from(""));
@@ -706,8 +716,11 @@ fn draw_git_diff(frame: &mut Frame, app: &mut App) {
     }
 
     frame.render_widget(
-        Paragraph::new(left_lines)
-            .block(Block::default().borders(Borders::ALL).title("file 1 (base)")),
+        Paragraph::new(left_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("file 1 (base)"),
+        ),
         cols[0],
     );
     frame.render_widget(
@@ -783,8 +796,16 @@ fn draw_xref_popup(frame: &mut Frame, app: &App) {
         })
         .collect();
 
-    let callee_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Callee).count();
-    let caller_count = app.xref_list.iter().filter(|(_, _, k)| *k == XrefKind::Caller).count();
+    let callee_count = app
+        .xref_list
+        .iter()
+        .filter(|(_, _, k)| *k == XrefKind::Callee)
+        .count();
+    let caller_count = app
+        .xref_list
+        .iter()
+        .filter(|(_, _, k)| *k == XrefKind::Caller)
+        .count();
     let title =
         format!(" Xrefs: {callee_count} callees, {caller_count} callers, Enter: jump  Esc: close ");
 

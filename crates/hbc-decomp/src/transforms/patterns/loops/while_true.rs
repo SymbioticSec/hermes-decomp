@@ -35,35 +35,61 @@ fn convert_stmt(stmt: Statement) -> Statement {
             body: convert_while_true_loops(body),
             condition,
         },
-        Statement::For { init, condition, update, body } => Statement::For {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
             init,
             condition,
             update,
             body: convert_while_true_loops(body),
         },
-        Statement::ForIn { variable, object, body } => Statement::ForIn {
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => Statement::ForIn {
             variable,
             object,
             body: convert_while_true_loops(body),
         },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => Statement::ForOf {
             variable,
             iterable,
             body: convert_while_true_loops(body),
         },
-        Statement::If { condition, then_body, else_body } => Statement::If {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::If {
             condition,
             then_body: convert_while_true_loops(then_body),
             else_body: convert_while_true_loops(else_body),
         },
         Statement::Block(inner) => Statement::Block(convert_while_true_loops(inner)),
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
             try_body: convert_while_true_loops(try_body),
             catch_param,
             catch_body: convert_while_true_loops(catch_body),
             finally_body: convert_while_true_loops(finally_body),
         },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => Statement::Switch {
             discriminant,
             cases: cases
                 .into_iter()
@@ -152,14 +178,23 @@ fn is_continue_only(stmts: &[Statement]) -> bool {
 // (not a nested loop, and not a `break` that targets an enclosing `switch`)?
 fn escapes_loop(stmt: &Statement, in_switch: bool) -> bool {
     match stmt {
-        Statement::Continue(_) => true,      // always targets the enclosing loop
-        Statement::Break(_) => !in_switch,   // `break` targets a switch if inside one
-        Statement::If { then_body, else_body, .. } => then_body
+        Statement::Continue(_) => true, // always targets the enclosing loop
+        Statement::Break(_) => !in_switch, // `break` targets a switch if inside one
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => then_body
             .iter()
             .chain(else_body)
             .any(|s| escapes_loop(s, in_switch)),
         Statement::Block(inner) => inner.iter().any(|s| escapes_loop(s, in_switch)),
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => try_body
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => try_body
             .iter()
             .chain(catch_body)
             .chain(finally_body)
@@ -196,12 +231,19 @@ fn negate(e: Expression) -> Expression {
                 _ => None,
             };
             match inverted {
-                Some(new_op) => Expression::Binary { op: new_op, left, right },
+                Some(new_op) => Expression::Binary {
+                    op: new_op,
+                    left,
+                    right,
+                },
                 None => Expression::unary(UnaryOp::Not, Expression::Binary { op, left, right }),
             }
         }
         // `!!x` -> `x`
-        Expression::Unary { op: UnaryOp::Not, operand } => *operand,
+        Expression::Unary {
+            op: UnaryOp::Not,
+            operand,
+        } => *operand,
         other => Expression::unary(UnaryOp::Not, other),
     }
 }
@@ -214,13 +256,24 @@ mod tests {
         Expression::Value(Value::Binding(crate::ir::Binding::Variable(n.to_string())))
     }
     fn cmp(op: BinaryOp, l: &str, r: &str) -> Expression {
-        Expression::Binary { op, left: Box::new(var(l)), right: Box::new(var(r)) }
+        Expression::Binary {
+            op,
+            left: Box::new(var(l)),
+            right: Box::new(var(r)),
+        }
     }
     fn if_break(cond: Expression, else_body: Vec<Statement>) -> Statement {
-        Statement::If { condition: cond, then_body: vec![Statement::Break(None)], else_body }
+        Statement::If {
+            condition: cond,
+            then_body: vec![Statement::Break(None)],
+            else_body,
+        }
     }
     fn while_true(body: Vec<Statement>) -> Statement {
-        Statement::While { condition: Expression::constant(Constant::Bool(true)), body }
+        Statement::While {
+            condition: Expression::constant(Constant::Bool(true)),
+            body,
+        }
     }
 
     #[test]
@@ -241,13 +294,22 @@ mod tests {
     fn converts_trailing_break_to_dowhile() {
         // while (true) { i = i + 1; if (i >= n) break; }  ->  do { i = i + 1 } while (i < n)
         let inc = Statement::Expr(var("work"));
-        let input = vec![while_true(vec![inc.clone(), if_break(cmp(BinaryOp::Ge, "i", "n"), vec![])])];
+        let input = vec![while_true(vec![
+            inc.clone(),
+            if_break(cmp(BinaryOp::Ge, "i", "n"), vec![]),
+        ])];
         let out = convert_while_true_loops(input);
         match &out[0] {
             Statement::DoWhile { body, condition } => {
                 assert_eq!(body.len(), 1); // the `if break` was consumed
-                // `i >= n` negated to `i < n`
-                assert!(matches!(condition, Expression::Binary { op: BinaryOp::Lt, .. }));
+                                           // `i >= n` negated to `i < n`
+                assert!(matches!(
+                    condition,
+                    Expression::Binary {
+                        op: BinaryOp::Lt,
+                        ..
+                    }
+                ));
             }
             other => panic!("expected DoWhile, got {other:?}"),
         }
@@ -277,7 +339,10 @@ mod tests {
             if_break(cmp(BinaryOp::Ge, "i", "n"), vec![]),
         ])];
         let out = convert_while_true_loops(input);
-        assert!(matches!(out[0], Statement::While { .. }), "must stay while(true) when body has continue");
+        assert!(
+            matches!(out[0], Statement::While { .. }),
+            "must stay while(true) when body has continue"
+        );
     }
 
     #[test]
@@ -288,7 +353,10 @@ mod tests {
             cases: vec![(var("a"), vec![Statement::Break(None)])],
             default: None,
         };
-        let input = vec![while_true(vec![sw, if_break(cmp(BinaryOp::Ge, "i", "n"), vec![])])];
+        let input = vec![while_true(vec![
+            sw,
+            if_break(cmp(BinaryOp::Ge, "i", "n"), vec![]),
+        ])];
         let out = convert_while_true_loops(input);
         assert!(matches!(out[0], Statement::DoWhile { .. }));
     }

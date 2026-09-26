@@ -1,6 +1,6 @@
-use crate::transforms::cleanup::undefined::remove_undefined_initializations;
+use crate::ir::{Constant, Expression, Statement, Value};
 use crate::transforms::cleanup::redundant::remove_redundant_assignments;
-use crate::ir::{Statement, Expression, Value, Constant};
+use crate::transforms::cleanup::undefined::remove_undefined_initializations;
 
 #[test]
 fn test_remove_undefined_init() {
@@ -16,7 +16,10 @@ fn test_remove_undefined_init() {
 #[test]
 fn test_remove_self_assignment() {
     let stmts = vec![
-        Statement::assign_reg(0, Expression::Value(Value::Binding(crate::ir::Binding::Register(0)))),
+        Statement::assign_reg(
+            0,
+            Expression::Value(Value::Binding(crate::ir::Binding::Register(0))),
+        ),
         Statement::assign_reg(1, Expression::constant(Constant::Integer(42))),
     ];
 

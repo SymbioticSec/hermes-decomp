@@ -185,10 +185,7 @@ fn run_stmt<A: Analysis>(
         }
 
         Statement::For {
-            init,
-            update,
-            body,
-            ..
+            init, update, body, ..
         } => {
             if let Some(init) = init {
                 if let Some(f) = observe.as_mut() {
@@ -196,8 +193,10 @@ fn run_stmt<A: Analysis>(
                 }
                 run_stmt(analysis, init, state, observe);
             }
-            let update_slice: Vec<Statement> =
-                update.as_ref().map(|u| vec![(**u).clone()]).unwrap_or_default();
+            let update_slice: Vec<Statement> = update
+                .as_ref()
+                .map(|u| vec![(**u).clone()])
+                .unwrap_or_default();
             let settled = settle_loop(analysis, &[body, &update_slice], state);
             let mut walked = settled.clone();
             run_body(analysis, body, &mut walked, observe);

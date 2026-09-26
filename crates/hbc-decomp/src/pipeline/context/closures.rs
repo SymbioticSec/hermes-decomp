@@ -1,8 +1,8 @@
 // Closure re-analysis + IR resolve for all functions.
-use std::collections::BTreeMap;
+use super::PipelineContext;
 use crate::analysis::ClosureContext;
 use crate::ir::Statement;
-use super::PipelineContext;
+use std::collections::BTreeMap;
 
 impl PipelineContext {
     /// Resolve `ClosureVar` nodes using the closure context slot maps.
@@ -37,19 +37,30 @@ impl PipelineContext {
             let needs = !closure_info.slots.is_empty() || Self::body_has_closure_var(stmts);
             if needs {
                 let old = std::mem::take(stmts);
-                *stmts = crate::analysis::resolve_closures(old, &closure_info);
+                let (resolved, baked) =
+                    crate::analysis::resolve_closures_recording(old, &closure_info);
+                *stmts = resolved;
+                if !baked.is_empty() {
+                    closure_ctx
+                        .baked_captures
+                        .entry(i)
+                        .or_default()
+                        .extend(baked);
+                }
             }
         }
     }
 
     pub(super) fn body_has_closure_var(stmts: &[Statement]) -> bool {
-        use crate::ir::{Binding, AssignTarget, Visitor};
+        use crate::ir::{AssignTarget, Binding, Visitor};
         struct HasClosure(bool);
         impl Visitor<'_> for HasClosure {
             fn visit_expression(&mut self, e: &crate::ir::Expression) {
                 if matches!(
                     e,
-                    crate::ir::Expression::Value(crate::ir::Value::Binding(Binding::ClosureVar{ .. }))
+                    crate::ir::Expression::Value(crate::ir::Value::Binding(
+                        Binding::ClosureVar { .. }
+                    ))
                 ) {
                     self.0 = true;
                     return;
@@ -59,7 +70,7 @@ impl PipelineContext {
                 }
             }
             fn visit_assign_target(&mut self, t: &AssignTarget) {
-                if matches!(t, AssignTarget::Binding(Binding::ClosureVar{ .. })) {
+                if matches!(t, AssignTarget::Binding(Binding::ClosureVar { .. })) {
                     self.0 = true;
                     return;
                 }
@@ -77,5 +88,4 @@ impl PipelineContext {
         }
         false
     }
-
 }

@@ -2,9 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::ir::{
-    AssignTarget, Expression, FunctionId, Statement, Value, VarKind,
-};
+use crate::ir::{AssignTarget, Expression, FunctionId, Statement, Value, VarKind};
 
 use super::context::ClosureContext;
 use super::info::encode_level_slot;
@@ -26,13 +24,16 @@ fn func(id: u32) -> Expression {
 
 fn store_env(slot: u32, level: u32, value: Expression) -> Statement {
     Statement::Assign {
-        target: AssignTarget::Binding(crate::ir::Binding::ClosureVar{ level, slot }),
+        target: AssignTarget::Binding(crate::ir::Binding::ClosureVar { level, slot }),
         value,
     }
 }
 
 fn load_env(level: u32, slot: u32) -> Expression {
-    Expression::Value(Value::Binding(crate::ir::Binding::ClosureVar{ level, slot }))
+    Expression::Value(Value::Binding(crate::ir::Binding::ClosureVar {
+        level,
+        slot,
+    }))
 }
 
 #[test]
@@ -66,7 +67,9 @@ fn child_inherits_parent_require_slot() {
 
     let resolved = resolve_closures(all.get(&2).unwrap().clone(), &info);
     match &resolved[0] {
-        Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))))) => {
+        Statement::Return(Some(Expression::Value(Value::Binding(
+            crate::ir::Binding::Variable(n),
+        )))) => {
             assert_eq!(n, "require");
         }
         other => panic!("expected return require, got {other:?}"),
@@ -109,7 +112,9 @@ fn grandchild_inherits_level_two_from_grandparent() {
 
     let resolved = resolve_closures(all.get(&3).unwrap().clone(), &info);
     match &resolved[0] {
-        Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))))) => {
+        Statement::Return(Some(Expression::Value(Value::Binding(
+            crate::ir::Binding::Variable(n),
+        )))) => {
             assert_eq!(n, "HTTP");
         }
         other => panic!("expected return HTTP, got {other:?}"),

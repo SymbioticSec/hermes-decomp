@@ -90,6 +90,27 @@ pub(super) fn recover_structure(
     if let Some(handler) = ctx.try_starts.get(&block_id) {
         let catch_block_id = handler.catch_block;
 
+        // The protected range has an end. The block the range falls through
+        // to is where the try and the catch reconverge, and it belongs after
+        // the statement, not inside the try body. Without this fence the body
+        // walk kept going and swallowed everything up to the return, and the
+        // catch came out empty. The fence is only placed when the exit is
+        // unambiguous and is not a loop boundary the walk already handles.
+        let region: HashSet<BlockId> = ctx
+            .cfg
+            .exception_edge_sources(catch_block_id)
+            .into_iter()
+            .collect();
+        let exit = try_region_exit(ctx.cfg, &region, catch_block_id).filter(|e| {
+            !ctx.visited.contains(e)
+                && !loop_stack
+                    .iter()
+                    .any(|l| l.header == *e || l.exit == Some(*e))
+        });
+        if let Some(exit) = exit {
+            ctx.visited.insert(exit);
+        }
+
         // Mark catch block as visited to prevent it from being included in try body traversal
         let catch_was_visited = ctx.visited.contains(&catch_block_id);
         ctx.visited.insert(catch_block_id);
@@ -103,10 +124,18 @@ pub(super) fn recover_structure(
         }
         let (catch_param, catch_body) = recover_catch_body(ctx, catch_block_id, loop_stack);
 
-        return Structure::TryCatch {
+        let try_catch = Structure::TryCatch {
             try_body: Box::new(try_body),
             catch_param,
             catch_body: Box::new(catch_body),
+        };
+        return match exit {
+            Some(exit) => {
+                ctx.visited.remove(&exit);
+                let after = recover_structure(ctx, exit, loop_stack);
+                Structure::Sequence(vec![try_catch, after])
+            }
+            None => try_catch,
         };
     }
 
@@ -339,7 +368,48 @@ pub(super) fn recover_structure_inner(
 // branch would make the branch's own arms mutually reachable, and the walk would
 // pick a spurious "merge" one arm earlier than the real post-dominator (which
 // then gets wrongly absorbed into an `if` branch, producing infinite loops).
-pub(super) fn find_merge_point(cfg: &CFG, header: BlockId, a: BlockId, b: BlockId) -> Option<BlockId> {
+// The block where the try body and the catch body reconverge: the single
+// block control falls into when it leaves the protected range by a normal
+// edge, provided the catch reaches it too. A block only the try flows into
+// (a `return` the compiler left just outside the range) is the tail of the
+// try body and stays there. More than one exit (a `break` out of the try
+// next to its fallthrough, say) is ambiguous and yields nothing.
+fn try_region_exit(cfg: &CFG, region: &HashSet<BlockId>, catch: BlockId) -> Option<BlockId> {
+    let mut exits: Vec<BlockId> = Vec::new();
+    for &b in region {
+        let Some(block) = cfg.get(b) else { continue };
+        for succ in block.successors() {
+            if succ != catch && !region.contains(&succ) && !exits.contains(&succ) {
+                exits.push(succ);
+            }
+        }
+    }
+    let exit = match exits.as_slice() {
+        [only] => *only,
+        _ => return None,
+    };
+    let mut seen: HashSet<BlockId> = HashSet::new();
+    let mut stack = vec![catch];
+    while let Some(b) = stack.pop() {
+        if b == exit {
+            return Some(exit);
+        }
+        if !seen.insert(b) {
+            continue;
+        }
+        if let Some(block) = cfg.get(b) {
+            stack.extend(block.successors());
+        }
+    }
+    None
+}
+
+pub(super) fn find_merge_point(
+    cfg: &CFG,
+    header: BlockId,
+    a: BlockId,
+    b: BlockId,
+) -> Option<BlockId> {
     use std::collections::VecDeque;
     // All blocks reachable from `a` without passing back through `header`.
     let mut reach_a: HashSet<BlockId> = HashSet::new();

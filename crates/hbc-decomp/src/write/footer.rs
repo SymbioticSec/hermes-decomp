@@ -64,7 +64,12 @@ mod tests {
             );
             let mut clone = bytes.clone();
             rehash_footer(&mut clone).unwrap();
-            assert_eq!(clone, bytes, "rehash changed identity for {}", path.display());
+            assert_eq!(
+                clone,
+                bytes,
+                "rehash changed identity for {}",
+                path.display()
+            );
         }
     }
 }

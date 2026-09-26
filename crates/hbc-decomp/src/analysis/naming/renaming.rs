@@ -1,4 +1,4 @@
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
 use std::collections::BTreeMap;
 
 pub fn rename_registers(stmts: Vec<Statement>, names: &BTreeMap<u32, String>) -> Vec<Statement> {
@@ -48,7 +48,12 @@ fn rename_stmt(stmt: Statement, names: &BTreeMap<u32, String>) -> Statement {
             value: rename_expr(value, names),
             kind,
         },
-        Statement::For { init, condition, update, body } => Statement::For {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
             init: init.map(|s| Box::new(rename_stmt(*s, names))),
             condition: condition.map(|e| rename_expr(e, names)),
             update: update.map(|s| Box::new(rename_stmt(*s, names))),
@@ -58,46 +63,73 @@ fn rename_stmt(stmt: Statement, names: &BTreeMap<u32, String>) -> Statement {
             body: rename_registers(body, names),
             condition: rename_expr(condition, names),
         },
-        Statement::ForIn { variable, object, body } => Statement::ForIn {
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => Statement::ForIn {
             variable: rename_string_var(variable, names),
             object: rename_expr(object, names),
             body: rename_registers(body, names),
         },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => Statement::ForOf {
             variable: rename_string_var(variable, names),
             iterable: rename_expr(iterable, names),
             body: rename_registers(body, names),
         },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => Statement::Switch {
             discriminant: rename_expr(discriminant, names),
-            cases: cases.into_iter().map(|(val, body)| {
-                (rename_expr(val, names), rename_registers(body, names))
-            }).collect(),
+            cases: cases
+                .into_iter()
+                .map(|(val, body)| (rename_expr(val, names), rename_registers(body, names)))
+                .collect(),
             default: default.map(|d| rename_registers(d, names)),
         },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
             try_body: rename_registers(try_body, names),
             catch_param: catch_param.map(|p| rename_string_var(p, names)),
             catch_body: rename_registers(catch_body, names),
             finally_body: rename_registers(finally_body, names),
         },
-        Statement::Class { name, super_class, constructor, methods } => {
+        Statement::Class {
+            name,
+            super_class,
+            constructor,
+            methods,
+        } => {
             // Rename class name if it's a register pattern (r10xxx)
-            let new_name = if let Some(reg_num) = name.strip_prefix('r').and_then(|s| s.parse::<u32>().ok()) {
-                names.get(&reg_num).cloned().unwrap_or(name)
-            } else {
-                name
-            };
+            let new_name =
+                if let Some(reg_num) = name.strip_prefix('r').and_then(|s| s.parse::<u32>().ok()) {
+                    names.get(&reg_num).cloned().unwrap_or(name)
+                } else {
+                    name
+                };
             Statement::Class {
                 name: new_name,
                 super_class: super_class.map(|e| rename_expr(e, names)),
                 constructor: constructor.map(|s| Box::new(rename_stmt(*s, names))),
-                methods: methods.into_iter().map(|mut m| {
-                    m.value = rename_expr(m.value, names);
-                    m
-                }).collect(),
+                methods: methods
+                    .into_iter()
+                    .map(|mut m| {
+                        m.value = rename_expr(m.value, names);
+                        m
+                    })
+                    .collect(),
             }
-        },
+        }
         other => other,
     }
 }
@@ -128,32 +160,50 @@ fn rename_target(target: AssignTarget, names: &BTreeMap<u32, String>) -> AssignT
             object: rename_expr(object, names),
             key: rename_expr(key, names),
         },
-        AssignTarget::DestructuringObject(props) => {
-            AssignTarget::DestructuringObject(
-                props.into_iter()
-                    .map(|(k, t, def)| (k, rename_target(t, names), def.map(|e| rename_expr(e, names))))
-                    .collect()
-            )
-        }
+        AssignTarget::DestructuringObject(props) => AssignTarget::DestructuringObject(
+            props
+                .into_iter()
+                .map(|(k, t, def)| {
+                    (
+                        k,
+                        rename_target(t, names),
+                        def.map(|e| rename_expr(e, names)),
+                    )
+                })
+                .collect(),
+        ),
         AssignTarget::DestructuringObjectRest { properties, rest } => {
             AssignTarget::DestructuringObjectRest {
-                properties: properties.into_iter()
-                    .map(|(k, t, def)| (k, rename_target(t, names), def.map(|e| rename_expr(e, names))))
+                properties: properties
+                    .into_iter()
+                    .map(|(k, t, def)| {
+                        (
+                            k,
+                            rename_target(t, names),
+                            def.map(|e| rename_expr(e, names)),
+                        )
+                    })
                     .collect(),
                 rest: Box::new(rename_target(*rest, names)),
             }
         }
-        AssignTarget::DestructuringArray(elements) => {
-            AssignTarget::DestructuringArray(
-                elements.into_iter()
-                    .map(|e| e.map(|(t, def)| (rename_target(t, names), def.map(|d| rename_expr(d, names)))))
-                    .collect()
-            )
-        }
+        AssignTarget::DestructuringArray(elements) => AssignTarget::DestructuringArray(
+            elements
+                .into_iter()
+                .map(|e| {
+                    e.map(|(t, def)| (rename_target(t, names), def.map(|d| rename_expr(d, names))))
+                })
+                .collect(),
+        ),
         AssignTarget::DestructuringArrayRest { elements, rest } => {
             AssignTarget::DestructuringArrayRest {
-                elements: elements.into_iter()
-                    .map(|e| e.map(|(t, def)| (rename_target(t, names), def.map(|d| rename_expr(d, names)))))
+                elements: elements
+                    .into_iter()
+                    .map(|e| {
+                        e.map(|(t, def)| {
+                            (rename_target(t, names), def.map(|d| rename_expr(d, names)))
+                        })
+                    })
                     .collect(),
                 rest: Box::new(rename_target(*rest, names)),
             }
@@ -238,9 +288,15 @@ fn rename_expr(expr: Expression, names: &BTreeMap<u32, String>) -> Expression {
             value: Box::new(rename_expr(*value, names)),
         },
         Expression::Spread(inner) => Expression::Spread(Box::new(rename_expr(*inner, names))),
-        Expression::TemplateLiteral { quasis, expressions } => Expression::TemplateLiteral {
+        Expression::TemplateLiteral {
             quasis,
-            expressions: expressions.into_iter().map(|e| rename_expr(e, names)).collect(),
+            expressions,
+        } => Expression::TemplateLiteral {
+            quasis,
+            expressions: expressions
+                .into_iter()
+                .map(|e| rename_expr(e, names))
+                .collect(),
         },
         Expression::Yield { value, delegate } => Expression::Yield {
             value: Box::new(rename_expr(*value, names)),
@@ -253,6 +309,11 @@ fn rename_expr(expr: Expression, names: &BTreeMap<u32, String>) -> Expression {
 
 // Rename variables in statements in-place.
 pub fn rename_variables_in_stmts(stmts: &mut [Statement], renames: &BTreeMap<String, String>) {
+    if log::log_enabled!(target: "renames", log::Level::Trace) {
+        for (old, new) in renames {
+            log::trace!(target: "renames", "{old} -> {new}");
+        }
+    }
     for stmt in stmts {
         rename_variables_in_stmt(stmt, renames);
     }
@@ -310,10 +371,33 @@ fn rename_variables_in_stmt(stmt: &mut Statement, renames: &BTreeMap<String, Str
             }
             rename_variables_in_stmts(body, renames);
         }
-        Statement::Block(inner)
-        | Statement::ForOf { body: inner, .. }
-        | Statement::ForIn { body: inner, .. } => {
+        Statement::Block(inner) => {
             rename_variables_in_stmts(inner, renames);
+        }
+        // The iterated expression and the loop variable are reads and a
+        // binding like any other; skipping them left `for (k in arg1)` after
+        // every other `arg1` had become the parameter's name.
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => {
+            if let Some(new_name) = renames.get(variable) {
+                *variable = new_name.clone();
+            }
+            rename_variables_in_expr(iterable, renames);
+            rename_variables_in_stmts(body, renames);
+        }
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => {
+            if let Some(new_name) = renames.get(variable) {
+                *variable = new_name.clone();
+            }
+            rename_variables_in_expr(object, renames);
+            rename_variables_in_stmts(body, renames);
         }
         Statement::Switch {
             discriminant,

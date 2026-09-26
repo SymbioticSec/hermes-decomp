@@ -1,4 +1,6 @@
 mod analysis;
+mod capture_sync;
+pub use capture_sync::sync_capture_names;
 mod ancestor_inherit;
 mod closure_def_naming;
 mod closure_definitions;
@@ -11,10 +13,10 @@ mod suggestions;
 use crate::ir::Statement;
 use state::VariableNamer;
 
-pub use ancestor_inherit::inherit_ancestor_closure_names;
-pub use closure_definitions::{rename_closure_variables, rename_closure_variables_cross_function};
-pub use closure_def_naming::rename_closures_from_definitions;
 use analysis::analyze_stmt;
+pub use ancestor_inherit::inherit_ancestor_closure_names;
+pub use closure_def_naming::rename_closures_from_definitions;
+pub use closure_definitions::{rename_closure_variables, rename_closure_variables_cross_function};
 
 // Infer and apply better variable names.
 //
@@ -44,9 +46,11 @@ pub fn infer_variable_names(stmts: Vec<Statement>) -> Vec<Statement> {
     closure_usage::infer_closure_names_from_usage(&stmts, &mut namer);
 
     // Second pass: apply inferred names
-    stmts.into_iter().map(|s| renaming::rename_stmt(&namer, s)).collect()
+    stmts
+        .into_iter()
+        .map(|s| renaming::rename_stmt(&namer, s))
+        .collect()
 }
-
 
 // Every variable name the statements already bind or read.
 fn existing_names(stmts: &[Statement]) -> std::collections::HashSet<String> {
@@ -65,11 +69,11 @@ fn existing_names(stmts: &[Statement]) -> std::collections::HashSet<String> {
             }
             self.walk_assign_target(t);
         }
-        fn visit_statement(&mut self, s: &'b Statement) {
-            if let Statement::Let { name, .. } = s {
-                self.0.insert(name.clone());
-            }
-            self.walk_statement(s);
+        // A `let`, a loop head, a catch parameter, a class name: every name a
+        // statement introduces. A class named `ExternalPip` next to a slot
+        // reading `NativeModules.ExternalPip` is what this guards.
+        fn visit_binding_def(&mut self, name: &'b str) {
+            self.0.insert(name.to_string());
         }
     }
     let mut out = std::collections::HashSet::new();
@@ -101,10 +105,14 @@ mod tests {
             },
             Statement::Assign {
                 target: AssignTarget::Member {
-                    object: Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj".to_string()))),
+                    object: Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                        "obj".to_string(),
+                    ))),
                     property: "variations".to_string(),
                 },
-                value: Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj1".to_string()))),
+                value: Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                    "obj1".to_string(),
+                ))),
             },
         ];
         let out = infer_variable_names(stmts);
@@ -125,15 +133,21 @@ mod tests {
         let stmts = vec![Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Call {
-                callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("fetch".to_string())))),
-                arguments: vec![Expression::Value(Value::Binding(crate::ir::Binding::Variable("url".to_string())))],
+                callee: Box::new(Expression::Value(Value::Binding(
+                    crate::ir::Binding::Variable("fetch".to_string()),
+                ))),
+                arguments: vec![Expression::Value(Value::Binding(
+                    crate::ir::Binding::Variable("url".to_string()),
+                ))],
             },
         }];
 
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "response"));
+            assert!(
+                matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "response")
+            );
         } else {
             panic!("Expected assign statement");
         }
@@ -145,7 +159,9 @@ mod tests {
         let stmts = vec![Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Member {
-                object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj".to_string())))),
+                object: Box::new(Expression::Value(Value::Binding(
+                    crate::ir::Binding::Variable("obj".to_string()),
+                ))),
                 property: PropertyKey::Ident("length".to_string()),
                 optional: false,
             },
@@ -154,7 +170,9 @@ mod tests {
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "length"));
+            assert!(
+                matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "length")
+            );
         } else {
             panic!("Expected assign statement");
         }
@@ -168,11 +186,15 @@ mod tests {
                 properties: vec![
                     crate::ir::ObjectProperty {
                         key: PropertyKey::Ident("url".into()),
-                        value: Expression::Value(Value::Binding(crate::ir::Binding::Variable("u".into()))),
+                        value: Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                            "u".into(),
+                        ))),
                     },
                     crate::ir::ObjectProperty {
                         key: PropertyKey::Ident("query".into()),
-                        value: Expression::Value(Value::Binding(crate::ir::Binding::Variable("q".into()))),
+                        value: Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                            "q".into(),
+                        ))),
                     },
                 ],
             },
@@ -194,7 +216,9 @@ mod tests {
         let stmts = vec![Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::New {
-                callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("Date".to_string())))),
+                callee: Box::new(Expression::Value(Value::Binding(
+                    crate::ir::Binding::Variable("Date".to_string()),
+                ))),
                 arguments: vec![],
             },
         }];
@@ -202,7 +226,9 @@ mod tests {
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "date"));
+            assert!(
+                matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "date")
+            );
         } else {
             panic!("Expected assign statement");
         }
@@ -215,15 +241,21 @@ mod tests {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Binary {
                 op: crate::ir::BinaryOp::Add,
-                left: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("a".to_string())))),
-                right: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("b".to_string())))),
+                left: Box::new(Expression::Value(Value::Binding(
+                    crate::ir::Binding::Variable("a".to_string()),
+                ))),
+                right: Box::new(Expression::Value(Value::Binding(
+                    crate::ir::Binding::Variable("b".to_string()),
+                ))),
             },
         }];
 
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "sum"));
+            assert!(
+                matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "sum")
+            );
         } else {
             panic!("Expected assign statement");
         }
@@ -235,7 +267,9 @@ mod tests {
         let stmts = vec![Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
             value: Expression::Member {
-                object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("items".to_string())))),
+                object: Box::new(Expression::Value(Value::Binding(
+                    crate::ir::Binding::Variable("items".to_string()),
+                ))),
                 property: PropertyKey::Index(0),
                 optional: false,
             },
@@ -244,7 +278,9 @@ mod tests {
         let result = infer_variable_names(stmts);
 
         if let Statement::Assign { target, .. } = &result[0] {
-            assert!(matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "first"));
+            assert!(
+                matches!(target, AssignTarget::Binding(crate::ir::Binding::Variable(n)) if n == "first")
+            );
         } else {
             panic!("Expected assign statement");
         }
@@ -257,14 +293,18 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("fetch".to_string())))),
+                    callee: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Variable("fetch".to_string()),
+                    ))),
                     arguments: vec![],
                 },
             },
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("fetch".to_string())))),
+                    callee: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Variable("fetch".to_string()),
+                    ))),
                     arguments: vec![],
                 },
             },

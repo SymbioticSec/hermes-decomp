@@ -35,28 +35,53 @@ fn infer_closure_names_in_stmt(stmt: &Statement, namer: &mut VariableNamer) {
                 infer_closure_names_in_stmt(s, namer);
             }
         }
-        Statement::If { then_body, else_body, .. } => {
-            for s in then_body { infer_closure_names_in_stmt(s, namer); }
-            for s in else_body { infer_closure_names_in_stmt(s, namer); }
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            for s in then_body {
+                infer_closure_names_in_stmt(s, namer);
+            }
+            for s in else_body {
+                infer_closure_names_in_stmt(s, namer);
+            }
         }
         Statement::While { body, .. }
         | Statement::DoWhile { body, .. }
         | Statement::For { body, .. }
         | Statement::ForOf { body, .. }
         | Statement::ForIn { body, .. } => {
-            for s in body { infer_closure_names_in_stmt(s, namer); }
+            for s in body {
+                infer_closure_names_in_stmt(s, namer);
+            }
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
-            for s in try_body { infer_closure_names_in_stmt(s, namer); }
-            for s in catch_body { infer_closure_names_in_stmt(s, namer); }
-            for s in finally_body { infer_closure_names_in_stmt(s, namer); }
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            for s in try_body {
+                infer_closure_names_in_stmt(s, namer);
+            }
+            for s in catch_body {
+                infer_closure_names_in_stmt(s, namer);
+            }
+            for s in finally_body {
+                infer_closure_names_in_stmt(s, namer);
+            }
         }
         Statement::Switch { cases, default, .. } => {
             for (_, stmts) in cases {
-                for s in stmts { infer_closure_names_in_stmt(s, namer); }
+                for s in stmts {
+                    infer_closure_names_in_stmt(s, namer);
+                }
             }
             if let Some(stmts) = default {
-                for s in stmts { infer_closure_names_in_stmt(s, namer); }
+                for s in stmts {
+                    infer_closure_names_in_stmt(s, namer);
+                }
             }
         }
         _ => {}
@@ -217,7 +242,10 @@ fn record_object_key_for_value(
 }
 
 // Collect usage information for all closure_N variables in a statement tree.
-pub(super) fn collect_closure_usage_in_stmt(stmt: &Statement, usage: &mut BTreeMap<String, ClosureUsageInfo>) {
+pub(super) fn collect_closure_usage_in_stmt(
+    stmt: &Statement,
+    usage: &mut BTreeMap<String, ClosureUsageInfo>,
+) {
     match stmt {
         Statement::Assign { target, value } => {
             if let AssignTarget::Member { property, .. } = target {
@@ -232,48 +260,100 @@ pub(super) fn collect_closure_usage_in_stmt(stmt: &Statement, usage: &mut BTreeM
         Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(e) => {
             collect_closure_usage_in_expr(e, usage);
         }
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             collect_closure_usage_in_expr(condition, usage);
-            for s in then_body { collect_closure_usage_in_stmt(s, usage); }
-            for s in else_body { collect_closure_usage_in_stmt(s, usage); }
+            for s in then_body {
+                collect_closure_usage_in_stmt(s, usage);
+            }
+            for s in else_body {
+                collect_closure_usage_in_stmt(s, usage);
+            }
         }
         Statement::While { condition, body } | Statement::DoWhile { body, condition } => {
             collect_closure_usage_in_expr(condition, usage);
-            for s in body { collect_closure_usage_in_stmt(s, usage); }
+            for s in body {
+                collect_closure_usage_in_stmt(s, usage);
+            }
         }
-        Statement::For { init, condition, update, body } => {
-            if let Some(s) = init { collect_closure_usage_in_stmt(s, usage); }
-            if let Some(e) = condition { collect_closure_usage_in_expr(e, usage); }
-            if let Some(s) = update { collect_closure_usage_in_stmt(s, usage); }
-            for s in body { collect_closure_usage_in_stmt(s, usage); }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(s) = init {
+                collect_closure_usage_in_stmt(s, usage);
+            }
+            if let Some(e) = condition {
+                collect_closure_usage_in_expr(e, usage);
+            }
+            if let Some(s) = update {
+                collect_closure_usage_in_stmt(s, usage);
+            }
+            for s in body {
+                collect_closure_usage_in_stmt(s, usage);
+            }
         }
         Statement::ForOf { iterable, body, .. } => {
             collect_closure_usage_in_expr(iterable, usage);
-            for s in body { collect_closure_usage_in_stmt(s, usage); }
+            for s in body {
+                collect_closure_usage_in_stmt(s, usage);
+            }
         }
         Statement::ForIn { object, body, .. } => {
             collect_closure_usage_in_expr(object, usage);
-            for s in body { collect_closure_usage_in_stmt(s, usage); }
+            for s in body {
+                collect_closure_usage_in_stmt(s, usage);
+            }
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
-            for s in try_body { collect_closure_usage_in_stmt(s, usage); }
-            for s in catch_body { collect_closure_usage_in_stmt(s, usage); }
-            for s in finally_body { collect_closure_usage_in_stmt(s, usage); }
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            for s in try_body {
+                collect_closure_usage_in_stmt(s, usage);
+            }
+            for s in catch_body {
+                collect_closure_usage_in_stmt(s, usage);
+            }
+            for s in finally_body {
+                collect_closure_usage_in_stmt(s, usage);
+            }
         }
-        Statement::Switch { discriminant, cases, default } => {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
             collect_closure_usage_in_expr(discriminant, usage);
             for (e, stmts) in cases {
                 collect_closure_usage_in_expr(e, usage);
-                for s in stmts { collect_closure_usage_in_stmt(s, usage); }
+                for s in stmts {
+                    collect_closure_usage_in_stmt(s, usage);
+                }
             }
             if let Some(stmts) = default {
-                for s in stmts { collect_closure_usage_in_stmt(s, usage); }
+                for s in stmts {
+                    collect_closure_usage_in_stmt(s, usage);
+                }
             }
         }
         Statement::Block(stmts) => {
-            for s in stmts { collect_closure_usage_in_stmt(s, usage); }
+            for s in stmts {
+                collect_closure_usage_in_stmt(s, usage);
+            }
         }
-        Statement::Class { constructor, methods, .. } => {
+        Statement::Class {
+            constructor,
+            methods,
+            ..
+        } => {
             if let Some(c) = constructor {
                 collect_closure_usage_in_stmt(c, usage);
             }
@@ -290,7 +370,10 @@ pub(super) fn collect_closure_usage_in_stmt(stmt: &Statement, usage: &mut BTreeM
     }
 }
 
-fn collect_closure_usage_in_target(target: &AssignTarget, usage: &mut BTreeMap<String, ClosureUsageInfo>) {
+fn collect_closure_usage_in_target(
+    target: &AssignTarget,
+    usage: &mut BTreeMap<String, ClosureUsageInfo>,
+) {
     match target {
         AssignTarget::Member { object, .. } => {
             collect_closure_usage_in_expr(object, usage);
@@ -308,11 +391,17 @@ fn is_invocation_method(name: &str) -> bool {
     matches!(name, "call" | "apply" | "bind")
 }
 
-fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String, ClosureUsageInfo>) {
+fn collect_closure_usage_in_expr(
+    expr: &Expression,
+    usage: &mut BTreeMap<String, ClosureUsageInfo>,
+) {
     match expr {
         // closure_N.property (read) or closure_N[k] (index)
-        Expression::Member { object, property, .. } => {
-            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**object {
+        Expression::Member {
+            object, property, ..
+        } => {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**object
+            {
                 if is_closure_name(name) {
                     match property {
                         PropertyKey::Index(_) | PropertyKey::Computed(_) => {
@@ -338,8 +427,13 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
         // closure_N(args), direct function call
         Expression::Call { callee, arguments } => {
             // Check for closure_N.method(args), method call
-            if let Expression::Member { object, property, .. } = &**callee {
-                if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**object {
+            if let Expression::Member {
+                object, property, ..
+            } = &**callee
+            {
+                if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+                    &**object
+                {
                     if is_closure_name(name) {
                         match property {
                             // closure_N[i](…), indexed table / TurboModule shape
@@ -365,7 +459,8 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
                 }
             }
             // Check for closure_N(args), bare call
-            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**callee {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**callee
+            {
                 if is_closure_name(name) {
                     usage.entry(name.clone()).or_default().called_as_function = true;
                 }
@@ -377,7 +472,9 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
         }
         Expression::New { callee, arguments } => {
             collect_closure_usage_in_expr(callee, usage);
-            for arg in arguments { collect_closure_usage_in_expr(arg, usage); }
+            for arg in arguments {
+                collect_closure_usage_in_expr(arg, usage);
+            }
         }
         Expression::Binary { left, right, .. } => {
             collect_closure_usage_in_expr(left, usage);
@@ -386,13 +483,19 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
         Expression::Unary { operand, .. } => {
             collect_closure_usage_in_expr(operand, usage);
         }
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             collect_closure_usage_in_expr(condition, usage);
             collect_closure_usage_in_expr(then_expr, usage);
             collect_closure_usage_in_expr(else_expr, usage);
         }
         Expression::Array { elements } => {
-            for e in elements.iter().flatten() { collect_closure_usage_in_expr(e, usage); }
+            for e in elements.iter().flatten() {
+                collect_closure_usage_in_expr(e, usage);
+            }
         }
         Expression::Object { properties } => {
             for p in properties {
@@ -410,7 +513,9 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
             collect_closure_usage_in_expr(value, usage);
         }
         Expression::Spread(inner) => {
-            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = inner.as_ref() {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+                inner.as_ref()
+            {
                 if is_closure_name(name) {
                     usage.entry(name.clone()).or_default().spread = true;
                 }
@@ -424,7 +529,9 @@ fn collect_closure_usage_in_expr(expr: &Expression, usage: &mut BTreeMap<String,
             collect_closure_usage_in_expr(value, usage);
         }
         Expression::TemplateLiteral { expressions, .. } => {
-            for e in expressions { collect_closure_usage_in_expr(e, usage); }
+            for e in expressions {
+                collect_closure_usage_in_expr(e, usage);
+            }
         }
         _ => {}
     }

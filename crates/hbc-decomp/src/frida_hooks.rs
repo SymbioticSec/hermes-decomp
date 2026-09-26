@@ -96,10 +96,7 @@ pub fn resolve_exports(registry: &MetroRegistry, module_id: u32) -> Result<Vec<S
     names.sort();
     if names.is_empty() {
         // Still emit a hook skeleton with common CJS shapes.
-        names = vec![
-            "default".into(),
-            "__esModule".into(),
-        ];
+        names = vec!["default".into(), "__esModule".into()];
     }
     Ok(names)
 }
@@ -111,8 +108,8 @@ pub fn generate_frida_hooks(
     if options.exports.is_empty() {
         options.exports = resolve_exports(registry, options.module_id)?;
     }
-    let exports_json = serde_json::to_string(&options.exports)
-        .map_err(|e| Error::Write(format!("json: {e}")))?;
+    let exports_json =
+        serde_json::to_string(&options.exports).map_err(|e| Error::Write(format!("json: {e}")))?;
     let overrides_json = serde_json::to_string(&options.overrides)
         .map_err(|e| Error::Write(format!("json: {e}")))?;
 

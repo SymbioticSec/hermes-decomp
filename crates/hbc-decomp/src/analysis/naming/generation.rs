@@ -13,7 +13,11 @@ pub(crate) fn infer_type_from_properties(props: &HashSet<String>) -> Option<&'st
         (&["x", "y", "z"], 2, "point"),
         (&["key", "value"], 2, "entry"),
         (&["left", "right", "top", "bottom"], 2, "rect"),
-        (&["host", "port", "protocol", "pathname", "hostname"], 2, "url"),
+        (
+            &["host", "port", "protocol", "pathname", "hostname"],
+            2,
+            "url",
+        ),
         (&["method", "url", "body"], 2, "request"),
         (&["url", "query"], 2, "request"),
         (&["params", "query", "route"], 2, "route"),
@@ -78,8 +82,7 @@ fn semantic_ident(prop: &str) -> Option<String> {
     if !crate::util::is_valid_identifier(prop) {
         return None;
     }
-    if crate::ir::expr::display::is_builtin_global(prop)
-        || crate::constants::is_reserved_word(prop)
+    if crate::ir::expr::display::is_builtin_global(prop) || crate::constants::is_reserved_word(prop)
     {
         return Some(format!("_{prop}"));
     }
@@ -99,7 +102,8 @@ pub fn generate_name(info: &RegisterInfo, used_names: &mut HashSet<String>) -> S
     if let Some(key) = &info.destructuring_key {
         if !key.is_empty() && crate::util::is_valid_identifier(key) {
             let base = if crate::ir::expr::display::is_builtin_global(key)
-                || crate::constants::is_reserved_word(key) {
+                || crate::constants::is_reserved_word(key)
+            {
                 format!("_{key}")
             } else {
                 key.clone()
@@ -165,7 +169,6 @@ pub fn generate_name(info: &RegisterInfo, used_names: &mut HashSet<String>) -> S
     make_unique(base.to_string(), used_names)
 }
 
-
 fn make_unique(base: String, used: &mut HashSet<String>) -> String {
     if !used.contains(&base) {
         used.insert(base.clone());
@@ -194,7 +197,10 @@ mod tests {
 
     #[test]
     fn test_infer_user_type() {
-        let props: HashSet<String> = ["email", "password"].iter().map(|s| s.to_string()).collect();
+        let props: HashSet<String> = ["email", "password"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(infer_type_from_properties(&props), Some("user"));
     }
 
@@ -206,7 +212,10 @@ mod tests {
 
     #[test]
     fn test_infer_response_type() {
-        let props: HashSet<String> = ["status", "headers"].iter().map(|s| s.to_string()).collect();
+        let props: HashSet<String> = ["status", "headers"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(infer_type_from_properties(&props), Some("response"));
     }
 
@@ -236,7 +245,10 @@ mod tests {
         let mut used = HashSet::new();
         let info = RegisterInfo {
             role: RegisterRole::Object,
-            accessed_props: ["email", "password"].iter().map(|s| s.to_string()).collect(),
+            accessed_props: ["email", "password"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             ..Default::default()
         };
         let name = generate_name(&info, &mut used);
@@ -296,8 +308,10 @@ mod tests {
 
     #[test]
     fn test_generic_method_stays_none() {
-        let methods: HashSet<String> =
-            ["toString", "valueOf"].iter().map(|s| s.to_string()).collect();
+        let methods: HashSet<String> = ["toString", "valueOf"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(infer_name_from_methods(&methods), None);
     }
 

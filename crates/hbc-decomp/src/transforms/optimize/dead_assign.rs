@@ -1,4 +1,4 @@
-use crate::ir::{Binding, stmt_uses_register, AssignTarget, Expression, Statement, Value};
+use crate::ir::{stmt_uses_register, AssignTarget, Binding, Expression, Statement, Value};
 
 pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     // A store `X = value` is dead when, scanning forward in this flat sequence, a
@@ -22,7 +22,9 @@ pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut result = Vec::with_capacity(n);
     for (i, stmt) in stmts.into_iter().enumerate() {
         if dead[i] {
-            let Statement::Assign { target, value } = stmt else { unreachable!() };
+            let Statement::Assign { target, value } = stmt else {
+                unreachable!()
+            };
             if is_trivial_value(&value) {
                 // A pure copy or scalar constant carries no data, so a dead store of
                 // it is pure noise and is dropped.
@@ -47,7 +49,11 @@ pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
             continue;
         }
         let optimized = match stmt {
-            Statement::If { condition, then_body, else_body } => Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => Statement::If {
                 condition,
                 then_body: remove_dead_assignments(then_body),
                 else_body: remove_dead_assignments(else_body),
@@ -55,6 +61,62 @@ pub(super) fn remove_dead_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
             Statement::While { condition, body } => Statement::While {
                 condition,
                 body: remove_dead_assignments(body),
+            },
+            Statement::DoWhile { body, condition } => Statement::DoWhile {
+                body: remove_dead_assignments(body),
+                condition,
+            },
+            Statement::For {
+                init,
+                condition,
+                update,
+                body,
+            } => Statement::For {
+                init,
+                condition,
+                update,
+                body: remove_dead_assignments(body),
+            },
+            Statement::ForIn {
+                variable,
+                object,
+                body,
+            } => Statement::ForIn {
+                variable,
+                object,
+                body: remove_dead_assignments(body),
+            },
+            Statement::ForOf {
+                variable,
+                iterable,
+                body,
+            } => Statement::ForOf {
+                variable,
+                iterable,
+                body: remove_dead_assignments(body),
+            },
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                catch_param,
+            } => Statement::TryCatch {
+                try_body: remove_dead_assignments(try_body),
+                catch_body: remove_dead_assignments(catch_body),
+                finally_body: remove_dead_assignments(finally_body),
+                catch_param,
+            },
+            Statement::Switch {
+                discriminant,
+                cases,
+                default,
+            } => Statement::Switch {
+                discriminant,
+                cases: cases
+                    .into_iter()
+                    .map(|(c, body)| (c, remove_dead_assignments(body)))
+                    .collect(),
+                default: default.map(remove_dead_assignments),
             },
             Statement::Block(inner) => Statement::Block(remove_dead_assignments(inner)),
             _ => stmt,
@@ -75,7 +137,9 @@ fn is_trivial_value(e: &Expression) -> bool {
         | Expression::Value(Value::Binding(Binding::Register(_)))
         | Expression::Value(Value::Parameter(_))
         | Expression::Value(Value::This) => true,
-        Expression::Value(Value::Constant(c)) => !matches!(c, Constant::String(_) | Constant::BigInt(_)),
+        Expression::Value(Value::Constant(c)) => {
+            !matches!(c, Constant::String(_) | Constant::BigInt(_))
+        }
         // `x.y` / `a[0]` on a trivial base is a copy, not new data.
         Expression::Member { object, .. } => is_trivial_value(object),
         _ => false,
@@ -118,7 +182,10 @@ fn overwritten_before_read(stmts: &[Statement], start: usize, key: &Key) -> bool
 // expression. Anything else may read the value inside a branch/loop/return, so the
 // forward scan stops there.
 fn is_straight_line(stmt: &Statement) -> bool {
-    matches!(stmt, Statement::Assign { .. } | Statement::Expr(_) | Statement::Let { .. })
+    matches!(
+        stmt,
+        Statement::Assign { .. } | Statement::Expr(_) | Statement::Let { .. }
+    )
 }
 
 // A location that a store can target and a later store can overwrite. Only simple
@@ -139,8 +206,20 @@ fn target_key(target: &AssignTarget) -> Option<Key> {
 
 fn overwrites(stmt: &Statement, key: &Key) -> bool {
     match (stmt, key) {
-        (Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. }, Key::Reg(k)) => r == k,
-        (Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), .. }, Key::Var(k)) => n == k,
+        (
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Register(r)),
+                ..
+            },
+            Key::Reg(k),
+        ) => r == k,
+        (
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable(n)),
+                ..
+            },
+            Key::Var(k),
+        ) => n == k,
         (Statement::Let { name, .. }, Key::Var(k)) => name == k,
         _ => false,
     }
@@ -183,7 +262,9 @@ mod tests {
     fn call(name: &str) -> Expression {
         // A call has side effects by default in `has_side_effects`.
         Expression::Call {
-            callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(name.into())))),
+            callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+                name.into(),
+            )))),
             arguments: vec![Expression::Value(Value::Constant(Constant::Integer(0)))],
         }
     }
@@ -192,8 +273,14 @@ mod tests {
     fn dead_store_of_side_effecting_call_keeps_call_drops_target() {
         // `x = __d(0); x = __r(0);` -> the first store is dead, keep the call only.
         let stmts = vec![
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("__d") },
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("__r") },
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable("x".into())),
+                value: call("__d"),
+            },
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable("x".into())),
+                value: call("__r"),
+            },
         ];
         let out = remove_dead_assignments(stmts);
         // First becomes a bare Expr(call), second stays (last store, not overwritten).
@@ -205,10 +292,17 @@ mod tests {
     fn live_store_is_kept() {
         // `x = f(); g(x);` -> x is read, keep the assignment.
         let stmts = vec![
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("f") },
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable("x".into())),
+                value: call("f"),
+            },
             Statement::Expr(Expression::Call {
-                callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("g".into())))),
-                arguments: vec![Expression::Value(Value::Binding(Binding::Variable("x".into())))],
+                callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+                    "g".into(),
+                )))),
+                arguments: vec![Expression::Value(Value::Binding(Binding::Variable(
+                    "x".into(),
+                )))],
             }),
         ];
         let out = remove_dead_assignments(stmts);
@@ -219,7 +313,10 @@ mod tests {
     fn read_before_overwrite_is_kept() {
         // `x = f(); y.k = x; x = g();` -> next stmt reads x, so the first store lives.
         let stmts = vec![
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("f") },
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable("x".into())),
+                value: call("f"),
+            },
             Statement::Assign {
                 target: AssignTarget::Member {
                     object: Expression::Value(Value::Binding(Binding::Variable("y".into()))),
@@ -227,7 +324,10 @@ mod tests {
                 },
                 value: Expression::Value(Value::Binding(Binding::Variable("x".into()))),
             },
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable("x".into())), value: call("g") },
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable("x".into())),
+                value: call("g"),
+            },
         ];
         let out = remove_dead_assignments(stmts);
         assert!(matches!(&out[0], Statement::Assign { .. }));

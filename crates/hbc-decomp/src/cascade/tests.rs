@@ -74,7 +74,12 @@ fn a_decoder_whose_strings_are_all_in_the_table_is_confirmed() {
         name: "decodeName".to_string(),
         role: Role::StringDecoder,
     }]);
-    let v = verify(&art, &fingerprint(), &table(&["alpha", "beta", "gamma"]), &all_ir);
+    let v = verify(
+        &art,
+        &fingerprint(),
+        &table(&["alpha", "beta", "gamma"]),
+        &all_ir,
+    );
     assert_eq!(v.names.get(&7).map(String::as_str), Some("decodeName"));
     assert_eq!(v.confirmation_rate(), 1.0);
 }
@@ -88,7 +93,10 @@ fn a_decoder_yielding_a_string_the_binary_does_not_hold_is_refused() {
         role: Role::StringDecoder,
     }]);
     let v = verify(&art, &fingerprint(), &table(&["alpha", "beta"]), &all_ir);
-    assert!(v.names.is_empty(), "nothing may be renamed on a refused proposal");
+    assert!(
+        v.names.is_empty(),
+        "nothing may be renamed on a refused proposal"
+    );
     assert_eq!(
         only_rejection(&v),
         Rejection::StringsAbsentFromTable {
@@ -185,26 +193,48 @@ fn a_proposed_name_that_is_a_reserved_word_is_refused() {
 #[test]
 fn the_simple_roles_are_each_confirmed_and_each_refused() {
     let noop = vec![Statement::Return(None)];
-    let identity = vec![Statement::Return(Some(Expression::Value(Value::Parameter(0))))];
+    let identity = vec![Statement::Return(Some(Expression::Value(
+        Value::Parameter(0),
+    )))];
     let constant = vec![Statement::Return(Some(string("k")))];
-    let all_ir = ir(vec![
-        (1, noop),
-        (2, identity),
-        (3, constant),
-    ]);
+    let all_ir = ir(vec![(1, noop), (2, identity), (3, constant)]);
     let good = artifact(vec![
-        Proposal { function_id: 1, name: "ignore".into(), role: Role::Noop },
-        Proposal { function_id: 2, name: "passThrough".into(), role: Role::Identity },
-        Proposal { function_id: 3, name: "marker".into(), role: Role::ConstantReturner },
+        Proposal {
+            function_id: 1,
+            name: "ignore".into(),
+            role: Role::Noop,
+        },
+        Proposal {
+            function_id: 2,
+            name: "passThrough".into(),
+            role: Role::Identity,
+        },
+        Proposal {
+            function_id: 3,
+            name: "marker".into(),
+            role: Role::ConstantReturner,
+        },
     ]);
     let v = verify(&good, &fingerprint(), &table(&["k"]), &all_ir);
     assert_eq!(v.confirmed(), 3, "rejected: {:?}", v.rejected);
 
     // The same three functions with the roles rotated: none of them fits.
     let wrong = artifact(vec![
-        Proposal { function_id: 1, name: "ignore".into(), role: Role::Identity },
-        Proposal { function_id: 2, name: "passThrough".into(), role: Role::ConstantReturner },
-        Proposal { function_id: 3, name: "marker".into(), role: Role::Noop },
+        Proposal {
+            function_id: 1,
+            name: "ignore".into(),
+            role: Role::Identity,
+        },
+        Proposal {
+            function_id: 2,
+            name: "passThrough".into(),
+            role: Role::ConstantReturner,
+        },
+        Proposal {
+            function_id: 3,
+            name: "marker".into(),
+            role: Role::Noop,
+        },
     ]);
     let v = verify(&wrong, &fingerprint(), &table(&["k"]), &all_ir);
     assert_eq!(v.confirmed(), 0);
@@ -271,10 +301,21 @@ fn a_fixed_property_read_is_not_a_decoder() {
 fn extraction_finds_the_shapes_and_skips_functions_that_already_have_a_name() {
     let all_ir = ir(vec![
         (1, decoder_body(&["alpha", "beta"])),
-        (2, vec![Statement::Return(Some(Expression::Value(Value::Parameter(0))))]),
+        (
+            2,
+            vec![Statement::Return(Some(Expression::Value(
+                Value::Parameter(0),
+            )))],
+        ),
         (3, vec![Statement::Return(Some(string("k")))]),
         // A real body with nothing verification could judge.
-        (4, vec![Statement::Expr(string("side effect")), Statement::Return(None)]),
+        (
+            4,
+            vec![
+                Statement::Expr(string("side effect")),
+                Statement::Return(None),
+            ],
+        ),
     ]);
     let mut names = BTreeMap::new();
     names.insert(3u32, "alreadyRecovered".to_string());
@@ -287,12 +328,18 @@ fn extraction_finds_the_shapes_and_skips_functions_that_already_have_a_name() {
         !ids.contains(&3),
         "a function whose name the bytecode already gave is left alone"
     );
-    assert!(!ids.contains(&4), "a body no role describes is not proposed");
+    assert!(
+        !ids.contains(&4),
+        "a body no role describes is not proposed"
+    );
 
     let decoder = found.iter().find(|c| c.function_id == 1).expect("decoder");
     assert_eq!(decoder.shape, Role::StringDecoder);
     assert_eq!(decoder.sample_of, 2);
-    assert_eq!(decoder.sample, vec!["alpha".to_string(), "beta".to_string()]);
+    assert_eq!(
+        decoder.sample,
+        vec!["alpha".to_string(), "beta".to_string()]
+    );
 }
 
 // Renaming happens only through verification, so a rejected proposal leaves the IR

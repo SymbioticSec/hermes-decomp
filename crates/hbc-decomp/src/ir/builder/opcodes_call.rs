@@ -1,7 +1,7 @@
 // Opcode handlers for call and construct operations.
 
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value};
 use crate::{BytecodeFile, Instruction};
 
 // Upper bound for a call's argument count when pre-allocating. `arg_count`
@@ -22,7 +22,11 @@ const THIS_ARG_FROM_TOP: u32 = 7;
 // implicit-argument call/construct, with an explicit `this`-from-top offset.
 // HBC ≥97 reserves an extra outgoing frame slot (for `new.target`), so
 // implicit-arg calls' args sit one register lower than on HBC ≤96.
-fn resolve_implicit_args_from(arg_count: usize, frame_size: u32, this_from_top: u32) -> Vec<Expression> {
+fn resolve_implicit_args_from(
+    arg_count: usize,
+    frame_size: u32,
+    this_from_top: u32,
+) -> Vec<Expression> {
     let mut arguments = Vec::with_capacity(arg_count.min(MAX_CALL_ARGS));
     if frame_size < this_from_top {
         return arguments; // malformed / no room for the call frame
@@ -245,34 +249,55 @@ pub fn handle_call_builtin(inst: &Instruction, frame_size: u32, version: u32) ->
         THIS_ARG_FROM_TOP
     };
     let mut arguments = resolve_implicit_args_from(arg_count, frame_size, this_from_top);
-    if !arguments.is_empty() {
-        arguments.remove(0);
-    }
 
     // Resolve the builtin name from this version's table. The raw name is e.g.
     // "Math.acos", "HermesInternal.ensureObject" (old) or "HermesBuiltin.ensureObject"
     // (new) / "HermesBuiltin.silentSetPrototypeOf".
     let table = crate::opcode::builtins_for_version(version);
     let raw = table.get(builtin_idx as usize).map(|s| s.as_str());
-    let assign = |dst, value| Some(Statement::Assign { target: AssignTarget::Binding(Binding::Register(dst)), value });
+    let suffix_early = raw.and_then(|n| n.rsplit('.').next()).unwrap_or("");
+    // Most builtins are called with a dummy `this` in the first frame slot, and
+    // that slot is not a JavaScript argument. `arraySpread` and `apply` are the
+    // exception: the compiler puts the target array, and the function being
+    // applied, in that slot. Dropping it is why Discord emitted
+    // `arraySpread(source, index)` and `apply(args, undefined)` with the real
+    // receiver gone. Keep the slot for those two.
+    let keep_receiver = matches!(suffix_early, "arraySpread" | "apply");
+    if !keep_receiver && !arguments.is_empty() {
+        arguments.remove(0);
+    }
+    let assign = |dst, value| {
+        Some(Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(dst)),
+            value,
+        })
+    };
 
     // Name-based semantic rewrites (work across versions where the index differs).
     let suffix = raw.and_then(|n| n.rsplit('.').next()).unwrap_or("");
     match suffix {
         // x ** y
         "exponentiationOperator" if arguments.len() >= 2 => {
-            return assign(dst, Expression::Binary {
-                op: crate::ir::BinaryOp::Exp,
-                left: Box::new(arguments[0].clone()),
-                right: Box::new(arguments[1].clone()),
-            });
+            return assign(
+                dst,
+                Expression::Binary {
+                    op: crate::ir::BinaryOp::Exp,
+                    left: Box::new(arguments[0].clone()),
+                    right: Box::new(arguments[1].clone()),
+                },
+            );
         }
         // require(...)
         "requireFast" => {
-            return assign(dst, Expression::Call {
-                callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("require".to_string())))),
-                arguments,
-            });
+            return assign(
+                dst,
+                Expression::Call {
+                    callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+                        "require".to_string(),
+                    )))),
+                    arguments,
+                },
+            );
         }
         _ => {}
     }
@@ -285,10 +310,15 @@ pub fn handle_call_builtin(inst: &Instruction, frame_size: u32, version: u32) ->
             Some(n) => n.to_string(),
             None => {
                 // Unknown index for this version: keep a debuggable placeholder.
-                return assign(dst, Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(format!("__builtin{builtin_idx}"))))),
-                    arguments,
-                });
+                return assign(
+                    dst,
+                    Expression::Call {
+                        callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+                            format!("__builtin{builtin_idx}"),
+                        )))),
+                        arguments,
+                    },
+                );
             }
         },
     };
@@ -296,13 +326,19 @@ pub fn handle_call_builtin(inst: &Instruction, frame_size: u32, version: u32) ->
     // Build proper Member expression for dotted names (e.g. "Object.defineProperty")
     // instead of a flat Variable which would get sanitized (dots → underscores).
     let callee = builtin_name_to_expr(&name);
-    assign(dst, Expression::Call { callee: Box::new(callee), arguments })
+    assign(
+        dst,
+        Expression::Call {
+            callee: Box::new(callee),
+            arguments,
+        },
+    )
 }
 
 // Convert a dotted builtin name like "Object.defineProperty" into a proper
 // Member expression tree using Value::Global to prevent variable renaming.
 // The codegen simplifies globalThis.Object → Object via is_builtin_global().
-fn builtin_name_to_expr(name: &str) -> Expression {
+pub(crate) fn builtin_name_to_expr(name: &str) -> Expression {
     if let Some(dot_pos) = name.find('.') {
         let obj_name = &name[..dot_pos];
         let prop_name = &name[dot_pos + 1..];
@@ -315,10 +351,7 @@ fn builtin_name_to_expr(name: &str) -> Expression {
             optional: false,
         }
     } else {
-        Expression::member(
-            Expression::Value(Value::Global),
-            name,
-        )
+        Expression::member(Expression::Value(Value::Global), name)
     }
 }
 
@@ -382,7 +415,9 @@ pub fn handle_call_require(inst: &Instruction) -> Option<Statement> {
     Some(Statement::Assign {
         target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
-            callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("require".to_string())))),
+            callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+                "require".to_string(),
+            )))),
             arguments: vec![arg_expr],
         },
     })
@@ -398,7 +433,9 @@ pub fn handle_direct_eval(inst: &Instruction) -> Option<Statement> {
     Some(Statement::Assign {
         target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
-            callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("eval".to_string())))),
+            callee: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+                "eval".to_string(),
+            )))),
             arguments: vec![source],
         },
     })

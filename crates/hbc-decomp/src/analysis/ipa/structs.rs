@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 // A link between two function parameters, used for cross-function name propagation.
 // When function A passes its parameter `src_param` to function B's parameter `dst_param`,

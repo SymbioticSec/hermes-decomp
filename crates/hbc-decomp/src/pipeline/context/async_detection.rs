@@ -3,10 +3,10 @@
 // Maximum depth for following single-return wrapper chains to find the innermost body.
 const MAX_WRAPPER_CHAIN_DEPTH: usize = 10;
 
-use std::collections::BTreeMap;
 use crate::analysis::ClosureContext;
 use crate::file::BytecodeFile;
 use crate::ir::Statement;
+use std::collections::BTreeMap;
 
 // Detect the Babel async-to-generator pattern: `asyncGeneratorStep.default(function*() { ... })`
 // or `_asyncToGenerator(function*() { ... })`. Returns the function IDs of generator functions
@@ -24,7 +24,6 @@ pub(super) fn detect_async_generator_wrappers(all_ir: &BTreeMap<u32, Vec<Stateme
 }
 
 fn collect_async_generators_from_stmt(stmt: &Statement, results: &mut Vec<u32>) {
-
     match stmt {
         Statement::Assign { value, .. } | Statement::Let { value, .. } => {
             collect_async_generators_from_expr(value, results);
@@ -32,28 +31,64 @@ fn collect_async_generators_from_stmt(stmt: &Statement, results: &mut Vec<u32>) 
         Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(e) => {
             collect_async_generators_from_expr(e, results);
         }
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             collect_async_generators_from_expr(condition, results);
-            for s in then_body { collect_async_generators_from_stmt(s, results); }
-            for s in else_body { collect_async_generators_from_stmt(s, results); }
+            for s in then_body {
+                collect_async_generators_from_stmt(s, results);
+            }
+            for s in else_body {
+                collect_async_generators_from_stmt(s, results);
+            }
         }
         Statement::While { condition, body } | Statement::DoWhile { body, condition } => {
             collect_async_generators_from_expr(condition, results);
-            for s in body { collect_async_generators_from_stmt(s, results); }
+            for s in body {
+                collect_async_generators_from_stmt(s, results);
+            }
         }
-        Statement::For { init, condition, update, body } => {
-            if let Some(s) = init { collect_async_generators_from_stmt(s, results); }
-            if let Some(e) = condition { collect_async_generators_from_expr(e, results); }
-            if let Some(s) = update { collect_async_generators_from_stmt(s, results); }
-            for s in body { collect_async_generators_from_stmt(s, results); }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(s) = init {
+                collect_async_generators_from_stmt(s, results);
+            }
+            if let Some(e) = condition {
+                collect_async_generators_from_expr(e, results);
+            }
+            if let Some(s) = update {
+                collect_async_generators_from_stmt(s, results);
+            }
+            for s in body {
+                collect_async_generators_from_stmt(s, results);
+            }
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
-            for s in try_body { collect_async_generators_from_stmt(s, results); }
-            for s in catch_body { collect_async_generators_from_stmt(s, results); }
-            for s in finally_body { collect_async_generators_from_stmt(s, results); }
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            for s in try_body {
+                collect_async_generators_from_stmt(s, results);
+            }
+            for s in catch_body {
+                collect_async_generators_from_stmt(s, results);
+            }
+            for s in finally_body {
+                collect_async_generators_from_stmt(s, results);
+            }
         }
         Statement::Block(inner) => {
-            for s in inner { collect_async_generators_from_stmt(s, results); }
+            for s in inner {
+                collect_async_generators_from_stmt(s, results);
+            }
         }
         _ => {}
     }
@@ -70,7 +105,10 @@ fn collect_async_generators_from_expr(expr: &crate::ir::Expression, results: &mu
             // In Babel async, this is the _asyncToGenerator(function*() {...}) pattern
             let helper = is_async_helper_callee(callee);
             for arg in arguments {
-                if let Expression::Function { id, is_generator, .. } = arg {
+                if let Expression::Function {
+                    id, is_generator, ..
+                } = arg
+                {
                     if *is_generator || helper {
                         results.push(id.0);
                     }
@@ -89,7 +127,11 @@ fn collect_async_generators_from_expr(expr: &crate::ir::Expression, results: &mu
         Expression::Unary { operand, .. } => {
             collect_async_generators_from_expr(operand, results);
         }
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             collect_async_generators_from_expr(condition, results);
             collect_async_generators_from_expr(then_expr, results);
             collect_async_generators_from_expr(else_expr, results);
@@ -98,7 +140,9 @@ fn collect_async_generators_from_expr(expr: &crate::ir::Expression, results: &mu
             collect_async_generators_from_expr(object, results);
         }
         Expression::Assignment { target, value } => {
-            crate::ir::for_each_target_expression(target, &mut |e| collect_async_generators_from_expr(e, results));
+            crate::ir::for_each_target_expression(target, &mut |e| {
+                collect_async_generators_from_expr(e, results)
+            });
             collect_async_generators_from_expr(value, results);
         }
         Expression::Array { elements } => {
@@ -130,7 +174,9 @@ fn collect_async_generators_from_expr(expr: &crate::ir::Expression, results: &mu
 fn is_async_helper_callee(callee: &crate::ir::Expression) -> bool {
     use crate::ir::{Expression, PropertyKey, Value};
     match callee {
-        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => looks_like_async_helper(n),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => {
+            looks_like_async_helper(n)
+        }
         Expression::Member {
             object,
             property: PropertyKey::Ident(p) | PropertyKey::String(p),
@@ -175,7 +221,12 @@ fn strip_redundant_async_helper_stmt(stmt: &mut Statement, ctx: &crate::analysis
         Statement::Let { value, .. } | Statement::Assign { value, .. } => {
             strip_redundant_async_helper_expr(value, ctx);
         }
-        Statement::If { then_body, else_body, condition, .. } => {
+        Statement::If {
+            then_body,
+            else_body,
+            condition,
+            ..
+        } => {
             strip_redundant_async_helper_expr(condition, ctx);
             for s in then_body.iter_mut().chain(else_body.iter_mut()) {
                 strip_redundant_async_helper_stmt(s, ctx);
@@ -185,7 +236,10 @@ fn strip_redundant_async_helper_stmt(stmt: &mut Statement, ctx: &crate::analysis
     }
 }
 
-fn strip_redundant_async_helper_expr(expr: &mut crate::ir::Expression, ctx: &crate::analysis::ClosureContext) {
+fn strip_redundant_async_helper_expr(
+    expr: &mut crate::ir::Expression,
+    ctx: &crate::analysis::ClosureContext,
+) {
     use crate::ir::{Expression, FunctionId, Value};
 
     if let Expression::Call { callee, arguments } = expr {
@@ -196,10 +250,17 @@ fn strip_redundant_async_helper_expr(expr: &mut crate::ir::Expression, ctx: &cra
                     Expression::Value(Value::Constant(crate::ir::Constant::Undefined))
                 ));
         if empty_or_undef {
-            if let Expression::Call { callee: helper, arguments: inner_args } = callee.as_ref() {
+            if let Expression::Call {
+                callee: helper,
+                arguments: inner_args,
+            } = callee.as_ref()
+            {
                 if is_async_helper_callee(helper) {
-                    if let Some(Expression::Function { id, name, is_arrow, .. }) =
-                        inner_args.iter().find(|a| matches!(a, Expression::Function { .. }))
+                    if let Some(Expression::Function {
+                        id, name, is_arrow, ..
+                    }) = inner_args
+                        .iter()
+                        .find(|a| matches!(a, Expression::Function { .. }))
                     {
                         if ctx.is_async(id.0) {
                             *expr = Expression::Call {
@@ -414,9 +475,10 @@ fn detect_apply_forwarded_async_helper(stmts: &[Statement]) -> Option<u32> {
     }
     let var = helper_var?;
     let id = inner_id?;
-    if stmts.iter().all(|s| {
-        async_helper_assignment(s).is_some() || is_apply_forward_boilerplate(s, &var)
-    }) {
+    if stmts
+        .iter()
+        .all(|s| async_helper_assignment(s).is_some() || is_apply_forward_boilerplate(s, &var))
+    {
         Some(id)
     } else {
         None
@@ -457,9 +519,7 @@ fn is_apply_forward_boilerplate(stmt: &Statement, helper_var: &str) -> bool {
     use crate::ir::{AssignTarget, Expression, Value};
     match stmt {
         Statement::Comment(_) => true,
-        Statement::Let { name, value, .. } => {
-            is_apply_forward_value(name, value, helper_var)
-        }
+        Statement::Let { name, value, .. } => is_apply_forward_value(name, value, helper_var),
         Statement::Assign {
             target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
@@ -546,7 +606,13 @@ fn is_typeof_apply_check(expr: &crate::ir::Expression) -> bool {
         )
     };
     let is_typeof = |e: &Expression| {
-        matches!(e, Expression::Unary { op: UnaryOp::TypeOf, .. })
+        matches!(
+            e,
+            Expression::Unary {
+                op: UnaryOp::TypeOf,
+                ..
+            }
+        )
     };
     (is_typeof(left) && is_unknown(right)) || (is_typeof(right) && is_unknown(left))
 }
@@ -560,7 +626,9 @@ fn is_apply_or_apply_arguments_call(expr: &crate::ir::Expression, helper_var: &s
         return true;
     }
     match callee.as_ref() {
-        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) if n == "apply" || n == helper_var => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n)))
+            if n == "apply" || n == helper_var =>
+        {
             arguments.iter().any(|a| match a {
                 Expression::Value(Value::Arguments) => true,
                 Expression::Spread(inner) => {
@@ -642,7 +710,9 @@ fn is_arguments_forward_call(expr: &crate::ir::Expression, var_name: &str) -> bo
     if let Expression::Call { callee, arguments } = expr {
         match &**callee {
             // Pattern 1: VAR(...arguments)
-            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) if name == var_name => {
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name)))
+                if name == var_name =>
+            {
                 return arguments.iter().any(|a| {
                     matches!(
                         a,
@@ -657,7 +727,9 @@ fn is_arguments_forward_call(expr: &crate::ir::Expression, var_name: &str) -> bo
                 property: PropertyKey::Ident(prop),
                 ..
             } if prop == "apply" => {
-                if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**object {
+                if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+                    &**object
+                {
                     if name == var_name {
                         return arguments
                             .iter()
@@ -696,7 +768,10 @@ fn extract_single_return_function_id(stmts: &[Statement]) -> Option<u32> {
             value: Expression::Function { id, .. },
         } = meaningful[0]
         {
-            if let Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Register(r2))))) = meaningful[1] {
+            if let Statement::Return(Some(Expression::Value(Value::Binding(
+                crate::ir::Binding::Register(r2),
+            )))) = meaningful[1]
+            {
                 if *r == *r2 {
                     return Some(id.0);
                 }
@@ -711,15 +786,15 @@ fn extract_single_return_function_id(stmts: &[Statement]) -> Option<u32> {
 mod tests {
     use super::*;
     use crate::ir::{
-        AssignTarget, BinaryOp, Constant, Expression, FunctionId, PropertyKey, Statement,
-        UnaryOp, Value, VarKind,
+        AssignTarget, BinaryOp, Constant, Expression, FunctionId, PropertyKey, Statement, UnaryOp,
+        Value, VarKind,
     };
 
     fn async_helper_call(inner: u32) -> Expression {
         Expression::Call {
-            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable(
-                "asyncGeneratorStep".into(),
-            )))),
+            callee: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("asyncGeneratorStep".into()),
+            ))),
             arguments: vec![Expression::Function {
                 id: FunctionId(inner),
                 name: None,
@@ -733,13 +808,17 @@ mod tests {
     #[test]
     fn detects_hermes_apply_forward_wrapper() {
         let apply_member = Expression::Member {
-            object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("tmp".into())))),
+            object: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("tmp".into()),
+            ))),
             property: PropertyKey::Ident("apply".into()),
             optional: false,
         };
         let typeof_apply = Expression::Unary {
             op: UnaryOp::TypeOf,
-            operand: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("apply".into())))),
+            operand: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("apply".into()),
+            ))),
         };
         let stmts = vec![
             Statement::Assign {
@@ -753,7 +832,9 @@ mod tests {
             },
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Variable("closure_18".into())),
-                value: Expression::Value(Value::Binding(crate::ir::Binding::Variable("tmp".into()))),
+                value: Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                    "tmp".into(),
+                ))),
             },
             Statement::Let {
                 name: "apply".into(),
@@ -772,30 +853,38 @@ mod tests {
                     name: "applyArgumentsResult".into(),
                     value: Expression::Call {
                         callee: Box::new(Expression::Member {
-                            object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable(
-                                "HermesBuiltin".into(),
-                            )))),
+                            object: Box::new(Expression::Value(Value::Binding(
+                                crate::ir::Binding::Variable("HermesBuiltin".into()),
+                            ))),
                             property: PropertyKey::Ident("applyArguments".into()),
                             optional: false,
                         }),
-                        arguments: vec![Expression::Value(Value::Binding(crate::ir::Binding::Variable("self".into())))],
+                        arguments: vec![Expression::Value(Value::Binding(
+                            crate::ir::Binding::Variable("self".into()),
+                        ))],
                     },
                     kind: VarKind::Let,
                 }],
                 else_body: vec![Statement::Assign {
-                    target: AssignTarget::Binding(crate::ir::Binding::Variable("applyArgumentsResult".into())),
+                    target: AssignTarget::Binding(crate::ir::Binding::Variable(
+                        "applyArgumentsResult".into(),
+                    )),
                     value: Expression::Call {
-                        callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("apply".into())))),
+                        callee: Box::new(Expression::Value(Value::Binding(
+                            crate::ir::Binding::Variable("apply".into()),
+                        ))),
                         arguments: vec![
-                            Expression::Value(Value::Binding(crate::ir::Binding::Variable("self".into()))),
+                            Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                                "self".into(),
+                            ))),
                             Expression::Value(Value::Arguments),
                         ],
                     },
                 }],
             },
-            Statement::Return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Variable(
-                "applyArgumentsResult".into(),
-            ))))),
+            Statement::Return(Some(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("applyArgumentsResult".into()),
+            )))),
         ];
         assert_eq!(detect_async_wrapper_pattern(&stmts), Some(42));
     }

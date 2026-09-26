@@ -1,4 +1,4 @@
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value};
 
 // Inline registers defined once as a pure object/array literal and used exactly
 // once, regardless of statement order. Repeats to a fixed point so deep nests
@@ -12,7 +12,11 @@ pub(super) fn inline_single_use_literals(statements: &mut Vec<Statement>) {
     let mut def_count: HashMap<u32, usize> = HashMap::new();
     let mut use_count: HashMap<u32, usize> = HashMap::new();
     for stmt in statements.iter() {
-        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. } = stmt {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            ..
+        } = stmt
+        {
             *def_count.entry(*r).or_insert(0) += 1;
         }
         collect_value_reg_uses(stmt, &mut use_count);
@@ -23,7 +27,11 @@ pub(super) fn inline_single_use_literals(statements: &mut Vec<Statement>) {
     // to the general inliner.
     let mut map: HashMap<u32, Expression> = HashMap::new();
     for stmt in statements.iter() {
-        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            value,
+        } = stmt
+        {
             let is_composite =
                 matches!(value, Expression::Object { .. } | Expression::Array { .. });
             if is_composite
@@ -70,7 +78,10 @@ pub(super) fn inline_single_use_literals(statements: &mut Vec<Statement>) {
 // Replace every `Register(r)` for which `map` has an entry with that entry's
 // value, in one traversal. `exclude` skips a register (used while resolving the
 // map into itself so a value is not substituted for its own register).
-fn substitute_registers_in_stmt(stmt: &mut Statement, map: &std::collections::HashMap<u32, Expression>) {
+fn substitute_registers_in_stmt(
+    stmt: &mut Statement,
+    map: &std::collections::HashMap<u32, Expression>,
+) {
     use crate::ir::MutVisitor;
     struct S<'a>(&'a std::collections::HashMap<u32, Expression>);
     impl<'a> MutVisitor for S<'a> {

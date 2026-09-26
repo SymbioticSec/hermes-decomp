@@ -1,4 +1,6 @@
-use crate::ir::{Binding, is_nan_check, is_undefined_expr, AssignTarget, Expression, Statement, Value};
+use crate::ir::{
+    is_nan_check, is_undefined_expr, AssignTarget, Binding, Expression, Statement, Value,
+};
 
 use super::esm_cleanup::{inline_hoisted_aliases_and_trim, remove_esm_boilerplate};
 
@@ -17,7 +19,11 @@ fn is_self_assign_value(name: &str, value: &Expression) -> bool {
         // resolves to the global). Only safe for actual builtins: for a user-local
         // like `f`, `f = globalThis.f` reads the global property into the local and
         // must NOT be dropped (it is a real, possibly-conditional assignment).
-        Expression::Member { object, property: crate::ir::PropertyKey::Ident(prop), .. } => {
+        Expression::Member {
+            object,
+            property: crate::ir::PropertyKey::Ident(prop),
+            ..
+        } => {
             prop == name
                 && crate::ir::expr::display::is_builtin_global(name)
                 && match &**object {
@@ -36,7 +42,10 @@ pub fn cleanup_noise(stmts: Vec<Statement>) -> Vec<Statement> {
     for (i, stmt) in stmts.iter().enumerate() {
         match stmt {
             // Remove self-assignments: `x = x;` and `x = globalThis.x;` (Babel global captures)
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable(name)),
+                value,
+            } => {
                 if is_self_assign_value(name, value) {
                     continue;
                 }
@@ -72,14 +81,22 @@ pub fn cleanup_noise(stmts: Vec<Statement>) -> Vec<Statement> {
                 continue;
             }
             // Remove empty while/for loops (artifact of structure recovery)
-            Statement::While { body, .. } | Statement::DoWhile { body, .. }
-            | Statement::For { body, .. } | Statement::ForIn { body, .. }
-            | Statement::ForOf { body, .. } if body.is_empty() => {
+            Statement::While { body, .. }
+            | Statement::DoWhile { body, .. }
+            | Statement::For { body, .. }
+            | Statement::ForIn { body, .. }
+            | Statement::ForOf { body, .. }
+                if body.is_empty() =>
+            {
                 continue;
             }
             // Remove ESM interop guard: `if (!this) { BODY } else { ... }` -> BODY
             // In ESM, `this` is always undefined, so the then-branch always executes
-            Statement::If { condition, then_body, .. } if is_not_this(condition) => {
+            Statement::If {
+                condition,
+                then_body,
+                ..
+            } if is_not_this(condition) => {
                 for s in then_body {
                     result.push(s.clone());
                 }
@@ -101,28 +118,31 @@ pub fn cleanup_noise(stmts: Vec<Statement>) -> Vec<Statement> {
     }
 
     // Post-recursion: remove empty loops, empty if blocks, and empty blocks
-    result.retain(|stmt| {
-        match stmt {
-            Statement::While { body, .. }
-            | Statement::DoWhile { body, .. }
-            | Statement::For { body, .. }
-            | Statement::ForIn { body, .. }
-            | Statement::ForOf { body, .. } => !is_effectively_empty_body(body),
-            Statement::If { then_body, else_body, .. } => {
-                !is_effectively_empty_body(then_body) || !is_effectively_empty_body(else_body)
-            }
-            Statement::Block(inner) => !is_effectively_empty_body(inner),
-            _ => true,
-        }
+    result.retain(|stmt| match stmt {
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::For { body, .. }
+        | Statement::ForIn { body, .. }
+        | Statement::ForOf { body, .. } => !is_effectively_empty_body(body),
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => !is_effectively_empty_body(then_body) || !is_effectively_empty_body(else_body),
+        Statement::Block(inner) => !is_effectively_empty_body(inner),
+        _ => true,
     });
 
     result
 }
 
-
 // Check if expression is `!this` (ESM interop guard condition)
 fn is_not_this(expr: &Expression) -> bool {
-    if let Expression::Unary { op: crate::ir::UnaryOp::Not, operand } = expr {
+    if let Expression::Unary {
+        op: crate::ir::UnaryOp::Not,
+        operand,
+    } = expr
+    {
         return matches!(&**operand, Expression::Value(Value::This));
     }
     false
@@ -130,22 +150,31 @@ fn is_not_this(expr: &Expression) -> bool {
 
 // Check if a body is effectively empty (no meaningful statements).
 fn is_effectively_empty_body(stmts: &[Statement]) -> bool {
-    stmts.iter().all(|s| matches!(s,
-        Statement::Block(inner) if inner.is_empty() || is_effectively_empty_body(inner)
-    ) || matches!(s, Statement::Continue(_))
-      || matches!(s, Statement::Comment(_))
-    )
+    stmts.iter().all(|s| {
+        matches!(s,
+            Statement::Block(inner) if inner.is_empty() || is_effectively_empty_body(inner)
+        ) || matches!(s, Statement::Continue(_))
+            || matches!(s, Statement::Comment(_))
+    })
 }
 
 fn cleanup_noise_recurse(stmt: &mut Statement) {
     crate::ir::map_nested_bodies_mut(stmt, cleanup_noise);
 
     // Post-pass: invert empty then-body: `if (x) {} else { ... }` -> `if (!x) { ... }`
-    if let Statement::If { condition, then_body, else_body } = stmt {
+    if let Statement::If {
+        condition,
+        then_body,
+        else_body,
+    } = stmt
+    {
         if then_body.is_empty() && !else_body.is_empty() {
             let mut temp_else = std::mem::take(else_body);
             std::mem::swap(then_body, &mut temp_else);
-            let old_cond = std::mem::replace(condition, Expression::Value(Value::Constant(crate::ir::Constant::Undefined)));
+            let old_cond = std::mem::replace(
+                condition,
+                Expression::Value(Value::Constant(crate::ir::Constant::Undefined)),
+            );
             *condition = crate::transforms::logic_simplify::negate_expr(old_cond);
         }
     }
@@ -165,7 +194,10 @@ mod tests {
             kind: VarKind::Let,
         }];
         let result = cleanup_noise(stmts);
-        assert!(result.is_empty(), "Self-assign `let Error = Error` should be removed");
+        assert!(
+            result.is_empty(),
+            "Self-assign `let Error = Error` should be removed"
+        );
     }
 
     #[test]
@@ -212,6 +244,9 @@ mod tests {
             kind: VarKind::Let,
         }];
         let result = cleanup_noise(stmts);
-        assert!(result.is_empty(), "Global member self-assign should be removed");
+        assert!(
+            result.is_empty(),
+            "Global member self-assign should be removed"
+        );
     }
 }

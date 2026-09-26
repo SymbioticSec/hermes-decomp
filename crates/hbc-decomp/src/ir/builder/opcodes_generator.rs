@@ -59,10 +59,12 @@ pub fn handle_create_generator(inst: &crate::Instruction) -> Option<FlowResult> 
         Some(FlowResult::Statement(Statement::Assign {
             target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
             value: Expression::Call {
-                callee: Box::new(Expression::Value(crate::ir::Value::Binding(Binding::Variable(
-                    "CreateGenerator".to_string(),
-                )))),
-                arguments: vec![Expression::Value(crate::ir::Value::Binding(Binding::Register(env)))],
+                callee: Box::new(Expression::Value(crate::ir::Value::Binding(
+                    Binding::Variable("CreateGenerator".to_string()),
+                ))),
+                arguments: vec![Expression::Value(crate::ir::Value::Binding(
+                    Binding::Register(env),
+                ))],
             },
         }))
     }
@@ -82,7 +84,10 @@ pub fn handle_complete_generator(_inst: &crate::Instruction) -> Option<FlowResul
 // SaveGenerator saves the current state and specifies where to resume.
 // The next instruction after SaveGenerator is typically a Ret that yields the value.
 // Operand: Addr8 or Addr32 - the resume address (relative offset).
-pub fn handle_save_generator(inst: &crate::Instruction, _format: &crate::BytecodeFormat) -> Option<FlowResult> {
+pub fn handle_save_generator(
+    inst: &crate::Instruction,
+    _format: &crate::BytecodeFormat,
+) -> Option<FlowResult> {
     // Get the resume address from the operand
     let resume_offset = match inst.operands.first()?.value {
         crate::opcode::OperandValue::I8(v) => v as i32,

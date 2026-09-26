@@ -1,4 +1,4 @@
-use crate::ir::{Binding, AssignTarget, BinaryOp, Expression, Statement, Value};
+use crate::ir::{AssignTarget, BinaryOp, Binding, Expression, Statement, Value};
 
 // Detect and transform default parameter patterns:
 // `if (argN === undefined) argN = value`

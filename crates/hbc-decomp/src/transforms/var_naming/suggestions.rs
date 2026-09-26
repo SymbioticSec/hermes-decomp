@@ -111,8 +111,8 @@ pub fn name_for_call(func_name: &str) -> String {
 // is a clean identifier. `createUpdate` → "update", `useState` → "state".
 fn strip_factory_prefix(func_name: &str) -> Option<String> {
     const PREFIXES: &[&str] = &[
-        "create", "make", "build", "get", "use", "fetch", "load", "request",
-        "compute", "generate", "init", "resolve", "read", "select",
+        "create", "make", "build", "get", "use", "fetch", "load", "request", "compute", "generate",
+        "init", "resolve", "read", "select",
     ];
     for p in PREFIXES {
         if let Some(rest) = func_name.strip_prefix(p) {
@@ -247,10 +247,19 @@ mod factory_prefix_tests {
 
     #[test]
     fn strips_factory_and_hook_prefixes() {
-        assert_eq!(strip_factory_prefix("createUpdate"), Some("update".to_string()));
+        assert_eq!(
+            strip_factory_prefix("createUpdate"),
+            Some("update".to_string())
+        );
         assert_eq!(strip_factory_prefix("useState"), Some("state".to_string()));
-        assert_eq!(strip_factory_prefix("useSharedValue"), Some("sharedValue".to_string()));
-        assert_eq!(strip_factory_prefix("getUserName"), Some("userName".to_string()));
+        assert_eq!(
+            strip_factory_prefix("useSharedValue"),
+            Some("sharedValue".to_string())
+        );
+        assert_eq!(
+            strip_factory_prefix("getUserName"),
+            Some("userName".to_string())
+        );
         // name_for_call wires it in for unknown calls
         assert_eq!(name_for_call("useRef"), "ref");
         assert_eq!(name_for_call("makeStore"), "store");

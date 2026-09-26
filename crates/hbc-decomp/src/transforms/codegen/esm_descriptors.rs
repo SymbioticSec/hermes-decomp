@@ -1,4 +1,4 @@
-use super::{Codegen, DescriptorInfo, EsmClassification, is_exports_like};
+use super::{is_exports_like, Codegen, DescriptorInfo, EsmClassification};
 use crate::ir::Statement;
 
 impl Codegen {
@@ -36,7 +36,10 @@ impl Codegen {
     }
 
     // Extract descriptor info from an object expression (looking for get/value properties).
-    pub(super) fn extract_descriptor_info(&self, expr: &crate::ir::Expression) -> Option<DescriptorInfo> {
+    pub(super) fn extract_descriptor_info(
+        &self,
+        expr: &crate::ir::Expression,
+    ) -> Option<DescriptorInfo> {
         use crate::ir::{Expression, PropertyKey};
 
         let properties = match expr {
@@ -63,7 +66,8 @@ impl Codegen {
                                 // Try to extract the returned value from the rendered body
                                 let trimmed = rendered.trim();
                                 // Common: (arg0) => someValue  or  function get() { return someValue; }
-                                if let Some(arrow_val) = trimmed.strip_prefix("(")
+                                if let Some(arrow_val) = trimmed
+                                    .strip_prefix("(")
                                     .and_then(|s| s.find("=> "))
                                     .and_then(|_| trimmed.find("=> "))
                                     .map(|pos| trimmed[pos + 3..].to_string())
@@ -72,10 +76,16 @@ impl Codegen {
                                 } else if let Some(ret_pos) = trimmed.find("return ") {
                                     let after_return = &trimmed[ret_pos + 7..];
                                     if let Some(semi_pos) = after_return.find(';') {
-                                        getter_return = Some(after_return[..semi_pos].trim().to_string());
+                                        getter_return =
+                                            Some(after_return[..semi_pos].trim().to_string());
                                     } else {
                                         // May end with } or newline
-                                        let val = after_return.trim().trim_end_matches('}').trim().trim_end_matches('\n').trim();
+                                        let val = after_return
+                                            .trim()
+                                            .trim_end_matches('}')
+                                            .trim()
+                                            .trim_end_matches('\n')
+                                            .trim();
                                         if !val.is_empty() {
                                             getter_return = Some(val.to_string());
                                         }
@@ -93,15 +103,21 @@ impl Codegen {
         }
 
         if getter_return.is_some() || value_prop.is_some() {
-            Some(DescriptorInfo { getter_return, value_prop })
+            Some(DescriptorInfo {
+                getter_return,
+                value_prop,
+            })
         } else {
             None
         }
     }
 
     // Get the variable name of the descriptor argument in a defineProperty call.
-    pub(super) fn get_define_property_descriptor_var(&self, expr: &crate::ir::Expression) -> Option<String> {
-        use crate::ir::{Expression, Value, Constant};
+    pub(super) fn get_define_property_descriptor_var(
+        &self,
+        expr: &crate::ir::Expression,
+    ) -> Option<String> {
+        use crate::ir::{Constant, Expression, Value};
 
         let (callee, arguments) = match expr {
             Expression::Call { callee, arguments } => (callee, arguments),
@@ -144,8 +160,12 @@ impl Codegen {
 
         // Return the variable name of the descriptor
         match &args[desc_idx] {
-            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => Some(name.clone()),
-            Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
+                Some(name.clone())
+            }
+            Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
+                Some(format!("r{r}"))
+            }
             _ => None, // inline descriptor, not a variable
         }
     }
@@ -162,7 +182,9 @@ impl Codegen {
             if self.is_esmodule_boilerplate_expr(expr) {
                 return EsmClassification::Skip;
             }
-            if let Some(exp) = self.try_define_property_export_with_descriptors(expr, descriptor_vars) {
+            if let Some(exp) =
+                self.try_define_property_export_with_descriptors(expr, descriptor_vars)
+            {
                 return EsmClassification::Export(exp);
             }
             if let Some(imp) = self.try_side_effect_import(expr) {
@@ -178,16 +200,24 @@ impl Codegen {
     // Pattern: import X; X = Object.keys(X); X.forEach(key => { defineProperty(exports, key, ...) })
     // Returns `Some("export * from \"module\";")` if the pattern matches.
     pub(super) fn detect_reexport_module(&self, statements: &[Statement]) -> Option<String> {
-        use crate::ir::{Expression, Value, Constant, AssignTarget};
+        use crate::ir::{AssignTarget, Constant, Expression, Value};
 
         // Filter out noise: return undefined, __esModule boilerplate, comments
-        let meaningful: Vec<&Statement> = statements.iter().filter(|s| {
-            !matches!(s, Statement::Return(None))
-                && !matches!(s, Statement::Return(Some(Expression::Value(Value::Constant(Constant::Undefined)))))
-                && !matches!(s, Statement::Comment(_))
-                && !self.is_esmodule_boilerplate_stmt(s)
-                && !self.is_interop_default_check(s)
-        }).collect();
+        let meaningful: Vec<&Statement> = statements
+            .iter()
+            .filter(|s| {
+                !matches!(s, Statement::Return(None))
+                    && !matches!(
+                        s,
+                        Statement::Return(Some(Expression::Value(Value::Constant(
+                            Constant::Undefined
+                        ))))
+                    )
+                    && !matches!(s, Statement::Comment(_))
+                    && !self.is_esmodule_boilerplate_stmt(s)
+                    && !self.is_interop_default_check(s)
+            })
+            .collect();
 
         // A re-export module typically has 3-5 meaningful statements
         if meaningful.len() < 2 || meaningful.len() > 8 {
@@ -217,7 +247,10 @@ impl Codegen {
                         }
                     }
                 }
-                Statement::Assign { target: AssignTarget::Binding(crate::ir::Binding::Variable(name)), value } => {
+                Statement::Assign {
+                    target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
+                    value,
+                } => {
                     if let Some(mod_name) = self.resolve_require_module(value) {
                         import_var = Some(name.clone());
                         module_name = Some(mod_name);
@@ -274,7 +307,11 @@ impl Codegen {
         use crate::ir::{Expression, PropertyKey};
 
         if let Expression::Call { callee, .. } = expr {
-            if let Expression::Member { property: PropertyKey::Ident(name), .. } = callee.as_ref() {
+            if let Expression::Member {
+                property: PropertyKey::Ident(name),
+                ..
+            } = callee.as_ref()
+            {
                 return name == "keys";
             }
         }
@@ -282,16 +319,26 @@ impl Codegen {
     }
 
     // Extract the source variable from Object.keys(SRC) or SRC.keys(SRC)
-    pub(super) fn extract_object_keys_source(&self, expr: &crate::ir::Expression) -> Option<String> {
+    pub(super) fn extract_object_keys_source(
+        &self,
+        expr: &crate::ir::Expression,
+    ) -> Option<String> {
         use crate::ir::{Expression, PropertyKey, Value};
 
         if let Expression::Call { callee, arguments } = expr {
-            if let Expression::Member { property: PropertyKey::Ident(name), .. } = callee.as_ref() {
+            if let Expression::Member {
+                property: PropertyKey::Ident(name),
+                ..
+            } = callee.as_ref()
+            {
                 if name == "keys" {
                     // The argument to keys() is the source object
                     let args = Self::effective_args(arguments);
                     if let Some(arg) = args.first() {
-                        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(var_name))) = arg {
+                        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                            var_name,
+                        ))) = arg
+                        {
                             return Some(var_name.clone());
                         }
                     }
@@ -306,7 +353,11 @@ impl Codegen {
         use crate::ir::{Expression, PropertyKey};
 
         if let Expression::Call { callee, .. } = expr {
-            if let Expression::Member { property: PropertyKey::Ident(name), .. } = callee.as_ref() {
+            if let Expression::Member {
+                property: PropertyKey::Ident(name),
+                ..
+            } = callee.as_ref()
+            {
                 return name == "forEach";
             }
         }
@@ -318,9 +369,16 @@ impl Codegen {
         use crate::ir::{Expression, PropertyKey, Value};
 
         if let Expression::Call { callee, .. } = expr {
-            if let Expression::Member { object, property: PropertyKey::Ident(method), .. } = callee.as_ref() {
+            if let Expression::Member {
+                object,
+                property: PropertyKey::Ident(method),
+                ..
+            } = callee.as_ref()
+            {
                 if method == "forEach" {
-                    if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref() {
+                    if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+                        object.as_ref()
+                    {
                         return name == var_name;
                     }
                 }

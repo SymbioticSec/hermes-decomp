@@ -1,7 +1,7 @@
 // Infer `const` vs `let` from reassignment analysis.
 // Hermes bytecode does not distinguish them, this is a post-hoc readability pass.
 
-use crate::ir::{Binding, map_nested_bodies_mut, AssignTarget, Statement, VarKind};
+use crate::ir::{map_nested_bodies_mut, AssignTarget, Binding, Statement, VarKind};
 use std::collections::HashSet;
 
 /// Promote `let` bindings that are never reassigned to `const`.

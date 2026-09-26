@@ -14,7 +14,9 @@ fn nested_mutation_forces_let_not_const() {
             target: AssignTarget::Binding(Binding::Variable("tmp".into())),
             value: Expression::Binary {
                 op: crate::ir::BinaryOp::Add,
-                left: Box::new(Expression::Value(Value::Binding(Binding::Variable("tmp".into())))),
+                left: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+                    "tmp".into(),
+                )))),
                 right: Box::new(Expression::constant(Constant::Integer(1))),
             },
         },
@@ -67,7 +69,11 @@ fn write_first_nested_reassign_forces_let() {
     match &parent[0] {
         Statement::Let { kind, name, .. } => {
             assert_eq!(name, "items");
-            assert_eq!(*kind, VarKind::Let, "expected let for cross-scope reassignment");
+            assert_eq!(
+                *kind,
+                VarKind::Let,
+                "expected let for cross-scope reassignment"
+            );
         }
         other => panic!("expected Let, got {other:?}"),
     }
@@ -116,17 +122,52 @@ fn nested_env_slot_write_stays_assign() {
 }
 
 #[test]
-fn nested_env_slot_skipped_by_flag_without_outer() {
+fn switch_cases_declare_the_same_name_separately() {
+    let mut body = vec![Statement::Switch {
+        discriminant: Expression::Value(Value::Binding(Binding::Variable("kind".into()))),
+        cases: vec![
+            (
+                Expression::constant(crate::ir::Constant::String("voice".into())),
+                vec![Statement::Assign {
+                    target: AssignTarget::Binding(Binding::Variable("userId".into())),
+                    value: Expression::constant(crate::ir::Constant::Integer(1)),
+                }],
+            ),
+            (
+                Expression::constant(crate::ir::Constant::String("unified".into())),
+                vec![Statement::Assign {
+                    target: AssignTarget::Binding(Binding::Variable("userId".into())),
+                    value: Expression::constant(crate::ir::Constant::Integer(2)),
+                }],
+            ),
+        ],
+        default: None,
+    }];
+    insert_declarations(&mut body, &[]);
+    let Statement::Switch { cases, .. } = &body[0] else {
+        panic!()
+    };
+    assert!(matches!(&cases[0].1[0], Statement::Let { name, .. } if name == "userId"));
+    assert!(matches!(&cases[1].1[0], Statement::Let { name, .. } if name == "userId"));
+}
+
+#[test]
+fn own_env_slot_is_declared_when_it_is_not_an_ancestor_capture() {
+    // A `closure_N` written here and not listed as an ancestor slot is this
+    // function's own binding. Leaving it as a bare assignment makes it an
+    // implicit global. Ancestor captures stay assignments; see the test above.
     let mut child = vec![Statement::Assign {
         target: AssignTarget::Binding(Binding::Variable("closure_1_2".into())),
         value: Expression::Array { elements: vec![] },
     }];
     insert_declarations_with_outer(&mut child, &[], &BTreeMap::new(), &HashSet::new(), true);
-    assert!(
-        matches!(&child[0], Statement::Assign { .. }),
-        "env slot must stay assign when skip_env_slots, got {:?}",
-        child[0]
-    );
+    match &child[0] {
+        Statement::Let { name, kind, .. } => {
+            assert_eq!(name, "closure_1_2");
+            assert_eq!(*kind, crate::ir::VarKind::Let);
+        }
+        other => panic!("own env slot must be declared, got {other:?}"),
+    }
 }
 
 #[test]

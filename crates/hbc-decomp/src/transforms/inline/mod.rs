@@ -1,4 +1,5 @@
 mod arguments;
+mod captured;
 mod cleanup;
 mod counting;
 mod declarations;
@@ -9,17 +10,20 @@ mod reserved_words;
 mod strip_this;
 
 pub use arguments::simplify_arguments_copy;
+pub use captured::names_used_by_descendants;
 pub use cleanup::cleanup_noise;
 pub use declarations::{
     extra_writes_from_nested_bodies, insert_declarations, insert_declarations_with_extra_writes,
-    insert_declarations_with_outer,
+    insert_declarations_with_outer, insert_declarations_with_slots,
 };
 pub use folding::{fold_array_literals, fold_object_literals};
-pub use inline_named::{eliminate_immutable_aliases, inline_named_variables};
-pub use reserved_words::rename_reserved_words;
+pub use inline_named::{
+    eliminate_immutable_aliases, inline_named_variables, inline_named_variables_keeping,
+};
+pub use reserved_words::{make_sanitized_names_distinct, rename_reserved_words};
 pub use strip_this::strip_hermes_this;
 
-use crate::ir::{Binding, AssignTarget, Expression, MutVisitor, Statement, Value, Visitor};
+use crate::ir::{AssignTarget, Binding, Expression, MutVisitor, Statement, Value, Visitor};
 use std::collections::{BTreeMap, HashSet};
 
 pub fn inline_expressions(mut stmts: Vec<Statement>) -> Vec<Statement> {
@@ -231,7 +235,10 @@ fn stmt_redefines_source(stmt: &Statement, value: &Expression) -> bool {
             self.walk_expression(expr);
         }
     }
-    let mut checker = DefChecker { reads: &reads, found: false };
+    let mut checker = DefChecker {
+        reads: &reads,
+        found: false,
+    };
     checker.visit_statement(stmt);
     checker.found
 }

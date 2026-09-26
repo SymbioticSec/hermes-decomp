@@ -7,7 +7,8 @@ use crate::ir::{Constant, Expression, Statement, VarKind};
 // extractor cannot summarise, which the lattice must treat as unknown.
 fn extractor() -> Box<Extract<i32>> {
     Box::new(|stmt: &Statement, _: &Defs<i32>| match stmt {
-        Statement::Let { name, value, .. } | Statement::Assign {
+        Statement::Let { name, value, .. }
+        | Statement::Assign {
             target: crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
         } => match value {
@@ -58,7 +59,11 @@ fn the_two_arms_of_an_if_disagreeing_make_the_name_unknown() {
         then_body: vec![let_int("x", 1)],
         else_body: vec![let_int("x", 2)],
     }]);
-    assert_eq!(out.get("x"), None, "two values reach, neither is the answer");
+    assert_eq!(
+        out.get("x"),
+        None,
+        "two values reach, neither is the answer"
+    );
     assert!(out.is_ambiguous("x"));
 }
 
@@ -138,7 +143,10 @@ fn a_do_body_always_runs_so_its_definition_holds_after_it() {
 fn a_definition_inside_a_switch_case_reaches_the_exit() {
     let out = run(&[Statement::Switch {
         discriminant: truthy(),
-        cases: vec![(Expression::constant(Constant::Integer(0)), vec![let_int("x", 9)])],
+        cases: vec![(
+            Expression::constant(Constant::Integer(0)),
+            vec![let_int("x", 9)],
+        )],
         default: Some(vec![let_int("x", 9)]),
     }]);
     assert_eq!(out.get("x"), Some(&9));
@@ -148,7 +156,10 @@ fn a_definition_inside_a_switch_case_reaches_the_exit() {
 fn a_switch_without_a_default_may_match_nothing() {
     let out = run(&[Statement::Switch {
         discriminant: truthy(),
-        cases: vec![(Expression::constant(Constant::Integer(0)), vec![let_int("x", 9)])],
+        cases: vec![(
+            Expression::constant(Constant::Integer(0)),
+            vec![let_int("x", 9)],
+        )],
         default: None,
     }]);
     assert_eq!(out.get("x"), Some(&9), "the only definition that can reach");
@@ -162,8 +173,15 @@ fn a_catch_param_is_bound_but_carries_no_known_value() {
         catch_body: vec![],
         finally_body: vec![],
     }]);
-    assert!(out.is_ambiguous("err"), "err exists, its value is not known");
-    assert_eq!(out.get("x"), Some(&1), "the try body holds the only definition");
+    assert!(
+        out.is_ambiguous("err"),
+        "err exists, its value is not known"
+    );
+    assert_eq!(
+        out.get("x"),
+        Some(&1),
+        "the try body holds the only definition"
+    );
 }
 
 #[test]
@@ -180,13 +198,11 @@ fn a_for_of_head_binds_its_variable() {
 // be joined back into the fact that follows.
 #[test]
 fn a_returning_arm_does_not_contribute_to_what_follows() {
-    let out = run(&[
-        Statement::If {
-            condition: truthy(),
-            then_body: vec![let_int("x", 1), Statement::Return(None)],
-            else_body: vec![let_int("x", 2)],
-        },
-    ]);
+    let out = run(&[Statement::If {
+        condition: truthy(),
+        then_body: vec![let_int("x", 1), Statement::Return(None)],
+        else_body: vec![let_int("x", 2)],
+    }]);
     assert_eq!(out.get("x"), Some(&2), "only the else arm reaches here");
 }
 

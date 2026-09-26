@@ -4,21 +4,69 @@ pub mod info;
 #[cfg(test)]
 mod inheritance_tests;
 
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
 
 pub use context::ClosureContext;
 use info::encode_level_slot;
 pub use info::{ClosureInfo, ClosureSlotValue};
+use std::collections::BTreeMap;
 
 // Hermes bytecode uses an environment system for closures.
 // IR: `ClosureVar { level, slot }` where level 0 = current function env, 1 = parent, …
 // (levels come from GetEnvironment during IR build, see ir/builder/env_state.rs).
 // This pass renames those slots to JS identifiers via ClosureInfo::get_slot_name.
 pub fn resolve_closures(stmts: Vec<Statement>, info: &ClosureInfo) -> Vec<Statement> {
+    resolve_closures_recording(stmts, info).0
+}
+
+// The same pass, also returning, for every slot access (own slots at level 0,
+// ancestor captures above), the name it was baked as and the (level, slot). A capture
+// baked while its slot had no name prints as `closure_N`, which says nothing
+// about the level; the late inherit pass reads this record to resolve it
+// once the owner has named the slot.
+pub fn resolve_closures_recording(
+    stmts: Vec<Statement>,
+    info: &ClosureInfo,
+) -> (Vec<Statement>, BTreeMap<String, (u32, u32)>) {
+    let resolver = Resolver {
+        info,
+        baked: std::cell::RefCell::new(BTreeMap::new()),
+    };
+    let out = stmts
+        .into_iter()
+        .map(|s| resolve_stmt(s, &resolver))
+        .collect();
+    (out, resolver.baked.into_inner())
+}
+
+fn resolve_list(stmts: Vec<Statement>, info: &Resolver) -> Vec<Statement> {
     stmts.into_iter().map(|s| resolve_stmt(s, info)).collect()
 }
 
-fn resolve_stmt(stmt: Statement, info: &ClosureInfo) -> Statement {
+struct Resolver<'a> {
+    info: &'a ClosureInfo,
+    baked: std::cell::RefCell<BTreeMap<String, (u32, u32)>>,
+}
+
+impl Resolver<'_> {
+    // Level 0 is recorded too: the owner's own binding for a slot is what
+    // its captures must end up named after.
+    fn record(&self, name: &str, level: u32, slot: u32) {
+        self.baked
+            .borrow_mut()
+            .entry(name.to_string())
+            .or_insert((level, slot));
+    }
+}
+
+impl std::ops::Deref for Resolver<'_> {
+    type Target = ClosureInfo;
+    fn deref(&self) -> &ClosureInfo {
+        self.info
+    }
+}
+
+fn resolve_stmt(stmt: Statement, info: &Resolver) -> Statement {
     match stmt {
         Statement::Assign { target, value } => Statement::Assign {
             target: resolve_target(target, info),
@@ -42,15 +90,15 @@ fn resolve_stmt(stmt: Statement, info: &ClosureInfo) -> Statement {
             else_body,
         } => Statement::If {
             condition: resolve_expr(condition, info),
-            then_body: resolve_closures(then_body, info),
-            else_body: resolve_closures(else_body, info),
+            then_body: resolve_list(then_body, info),
+            else_body: resolve_list(else_body, info),
         },
         Statement::While { condition, body } => Statement::While {
             condition: resolve_expr(condition, info),
-            body: resolve_closures(body, info),
+            body: resolve_list(body, info),
         },
         Statement::DoWhile { body, condition } => Statement::DoWhile {
-            body: resolve_closures(body, info),
+            body: resolve_list(body, info),
             condition: resolve_expr(condition, info),
         },
         Statement::For {
@@ -62,7 +110,7 @@ fn resolve_stmt(stmt: Statement, info: &ClosureInfo) -> Statement {
             init: init.map(|s| Box::new(resolve_stmt(*s, info))),
             condition: condition.map(|c| resolve_expr(c, info)),
             update: update.map(|s| Box::new(resolve_stmt(*s, info))),
-            body: resolve_closures(body, info),
+            body: resolve_list(body, info),
         },
         Statement::ForIn {
             variable,
@@ -71,7 +119,7 @@ fn resolve_stmt(stmt: Statement, info: &ClosureInfo) -> Statement {
         } => Statement::ForIn {
             variable,
             object: resolve_expr(object, info),
-            body: resolve_closures(body, info),
+            body: resolve_list(body, info),
         },
         Statement::ForOf {
             variable,
@@ -80,7 +128,7 @@ fn resolve_stmt(stmt: Statement, info: &ClosureInfo) -> Statement {
         } => Statement::ForOf {
             variable,
             iterable: resolve_expr(iterable, info),
-            body: resolve_closures(body, info),
+            body: resolve_list(body, info),
         },
         Statement::Switch {
             discriminant,
@@ -90,9 +138,9 @@ fn resolve_stmt(stmt: Statement, info: &ClosureInfo) -> Statement {
             discriminant: resolve_expr(discriminant, info),
             cases: cases
                 .into_iter()
-                .map(|(v, b)| (resolve_expr(v, info), resolve_closures(b, info)))
+                .map(|(v, b)| (resolve_expr(v, info), resolve_list(b, info)))
                 .collect(),
-            default: default.map(|d| resolve_closures(d, info)),
+            default: default.map(|d| resolve_list(d, info)),
         },
         Statement::TryCatch {
             try_body,
@@ -100,10 +148,10 @@ fn resolve_stmt(stmt: Statement, info: &ClosureInfo) -> Statement {
             catch_body,
             finally_body,
         } => Statement::TryCatch {
-            try_body: resolve_closures(try_body, info),
+            try_body: resolve_list(try_body, info),
             catch_param,
-            catch_body: resolve_closures(catch_body, info),
-            finally_body: resolve_closures(finally_body, info),
+            catch_body: resolve_list(catch_body, info),
+            finally_body: resolve_list(finally_body, info),
         },
         Statement::Class {
             name,
@@ -131,14 +179,14 @@ fn resolve_stmt(stmt: Statement, info: &ClosureInfo) -> Statement {
             target,
             fallthrough,
         },
-        Statement::Block(inner) => Statement::Block(resolve_closures(inner, info)),
+        Statement::Block(inner) => Statement::Block(resolve_list(inner, info)),
         other => other,
     }
 }
 
-fn resolve_target(target: AssignTarget, info: &ClosureInfo) -> AssignTarget {
+fn resolve_target(target: AssignTarget, info: &Resolver) -> AssignTarget {
     match target {
-        AssignTarget::Binding(Binding::ClosureVar{ level, slot }) => {
+        AssignTarget::Binding(Binding::ClosureVar { level, slot }) => {
             let encoded = encode_level_slot(level, slot);
             let name = if info.slots.contains_key(&encoded) {
                 info.get_slot_name(encoded)
@@ -148,6 +196,7 @@ fn resolve_target(target: AssignTarget, info: &ClosureInfo) -> AssignTarget {
                 // Unresolved parent-env capture: same family as local `closure_N`.
                 crate::ir::Value::closure_var_name(level, slot)
             };
+            info.record(&name, level, slot);
             AssignTarget::Binding(Binding::Variable(name))
         }
         AssignTarget::Member { object, property } => AssignTarget::Member {
@@ -188,7 +237,9 @@ fn resolve_target(target: AssignTarget, info: &ClosureInfo) -> AssignTarget {
         AssignTarget::DestructuringArray(elements) => AssignTarget::DestructuringArray(
             elements
                 .into_iter()
-                .map(|e| e.map(|(t, def)| (resolve_target(t, info), def.map(|d| resolve_expr(d, info)))))
+                .map(|e| {
+                    e.map(|(t, def)| (resolve_target(t, info), def.map(|d| resolve_expr(d, info))))
+                })
                 .collect(),
         ),
         AssignTarget::DestructuringArrayRest { elements, rest } => {
@@ -196,7 +247,9 @@ fn resolve_target(target: AssignTarget, info: &ClosureInfo) -> AssignTarget {
                 elements: elements
                     .into_iter()
                     .map(|e| {
-                        e.map(|(t, def)| (resolve_target(t, info), def.map(|d| resolve_expr(d, info))))
+                        e.map(|(t, def)| {
+                            (resolve_target(t, info), def.map(|d| resolve_expr(d, info)))
+                        })
                     })
                     .collect(),
                 rest: Box::new(resolve_target(*rest, info)),
@@ -207,16 +260,16 @@ fn resolve_target(target: AssignTarget, info: &ClosureInfo) -> AssignTarget {
     }
 }
 
-fn resolve_property(property: PropertyKey, info: &ClosureInfo) -> PropertyKey {
+fn resolve_property(property: PropertyKey, info: &Resolver) -> PropertyKey {
     match property {
         PropertyKey::Computed(e) => PropertyKey::Computed(Box::new(resolve_expr(*e, info))),
         other => other,
     }
 }
 
-fn resolve_expr(expr: Expression, info: &ClosureInfo) -> Expression {
+fn resolve_expr(expr: Expression, info: &Resolver) -> Expression {
     match expr {
-        Expression::Value(Value::Binding(Binding::ClosureVar{ level, slot })) => {
+        Expression::Value(Value::Binding(Binding::ClosureVar { level, slot })) => {
             let encoded = encode_level_slot(level, slot);
             let name = if info.slots.contains_key(&encoded) {
                 info.get_slot_name(encoded)
@@ -226,6 +279,7 @@ fn resolve_expr(expr: Expression, info: &ClosureInfo) -> Expression {
                 // Unresolved parent-env capture: same family as local `closure_N`.
                 crate::ir::Value::closure_var_name(level, slot)
             };
+            info.record(&name, level, slot);
             Expression::Value(Value::Binding(Binding::Variable(name)))
         }
         Expression::Binary { op, left, right } => Expression::Binary {
@@ -289,7 +343,10 @@ fn resolve_expr(expr: Expression, info: &ClosureInfo) -> Expression {
             value: Box::new(resolve_expr(*value, info)),
         },
         Expression::Spread(e) => Expression::Spread(Box::new(resolve_expr(*e, info))),
-        Expression::TemplateLiteral { quasis, expressions } => Expression::TemplateLiteral {
+        Expression::TemplateLiteral {
+            quasis,
+            expressions,
+        } => Expression::TemplateLiteral {
             quasis,
             expressions: expressions
                 .into_iter()

@@ -1,7 +1,7 @@
 // Definition-site closure naming, infers names from what value is assigned to closure_N.
 
 use super::closure_usage::{ident_from_property, is_closure_name};
-use crate::ir::{Binding, AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Constant, Expression, PropertyKey, Statement, Value};
 use std::collections::BTreeMap;
 
 use super::closure_definitions::{collect_existing_names, make_unique_name};
@@ -11,9 +11,7 @@ use super::closure_definitions::{collect_existing_names, make_unique_name};
 // at what value is assigned to `closure_N` in the function body.
 //
 // Returns the total number of variables renamed across all functions.
-pub fn rename_closures_from_definitions(
-    all_ir: &mut BTreeMap<u32, Vec<Statement>>,
-) -> usize {
+pub fn rename_closures_from_definitions(all_ir: &mut BTreeMap<u32, Vec<Statement>>) -> usize {
     let mut total = 0;
     let mut keys: Vec<_> = all_ir.keys().copied().collect();
     keys.sort();
@@ -69,7 +67,11 @@ fn scan_closure_def_in_stmt(
         Statement::Let { name, value, .. } => {
             try_infer_closure_def(name, value, renames, used_names);
         }
-        Statement::If { then_body, else_body, .. } => {
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
             scan_closure_defs(then_body, renames, used_names);
             scan_closure_defs(else_body, renames, used_names);
         }
@@ -83,7 +85,12 @@ fn scan_closure_def_in_stmt(
         Statement::Block(inner) => {
             scan_closure_defs(inner, renames, used_names);
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             scan_closure_defs(try_body, renames, used_names);
             scan_closure_defs(catch_body, renames, used_names);
             scan_closure_defs(finally_body, renames, used_names);
@@ -118,15 +125,11 @@ fn try_infer_closure_def(
 // Infer a variable name from a definition expression.
 fn infer_name_from_definition(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Call { callee, arguments } => {
-            infer_from_call(callee, arguments)
-        }
-        Expression::Member { object, property, .. } => {
-            infer_from_member(object, property)
-        }
-        Expression::New { callee, .. } => {
-            infer_from_new_call(callee)
-        }
+        Expression::Call { callee, arguments } => infer_from_call(callee, arguments),
+        Expression::Member {
+            object, property, ..
+        } => infer_from_member(object, property),
+        Expression::New { callee, .. } => infer_from_new_call(callee),
         _ => None,
     }
 }
@@ -136,7 +139,11 @@ fn infer_from_new_call(callee: &Expression) -> Option<String> {
     let name = match callee {
         Expression::Value(Value::Binding(Binding::Variable(n))) => n.as_str(),
         Expression::Member { property, .. } => {
-            if let PropertyKey::Ident(n) = property { n.as_str() } else { return None; }
+            if let PropertyKey::Ident(n) = property {
+                n.as_str()
+            } else {
+                return None;
+            }
         }
         _ => return None,
     };
@@ -160,7 +167,9 @@ fn infer_from_call(callee: &Expression, arguments: &[Expression]) -> Option<Stri
     // Symbol("name") → nameSymbol
     let is_symbol = match callee {
         Expression::Value(Value::Binding(Binding::Variable(n))) => n == "Symbol",
-        Expression::Member { object, property, .. } => {
+        Expression::Member {
+            object, property, ..
+        } => {
             matches!(&**object, Expression::Value(Value::Binding(Binding::Variable(n))) if n == "Symbol")
                 && matches!(property, PropertyKey::Ident(p) if p == "for")
         }
@@ -177,7 +186,10 @@ fn infer_from_call(callee: &Expression, arguments: &[Expression]) -> Option<Stri
     }
 
     // Method calls: X.method(args)
-    if let Expression::Member { object, property, .. } = callee {
+    if let Expression::Member {
+        object, property, ..
+    } = callee
+    {
         if let Some(method) = ident_from_property(property) {
             if method == "createContext" {
                 return Some("context".to_string());
@@ -202,10 +214,16 @@ fn infer_from_call(callee: &Expression, arguments: &[Expression]) -> Option<Stri
                     }
                 }
             }
-            if method.len() > 3 && method.starts_with("get") && method.as_bytes()[3].is_ascii_uppercase() {
+            if method.len() > 3
+                && method.starts_with("get")
+                && method.as_bytes()[3].is_ascii_uppercase()
+            {
                 return Some(to_camel_case(&method[3..]));
             }
-            if method.len() > 3 && method.starts_with("set") && method.as_bytes()[3].is_ascii_uppercase() {
+            if method.len() > 3
+                && method.starts_with("set")
+                && method.as_bytes()[3].is_ascii_uppercase()
+            {
                 return Some(to_camel_case(&method[3..]));
             }
         }
@@ -218,14 +236,24 @@ fn infer_from_call(callee: &Expression, arguments: &[Expression]) -> Option<Stri
 fn infer_from_member(object: &Expression, property: &PropertyKey) -> Option<String> {
     let prop = ident_from_property(property)?;
 
-    if matches!(prop.as_str(), "prototype" | "exports" | "__esModule" | "__proto__"
-        | "constructor" | "length" | "toString" | "valueOf") {
+    if matches!(
+        prop.as_str(),
+        "prototype"
+            | "exports"
+            | "__esModule"
+            | "__proto__"
+            | "constructor"
+            | "length"
+            | "toString"
+            | "valueOf"
+    ) {
         return None;
     }
 
     if prop == "default" {
         if let Expression::Value(Value::Binding(Binding::Variable(obj_name))) = object {
-            if !is_closure_name(obj_name) && !is_generic_var_name(obj_name) && obj_name.len() <= 25 {
+            if !is_closure_name(obj_name) && !is_generic_var_name(obj_name) && obj_name.len() <= 25
+            {
                 return Some(obj_name.clone());
             }
         }
@@ -258,8 +286,20 @@ fn is_generic_var_name(name: &str) -> bool {
     if name.starts_with('r') && name.len() > 1 && name[1..].chars().all(|c| c.is_ascii_digit()) {
         return true;
     }
-    matches!(name, "obj" | "val" | "fn" | "mod" | "lib" | "callback"
-        | "arr" | "result" | "undefined" | "null" | "self")
+    matches!(
+        name,
+        "obj"
+            | "val"
+            | "fn"
+            | "mod"
+            | "lib"
+            | "callback"
+            | "arr"
+            | "result"
+            | "undefined"
+            | "null"
+            | "self"
+    )
 }
 
 // Convert PascalCase to camelCase.

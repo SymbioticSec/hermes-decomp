@@ -84,3 +84,36 @@ test_defaults.hbc
 *.hdcache
 *.hdcache.tmp
 paper/
+
+# Bytecode inputs and everything a decompile produces. Bundles pulled from an
+# APK live next to the repo for local runs and never belong in it.
+*.hbc
+*.bundle
+*.hasm
+*.apk
+*.deep.js
+*_decompiled.js
+*.decompiled.*
+/*.js
+/new_teqt/
+/runs/
+/out/
+
+# Local reports, notes and findings at the repo root. Only the documents
+# below are meant to be published.
+/*.md
+!/README.md
+!/CONTRIBUTING.md
+!/CHANGELOG.md
+/*.txt
+/*.tsv
+/*.csv
+/*.json
+!/mcp-config.example.json
+
+# Profiling and tooling artifacts
+*.profraw
+*.profdata
+flamegraph*.svg
+perf.data*
+/dist/

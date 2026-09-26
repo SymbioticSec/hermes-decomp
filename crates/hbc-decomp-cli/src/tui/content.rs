@@ -45,7 +45,10 @@ impl App {
             ViewMode::Decompile => {
                 if only_in_file2 {
                     let id2 = self.selected_function_id2().unwrap();
-                    return (Text::from(highlight_code(&self.decompile_content2(id2))), None);
+                    return (
+                        Text::from(highlight_code(&self.decompile_content2(id2))),
+                        None,
+                    );
                 }
                 (Text::from(highlight_code(&self.decompile_content())), None)
             }

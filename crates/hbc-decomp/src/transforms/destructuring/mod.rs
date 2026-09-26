@@ -7,11 +7,11 @@ mod v98;
 
 use crate::ir::Statement;
 
-pub use babel::reconstruct_babel_array_destructuring;
-pub use v98::reconstruct_v98_array_destructuring;
 use arrays::transform_rest_destructuring;
+pub use babel::reconstruct_babel_array_destructuring;
 pub use iterator::detect_iterator_destructuring;
 pub(crate) use transformer::transform_destructuring;
+pub use v98::reconstruct_v98_array_destructuring;
 
 pub fn detect_destructuring(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut stmts = stmts;
@@ -285,7 +285,9 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Register(0)))),
+                    object: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Register(0),
+                    ))),
                     property: PropertyKey::Ident("x".to_string()),
                     optional: false,
                 },
@@ -293,7 +295,9 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Register(10)))),
+                    object: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Register(10),
+                    ))),
                     property: PropertyKey::Ident("y".to_string()),
                     optional: false,
                 },
@@ -383,7 +387,9 @@ mod tests {
 
     #[test]
     fn test_three_properties_destructuring() {
-        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Variable("data".to_string())));
+        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+            "data".to_string(),
+        )));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Variable("x".to_string())),
@@ -437,7 +443,9 @@ mod tests {
     #[test]
     fn test_default_value_destructuring() {
         use crate::ir::{BinaryOp, Constant, Value};
-        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Variable("param".to_string())));
+        let obj = Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+            "param".to_string(),
+        )));
         let stmts = vec![
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Variable("x".to_string())),
@@ -450,7 +458,9 @@ mod tests {
             Statement::If {
                 condition: Expression::Binary {
                     op: BinaryOp::StrictEq,
-                    left: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("x".to_string())))),
+                    left: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Variable("x".to_string()),
+                    ))),
                     right: Box::new(Expression::constant(Constant::Undefined)),
                 },
                 then_body: vec![Statement::Assign {

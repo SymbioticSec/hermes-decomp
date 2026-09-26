@@ -14,15 +14,17 @@ pub use cache::{default_cache_path, CACHE_VERSION};
 pub use context::PipelineContext;
 pub use decompiler::Decompiler;
 pub use ir_gen::{build_closure_context_from_file, generate_ir};
-pub use progress::{is_enabled as progress_enabled, set_enabled as set_progress_enabled, status as progress_status};
+pub use progress::{
+    is_enabled as progress_enabled, set_enabled as set_progress_enabled, status as progress_status,
+};
 
-use std::collections::{HashMap};
 use crate::analysis::ClosureContext;
 use crate::error::Result;
 use crate::file::BytecodeFile;
 use crate::opcode::BytecodeFormat;
 use crate::transforms::{Codegen, CodegenOptions};
 use crate::util::is_valid_identifier;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct DecompileOptionsV2 {
@@ -104,11 +106,16 @@ pub fn decompile_function_v2_with_context(
     // (single function has no IPA that needs the receiver slot), inline single use
     // temporaries, drop noise, then insert declarations.
     if options.simplify {
+        ir_gen::trace_supers("single: after ir", &statements);
         crate::transforms::strip_hermes_this(&mut statements);
+        ir_gen::trace_supers("single: after strip_this", &statements);
         statements = crate::transforms::inline_named_variables(statements);
+        ir_gen::trace_supers("single: after inline_named", &statements);
         statements = crate::transforms::cleanup_noise(statements);
+        ir_gen::trace_supers("single: after cleanup_noise", &statements);
         crate::transforms::rename_reserved_words(&mut statements);
         crate::transforms::insert_declarations(&mut statements, &params);
+        ir_gen::trace_supers("single: after declarations", &statements);
     }
 
     let codegen_options = CodegenOptions::default();
@@ -183,7 +190,7 @@ fn collect_existing_var_names(
     statements: &[crate::ir::Statement],
     out: &mut std::collections::HashSet<String>,
 ) {
-    use crate::ir::{Binding, AssignTarget, Expression, Value, Visitor};
+    use crate::ir::{AssignTarget, Binding, Expression, Value, Visitor};
     struct C<'a>(&'a mut std::collections::HashSet<String>);
     impl<'a, 'b> Visitor<'b> for C<'a> {
         fn visit_expression(&mut self, e: &'b Expression) {
@@ -195,6 +202,12 @@ fn collect_existing_var_names(
         fn visit_assign_target(&mut self, t: &'b AssignTarget) {
             collect_target_names(t, self.0);
             self.walk_assign_target(t);
+        }
+        // A class or loop head binds its name as firmly as a variable does. A
+        // register loaded from `NativeModules.ExternalPip` took the property's
+        // name next to `class ExternalPip`, and the module did not parse.
+        fn visit_binding_def(&mut self, name: &'b str) {
+            self.0.insert(name.to_string());
         }
     }
     fn collect_target_names(t: &AssignTarget, out: &mut std::collections::HashSet<String>) {
@@ -312,7 +325,6 @@ pub(crate) fn make_params_distinct(names: impl Iterator<Item = String>) -> Vec<S
         .collect()
 }
 
-
 // Whether the body reads `Parameter(idx)`. Must run on the IR before parameter
 // renaming, which rewrites those nodes into named variables.
 fn body_uses_param(body: &[crate::ir::Statement], idx: u32) -> bool {
@@ -387,7 +399,10 @@ mod param_name_tests {
 
     #[test]
     fn distinct_names_are_left_exactly_as_recovered() {
-        assert_eq!(run(&["self", "email", "arg2"]), vec!["self", "email", "arg2"]);
+        assert_eq!(
+            run(&["self", "email", "arg2"]),
+            vec!["self", "email", "arg2"]
+        );
     }
 
     #[test]

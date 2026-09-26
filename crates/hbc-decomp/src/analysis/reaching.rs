@@ -1,6 +1,4 @@
-// Reserved for future constant propagation improvement, not yet used in the pipeline.
-
-use crate::ir::{Binding, AssignTarget, BlockId, Statement, CFG};
+use crate::ir::{AssignTarget, Binding, BlockId, Statement, CFG};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,6 +44,18 @@ impl ReachingDefs {
                 for pred in cfg.predecessors(block_id) {
                     if let Some(pred_out) = reaching_out.get(&pred) {
                         new_in.extend(pred_out);
+                    }
+                }
+                // A catch block is entered from any point of its protected
+                // range, before or after each definition made there. Every
+                // definition live on entry to a protected block, or made by
+                // it, may therefore reach the catch.
+                for src in cfg.exception_edge_sources(block_id) {
+                    if let Some(src_in) = reaching_in.get(&src) {
+                        new_in.extend(src_in);
+                    }
+                    if let Some(src_out) = reaching_out.get(&src) {
+                        new_in.extend(src_out);
                     }
                 }
 
@@ -138,7 +148,9 @@ mod tests {
             0,
             Expression::constant(Constant::Integer(1)),
         ));
-        builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(0)))));
+        builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(
+            0,
+        )))));
 
         let cfg = builder.finish();
         let reaching = ReachingDefs::analyze(&cfg);

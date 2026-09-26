@@ -1,6 +1,6 @@
 // Detect ternary patterns in if/else assignments.
 
-use crate::ir::{Statement, Expression, AssignTarget};
+use crate::ir::{AssignTarget, Expression, Statement};
 
 // Detect ternary patterns: if (c) { r = a } else { r = b } -> r = c ? a : b
 pub(super) fn detect_ternaries(stmts: Vec<Statement>) -> Vec<Statement> {
@@ -9,7 +9,11 @@ pub(super) fn detect_ternaries(stmts: Vec<Statement>) -> Vec<Statement> {
 
 fn detect_ternary(stmt: Statement) -> Statement {
     match stmt {
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             // Check if both branches are single assignments to same target
             if let (Some(then_assign), Some(else_assign)) = (
                 get_single_assignment(&then_body),
@@ -52,4 +56,3 @@ fn get_single_assignment(stmts: &[Statement]) -> Option<(AssignTarget, Expressio
         _ => None,
     }
 }
-

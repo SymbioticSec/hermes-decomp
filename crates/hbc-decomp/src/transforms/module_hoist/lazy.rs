@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value, Visitor};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value, Visitor};
 
 use super::detect::{collect_loader_ids, loader_call};
 use super::kinds::LoaderKind;
@@ -115,7 +115,10 @@ fn is_var_or_default_of_var(expr: &Expression) -> bool {
         Expression::Member {
             object, property, ..
         } if is_default_key(property) => {
-            matches!(object.as_ref(), Expression::Value(Value::Binding(Binding::Variable(_))))
+            matches!(
+                object.as_ref(),
+                Expression::Value(Value::Binding(Binding::Variable(_)))
+            )
         }
         _ => false,
     }
@@ -198,7 +201,9 @@ fn collect_function_bindings(stmts: &[Statement], out: &mut HashMap<String, u32>
             Statement::While { body, .. }
             | Statement::DoWhile { body, .. }
             | Statement::Block(body) => collect_function_bindings(body, out),
-            Statement::For { init, body, update, .. } => {
+            Statement::For {
+                init, body, update, ..
+            } => {
                 if let Some(i) = init {
                     collect_function_bindings(std::slice::from_ref(i.as_ref()), out);
                 }
@@ -220,9 +225,7 @@ fn collect_function_bindings(stmts: &[Statement], out: &mut HashMap<String, u32>
                 collect_function_bindings(catch_body, out);
                 collect_function_bindings(finally_body, out);
             }
-            Statement::Switch {
-                cases, default, ..
-            } => {
+            Statement::Switch { cases, default, .. } => {
                 for (_, body) in cases {
                     collect_function_bindings(body, out);
                 }
@@ -254,9 +257,7 @@ fn is_lazy_plumbing_value(
             // Allow interop wrappers around a loader: _interopRequireDefault(require(N))
             let callee_ok = match callee.as_ref() {
                 Expression::Value(Value::Binding(Binding::Variable(n))) => {
-                    n.contains("interop")
-                        || n == "_interopRequireDefault"
-                        || n == "_interopDefault"
+                    n.contains("interop") || n == "_interopRequireDefault" || n == "_interopDefault"
                 }
                 _ => false,
             };

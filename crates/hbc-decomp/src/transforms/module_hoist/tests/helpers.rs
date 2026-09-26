@@ -40,6 +40,7 @@ pub(super) fn empty_registry_with_factory(
         dependencies: deps,
         exports: HashMap::new(),
         roles: FactoryRoles::from_param_count(7),
+        name_from_default_export: false,
     };
     reg.function_to_module.insert(factory_id, module_id);
     reg.factories.insert(factory_id, module.clone());
@@ -54,6 +55,7 @@ pub(super) fn empty_registry_with_factory(
                 dependencies: vec![],
                 exports: HashMap::new(),
                 roles: FactoryRoles::standard(),
+                name_from_default_export: false,
             },
         );
     }

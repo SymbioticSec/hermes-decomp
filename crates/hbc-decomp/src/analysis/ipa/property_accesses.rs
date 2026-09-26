@@ -30,7 +30,11 @@ fn collect_param_props_stmt(
             collect_param_props_expr(value, accesses);
         }
         Statement::Let { value, .. } => collect_param_props_expr(value, accesses),
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             collect_param_props_expr(condition, accesses);
             collect_param_property_accesses(then_body, accesses);
             collect_param_property_accesses(else_body, accesses);
@@ -39,10 +43,21 @@ fn collect_param_props_stmt(
             collect_param_props_expr(condition, accesses);
             collect_param_property_accesses(body, accesses);
         }
-        Statement::For { init, condition, update, body } => {
-            if let Some(s) = init { collect_param_props_stmt(s, accesses); }
-            if let Some(e) = condition { collect_param_props_expr(e, accesses); }
-            if let Some(s) = update { collect_param_props_stmt(s, accesses); }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(s) = init {
+                collect_param_props_stmt(s, accesses);
+            }
+            if let Some(e) = condition {
+                collect_param_props_expr(e, accesses);
+            }
+            if let Some(s) = update {
+                collect_param_props_stmt(s, accesses);
+            }
             collect_param_property_accesses(body, accesses);
         }
         Statement::ForIn { object, body, .. } => {
@@ -54,18 +69,29 @@ fn collect_param_props_stmt(
             collect_param_property_accesses(body, accesses);
         }
         Statement::Block(inner) => collect_param_property_accesses(inner, accesses),
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             collect_param_property_accesses(try_body, accesses);
             collect_param_property_accesses(catch_body, accesses);
             collect_param_property_accesses(finally_body, accesses);
         }
-        Statement::Switch { discriminant, cases, default } => {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
             collect_param_props_expr(discriminant, accesses);
             for (e, body) in cases {
                 collect_param_props_expr(e, accesses);
                 collect_param_property_accesses(body, accesses);
             }
-            if let Some(d) = default { collect_param_property_accesses(d, accesses); }
+            if let Some(d) = default {
+                collect_param_property_accesses(d, accesses);
+            }
         }
         _ => {}
     }
@@ -76,10 +102,16 @@ fn collect_param_props_expr(
     accesses: &mut BTreeMap<u32, std::collections::HashSet<String>>,
 ) {
     match expr {
-        Expression::Member { object, property: PropertyKey::Ident(prop), .. } => {
+        Expression::Member {
+            object,
+            property: PropertyKey::Ident(prop),
+            ..
+        } => {
             let param_idx = match &**object {
                 Expression::Value(Value::Parameter(idx)) => Some(*idx),
-                Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => FactoryRoles::extract_param_index(name),
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
+                    FactoryRoles::extract_param_index(name)
+                }
                 _ => None,
             };
             if let Some(idx) = param_idx {
@@ -91,29 +123,43 @@ fn collect_param_props_expr(
         }
         Expression::Call { callee, arguments } | Expression::New { callee, arguments } => {
             collect_param_props_expr(callee, accesses);
-            for a in arguments { collect_param_props_expr(a, accesses); }
+            for a in arguments {
+                collect_param_props_expr(a, accesses);
+            }
         }
         Expression::Binary { left, right, .. } => {
             collect_param_props_expr(left, accesses);
             collect_param_props_expr(right, accesses);
         }
         Expression::Unary { operand, .. } => collect_param_props_expr(operand, accesses),
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             collect_param_props_expr(condition, accesses);
             collect_param_props_expr(then_expr, accesses);
             collect_param_props_expr(else_expr, accesses);
         }
         Expression::Array { elements } => {
-            for e in elements.iter().flatten() { collect_param_props_expr(e, accesses); }
+            for e in elements.iter().flatten() {
+                collect_param_props_expr(e, accesses);
+            }
         }
         Expression::Object { properties } => {
-            for p in properties { collect_param_props_expr(&p.value, accesses); }
+            for p in properties {
+                collect_param_props_expr(&p.value, accesses);
+            }
         }
         Expression::Assignment { target, value } => {
-            crate::ir::for_each_target_expression(target, &mut |e| collect_param_props_expr(e, accesses));
+            crate::ir::for_each_target_expression(target, &mut |e| {
+                collect_param_props_expr(e, accesses)
+            });
             collect_param_props_expr(value, accesses);
         }
-        Expression::Spread(inner) | Expression::Await(inner) => collect_param_props_expr(inner, accesses),
+        Expression::Spread(inner) | Expression::Await(inner) => {
+            collect_param_props_expr(inner, accesses)
+        }
         Expression::Yield { value, .. } => collect_param_props_expr(value, accesses),
         _ => {}
     }

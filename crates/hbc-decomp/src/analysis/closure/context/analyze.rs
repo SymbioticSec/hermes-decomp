@@ -1,16 +1,25 @@
 // Per-function env-slot analysis and nested Function parent edges.
-use std::collections::BTreeMap;
-use crate::ir::{Expression, Statement};
 use super::super::info::{ClosureInfo, ClosureSlotValue};
 use super::helpers::binding_name_is_slot_worthy;
+use super::walk::is_parameter_placeholder;
 use super::ClosureContext;
+use crate::ir::{Expression, Statement};
+use std::collections::BTreeMap;
 
 impl ClosureContext {
     pub fn analyze_function(&mut self, function_id: u32, stmts: &[Statement]) {
         let mut deferred = Vec::new();
         self.analyze_function_collecting(function_id, stmts, &mut deferred);
         for (from_fn, level, slot, val) in deferred {
+            // A nested body storing one of its own parameters (`logFn = fn`
+            // inside `setLogFn(fn)`) says nothing about the slot's name: the
+            // index is the nested function's, and read as the owner's it
+            // named the slot after a factory role (`global`).
+            if matches!(&val, ClosureSlotValue::Variable(v) if is_parameter_placeholder(v)) {
+                continue;
+            }
             if let Some(target) = self.ancestor_at(from_fn, level) {
+                super::walk::trace_store(target, slot, &val);
                 self.function_closures
                     .entry(target)
                     .or_default()
@@ -29,6 +38,24 @@ impl ClosureContext {
         let mut register_values: BTreeMap<u32, ClosureSlotValue> = BTreeMap::new();
         // Named locals after register naming: `let require = arg1` then `env[1] = require`.
         let mut named_values: BTreeMap<String, ClosureSlotValue> = BTreeMap::new();
+        // A class binds its name for the whole body, before its declaration
+        // is reached in order: a slot store of the same name that precedes
+        // it must see the binding.
+        for stmt in stmts {
+            if let Statement::Class { name, methods, .. } = stmt {
+                let ctor = methods.iter().find(|m| m.key == "constructor");
+                let value = match ctor.map(|m| &m.value) {
+                    Some(crate::ir::Expression::Function { id, .. }) => {
+                        ClosureSlotValue::Function {
+                            id: id.0,
+                            name: Some(name.clone()),
+                        }
+                    }
+                    _ => ClosureSlotValue::Variable(name.clone()),
+                };
+                named_values.insert(name.clone(), value);
+            }
+        }
 
         for stmt in stmts {
             self.analyze_stmt_context(
@@ -68,5 +95,4 @@ impl ClosureContext {
             _ => Some(val),
         }
     }
-
 }

@@ -9,19 +9,19 @@ pub(crate) mod resolution;
 mod structs;
 pub(crate) mod traversal;
 
-use std::collections::HashSet;
 use crate::ir::Statement;
 use graph::CallGraph;
 use inference::{is_generic_name, vote_on_names};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 // Upper bound on parameter-slot vectors. Parameter indices come from parsed
 // IR; a corrupt index could otherwise drive `vec![None; idx + 1]` / `resize`
 // to allocate gigabytes and abort the process. No real function approaches
 // this many parameters.
 pub(crate) const MAX_PARAM_SLOTS: usize = 1 << 16;
-pub use structs::GlobalAnalysis;
 pub use resolution::FunctionNameIndex;
+pub use structs::GlobalAnalysis;
 
 use super::metro::registry::MetroRegistry;
 
@@ -77,9 +77,8 @@ pub fn run_ipa(
     for (&func_id, stmts) in functions {
         let body_hints = body_hints::infer_param_names_from_body(stmts);
         if !body_hints.is_empty() {
-            let max_idx =
-                (body_hints.iter().map(|(idx, _)| *idx).max().unwrap_or(0) as usize)
-                    .min(MAX_PARAM_SLOTS);
+            let max_idx = (body_hints.iter().map(|(idx, _)| *idx).max().unwrap_or(0) as usize)
+                .min(MAX_PARAM_SLOTS);
             let mut site = vec![None; max_idx + 1];
             for (idx, name) in body_hints {
                 if (idx as usize) <= MAX_PARAM_SLOTS && is_type_fallback_name(&name) {
@@ -89,10 +88,9 @@ pub fn run_ipa(
                         .entry(idx as usize)
                         .or_insert_with(|| name.clone());
                 }
-                if site.get(idx as usize).is_none_or(|s| s.is_none())
-                    && idx < site.len() as u32 {
-                        site[idx as usize] = Some(name);
-                    }
+                if site.get(idx as usize).is_none_or(|s| s.is_none()) && idx < site.len() as u32 {
+                    site[idx as usize] = Some(name);
+                }
             }
             self_param_names.entry(func_id).or_default().push(site);
         }
@@ -235,7 +233,25 @@ pub fn run_ipa(
             }
         }
 
+        // One anchored name copied into every empty linked slot is how a single
+        // identifier ended up on unrelated functions. A real forward touches a
+        // handful of callees. A name queued for more destinations than this in
+        // one sweep is a broadcast, and it is not applied.
+        const MAX_LINK_FANOUT: usize = 8;
+        let mut fanout: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for (id, idx, name) in &updates {
+            let empty = match analysis.param_names.get(id) {
+                None => true,
+                Some(entry) => entry.get(*idx).and_then(|s| s.as_ref()).is_none(),
+            };
+            if empty {
+                *fanout.entry(name.clone()).or_default() += 1;
+            }
+        }
         for (id, idx, name) in updates {
+            if fanout.get(&name).copied().unwrap_or(0) > MAX_LINK_FANOUT {
+                continue;
+            }
             let entry = analysis.param_names.entry(id).or_default();
             if entry.len() <= idx {
                 entry.resize(idx + 1, None);

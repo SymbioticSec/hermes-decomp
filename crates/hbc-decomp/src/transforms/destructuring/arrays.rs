@@ -1,8 +1,10 @@
 use super::utils::{exprs_equal, get_index};
-use crate::ir::{Binding, AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Constant, Expression, PropertyKey, Statement, Value};
 
 // Check if all properties can form a valid array destructuring.
-pub fn try_array_destructuring(properties: &[(PropertyKey, AssignTarget, Option<Expression>)]) -> bool {
+pub fn try_array_destructuring(
+    properties: &[(PropertyKey, AssignTarget, Option<Expression>)],
+) -> bool {
     let indices: Vec<i64> = properties
         .iter()
         .filter_map(|(k, _, _)| get_index(k))
@@ -76,7 +78,10 @@ pub fn transform_rest_destructuring(stmts: &mut Vec<Statement>) {
 fn extract_slice_call(stmt: &Statement) -> Option<(AssignTarget, Expression, i64)> {
     let (target, value) = match stmt {
         Statement::Assign { target, value } => (target.clone(), value),
-        Statement::Let { name, value, .. } => (AssignTarget::Binding(Binding::Variable(name.clone())), value),
+        Statement::Let { name, value, .. } => (
+            AssignTarget::Binding(Binding::Variable(name.clone())),
+            value,
+        ),
         _ => return None,
     };
 

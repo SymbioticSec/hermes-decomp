@@ -1,5 +1,5 @@
 use super::state::VariableNamer;
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
 
 pub fn rename_stmt(namer: &VariableNamer, stmt: Statement) -> Statement {
     match stmt {
@@ -108,6 +108,21 @@ pub fn rename_stmt(namer: &VariableNamer, stmt: Statement) -> Statement {
         Statement::Block(stmts) => {
             Statement::Block(stmts.into_iter().map(|s| rename_stmt(namer, s)).collect())
         }
+        // The `extends` expression reads the enclosing scope like any other
+        // expression; left untouched, the base class kept its old name while
+        // its definition was renamed, and `class X extends tmp2` extended a
+        // name nothing defined any more. The class body is not renamed here.
+        Statement::Class {
+            name,
+            super_class,
+            constructor,
+            methods,
+        } => Statement::Class {
+            name,
+            super_class: super_class.map(|e| rename_expr(namer, e)),
+            constructor,
+            methods,
+        },
         other => other,
     }
 }

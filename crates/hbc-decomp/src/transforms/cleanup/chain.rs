@@ -1,6 +1,6 @@
 // Fold chain assignments: `r0 = x; y = r0` -> `y = x`
 
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value, Visitor};
 use std::collections::BTreeMap;
 
 // Fold chain assignments. Only when r0 is used exactly once in the whole
@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 // so any *other* use (e.g. a later `return r`) would otherwise be left dangling.
 pub(super) fn fold_chain_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut use_counts = BTreeMap::new();
-    let mut counter = RegUseCounter { counts: &mut use_counts };
+    let mut counter = RegUseCounter {
+        counts: &mut use_counts,
+    };
     for stmt in &stmts {
         counter.visit_statement(stmt);
     }
@@ -48,7 +50,11 @@ fn fold_with_counts(stmts: Vec<Statement>, use_counts: &BTreeMap<u32, usize>) ->
                 }
                 result.push(stmt);
             }
-            Statement::If { condition, then_body, else_body } => {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
                 result.push(Statement::If {
                     condition: condition.clone(),
                     then_body: fold_with_counts(then_body.clone(), use_counts),
@@ -62,7 +68,10 @@ fn fold_with_counts(stmts: Vec<Statement>, use_counts: &BTreeMap<u32, usize>) ->
                 });
             }
             Statement::Block(inner) => {
-                result.push(Statement::Block(fold_with_counts(inner.clone(), use_counts)));
+                result.push(Statement::Block(fold_with_counts(
+                    inner.clone(),
+                    use_counts,
+                )));
             }
             _ => result.push(stmt),
         }

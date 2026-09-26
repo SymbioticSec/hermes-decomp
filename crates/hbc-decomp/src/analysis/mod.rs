@@ -9,7 +9,9 @@ pub mod reaching;
 pub mod structure;
 pub mod xref;
 
-pub use closure::{resolve_closures, ClosureContext, ClosureInfo, ClosureSlotValue};
+pub use closure::{
+    resolve_closures, resolve_closures_recording, ClosureContext, ClosureInfo, ClosureSlotValue,
+};
 pub use ipa::{run_ipa, FunctionNameIndex, GlobalAnalysis};
 pub use metro::{DependencyTree, MetroModule, MetroRegistry};
 pub use naming::{analyze_registers, generate_name, rename_registers, RegisterInfo, RegisterRole};

@@ -1,15 +1,19 @@
-use crate::ir::{Binding, Statement, Expression, AssignTarget, Value, PropertyKey};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
 
 pub fn rename_param_registers(statements: &mut [Statement], names: &[Option<String>]) {
     // 1. Map of Reg -> Name
     let mut reg_rename_map = std::collections::BTreeMap::new();
-    
+
     // 2. Map of VarName -> Name
     let mut var_rename_map = std::collections::HashMap::new();
-    
+
     // Scan for LoadParam to get registers (both v2 IR and legacy formats)
     for stmt in statements.iter() {
-        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            value,
+        } = stmt
+        {
             match value {
                 // v2 IR: LoadParam produces Value::Parameter(idx)
                 Expression::Value(Value::Parameter(idx)) => {
@@ -41,9 +45,11 @@ pub fn rename_param_registers(statements: &mut [Statement], names: &[Option<Stri
             var_rename_map.insert(format!("arg{idx}"), name.clone());
         }
     }
-    
-    if reg_rename_map.is_empty() && var_rename_map.is_empty() { return; }
-    
+
+    if reg_rename_map.is_empty() && var_rename_map.is_empty() {
+        return;
+    }
+
     // 3. Rename usages
     for stmt in statements.iter_mut() {
         rename_stmt(stmt, &reg_rename_map, &var_rename_map);
@@ -51,7 +57,7 @@ pub fn rename_param_registers(statements: &mut [Statement], names: &[Option<Stri
 }
 
 fn rename_stmt(
-    stmt: &mut Statement, 
+    stmt: &mut Statement,
     reg_map: &std::collections::BTreeMap<u32, String>,
     var_map: &std::collections::HashMap<String, String>,
 ) {
@@ -68,65 +74,150 @@ fn rename_stmt(
         }
         Statement::Expr(e) => rename_expr(e, reg_map, var_map),
         Statement::Return(Some(e)) | Statement::Throw(e) => rename_expr(e, reg_map, var_map),
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             rename_expr(condition, reg_map, var_map);
-            for s in then_body { rename_stmt(s, reg_map, var_map); }
-            for s in else_body { rename_stmt(s, reg_map, var_map); }
+            for s in then_body {
+                rename_stmt(s, reg_map, var_map);
+            }
+            for s in else_body {
+                rename_stmt(s, reg_map, var_map);
+            }
         }
         Statement::While { condition, body } => {
-             rename_expr(condition, reg_map, var_map);
-             for s in body { rename_stmt(s, reg_map, var_map); }
+            rename_expr(condition, reg_map, var_map);
+            for s in body {
+                rename_stmt(s, reg_map, var_map);
+            }
         }
         Statement::DoWhile { body, condition } => {
-             for s in body { rename_stmt(s, reg_map, var_map); }
-             rename_expr(condition, reg_map, var_map);
+            for s in body {
+                rename_stmt(s, reg_map, var_map);
+            }
+            rename_expr(condition, reg_map, var_map);
         }
+        // A `for … in` / `for … of` over a parameter kept the placeholder
+        // (`for (const k in arg1)` under `function extend(fn36, fn35)`), so
+        // the loop read a name the signature never bound.
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => {
+            if let Some(new_name) = var_map.get(variable) {
+                *variable = new_name.clone();
+            }
+            rename_expr(object, reg_map, var_map);
+            for s in body {
+                rename_stmt(s, reg_map, var_map);
+            }
+        }
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => {
+            if let Some(new_name) = var_map.get(variable) {
+                *variable = new_name.clone();
+            }
+            rename_expr(iterable, reg_map, var_map);
+            for s in body {
+                rename_stmt(s, reg_map, var_map);
+            }
+        }
+        Statement::Delete { target, .. } => rename_expr(target, reg_map, var_map),
         Statement::Block(body) => {
-             for s in body { rename_stmt(s, reg_map, var_map); }
+            for s in body {
+                rename_stmt(s, reg_map, var_map);
+            }
         }
-        Statement::For { init, condition, update, body } => {
-             if let Some(s) = init { rename_stmt(s, reg_map, var_map); }
-             if let Some(e) = condition { rename_expr(e, reg_map, var_map); }
-             if let Some(s) = update { rename_stmt(s, reg_map, var_map); }
-             for s in body { rename_stmt(s, reg_map, var_map); }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(s) = init {
+                rename_stmt(s, reg_map, var_map);
+            }
+            if let Some(e) = condition {
+                rename_expr(e, reg_map, var_map);
+            }
+            if let Some(s) = update {
+                rename_stmt(s, reg_map, var_map);
+            }
+            for s in body {
+                rename_stmt(s, reg_map, var_map);
+            }
         }
-        Statement::Switch { discriminant, cases, default } => {
-             rename_expr(discriminant, reg_map, var_map);
-             for (val, body) in cases {
-                 rename_expr(val, reg_map, var_map);
-                 for s in body { rename_stmt(s, reg_map, var_map); }
-             }
-             if let Some(body) = default {
-                 for s in body { rename_stmt(s, reg_map, var_map); }
-             }
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
+            rename_expr(discriminant, reg_map, var_map);
+            for (val, body) in cases {
+                rename_expr(val, reg_map, var_map);
+                for s in body {
+                    rename_stmt(s, reg_map, var_map);
+                }
+            }
+            if let Some(body) = default {
+                for s in body {
+                    rename_stmt(s, reg_map, var_map);
+                }
+            }
         }
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => {
-             for s in try_body { rename_stmt(s, reg_map, var_map); }
-             if let Some(p) = catch_param {
-                  if let Some(new_p) = var_map.get(p) {
-                      *catch_param = Some(new_p.clone());
-                  }
-             }
-             for s in catch_body { rename_stmt(s, reg_map, var_map); }
-             for s in finally_body { rename_stmt(s, reg_map, var_map); }
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => {
+            for s in try_body {
+                rename_stmt(s, reg_map, var_map);
+            }
+            if let Some(p) = catch_param {
+                if let Some(new_p) = var_map.get(p) {
+                    *catch_param = Some(new_p.clone());
+                }
+            }
+            for s in catch_body {
+                rename_stmt(s, reg_map, var_map);
+            }
+            for s in finally_body {
+                rename_stmt(s, reg_map, var_map);
+            }
         }
-        Statement::Class { name, super_class, methods, .. } => {
-             if let Some(new_name) = var_map.get(name) {
-                 *name = new_name.clone();
-             }
-             if let Some(sc) = super_class { rename_expr(sc, reg_map, var_map); }
-             for m in methods {
-                  if let Some(b) = &mut m.body {
-                      for s in b { rename_stmt(s, reg_map, var_map); }
-                  }
-             }
+        Statement::Class {
+            name,
+            super_class,
+            methods,
+            ..
+        } => {
+            if let Some(new_name) = var_map.get(name) {
+                *name = new_name.clone();
+            }
+            if let Some(sc) = super_class {
+                rename_expr(sc, reg_map, var_map);
+            }
+            for m in methods {
+                if let Some(b) = &mut m.body {
+                    for s in b {
+                        rename_stmt(s, reg_map, var_map);
+                    }
+                }
+            }
         }
         _ => {}
     }
 }
 
 fn rename_target(
-    target: &mut AssignTarget, 
+    target: &mut AssignTarget,
     reg_map: &std::collections::BTreeMap<u32, String>,
     var_map: &std::collections::HashMap<String, String>,
 ) {
@@ -147,27 +238,27 @@ fn rename_target(
             rename_expr(key, reg_map, var_map);
         }
         AssignTarget::DestructuringArray(targets) => {
-             for entry in targets.iter_mut().flatten() {
-                 rename_target(&mut entry.0, reg_map, var_map);
-                 if let Some(def) = &mut entry.1 {
-                     rename_expr(def, reg_map, var_map);
-                 }
-             }
+            for entry in targets.iter_mut().flatten() {
+                rename_target(&mut entry.0, reg_map, var_map);
+                if let Some(def) = &mut entry.1 {
+                    rename_expr(def, reg_map, var_map);
+                }
+            }
         }
         AssignTarget::DestructuringObject(targets) => {
-             for (_, t, def) in targets {
-                 rename_target(t, reg_map, var_map);
-                 if let Some(d) = def {
-                     rename_expr(d, reg_map, var_map);
-                 }
-             }
+            for (_, t, def) in targets {
+                rename_target(t, reg_map, var_map);
+                if let Some(d) = def {
+                    rename_expr(d, reg_map, var_map);
+                }
+            }
         }
         _ => {}
     }
 }
 
 fn rename_expr(
-    expr: &mut Expression, 
+    expr: &mut Expression,
     reg_map: &std::collections::BTreeMap<u32, String>,
     var_map: &std::collections::HashMap<String, String>,
 ) {
@@ -186,9 +277,9 @@ fn rename_expr(
             // This is direct Parameter access (argN)
             // We can rename it to Variable(name) if we have it
             if let Some(Some(name)) = var_map.get(&format!("arg{idx}")).map(Some) {
-                 // Wait, var_map.get returns &String. 
-                 // If we have a name, convert to Variable.
-                 *expr = Expression::Value(Value::Binding(Binding::Variable(name.clone())));
+                // Wait, var_map.get returns &String.
+                // If we have a name, convert to Variable.
+                *expr = Expression::Value(Value::Binding(Binding::Variable(name.clone())));
             }
         }
         Expression::Binary { left, right, .. } => {
@@ -196,43 +287,85 @@ fn rename_expr(
             rename_expr(right, reg_map, var_map);
         }
         Expression::Unary { operand, .. } => rename_expr(operand, reg_map, var_map),
-        Expression::Member { object, property, .. } => {
+        Expression::Member {
+            object, property, ..
+        } => {
             rename_expr(object, reg_map, var_map);
             if let PropertyKey::Computed(k) = property {
                 rename_expr(k, reg_map, var_map);
             }
         }
         Expression::Call { callee, arguments } | Expression::New { callee, arguments } => {
-             rename_expr(callee, reg_map, var_map);
-             for a in arguments { rename_expr(a, reg_map, var_map); }
+            rename_expr(callee, reg_map, var_map);
+            for a in arguments {
+                rename_expr(a, reg_map, var_map);
+            }
         }
         Expression::Object { properties } => {
-             for p in properties {
-                 rename_expr(&mut p.value, reg_map, var_map);
-                 if let PropertyKey::Computed(k) = &mut p.key {
-                     rename_expr(k, reg_map, var_map);
-                 }
-             }
+            for p in properties {
+                rename_expr(&mut p.value, reg_map, var_map);
+                if let PropertyKey::Computed(k) = &mut p.key {
+                    rename_expr(k, reg_map, var_map);
+                }
+            }
         }
         Expression::Array { elements } => {
-             for e in elements.iter_mut().flatten() {
-                 rename_expr(e, reg_map, var_map);
-             }
+            for e in elements.iter_mut().flatten() {
+                rename_expr(e, reg_map, var_map);
+            }
         }
         Expression::Assignment { target, value } => {
-             crate::ir::for_each_target_expression_mut(target, &mut |e| rename_expr(e, reg_map, var_map));
-             rename_expr(value, reg_map, var_map);
+            crate::ir::for_each_target_expression_mut(target, &mut |e| {
+                rename_expr(e, reg_map, var_map)
+            });
+            rename_expr(value, reg_map, var_map);
         }
         Expression::Spread(e) => rename_expr(e, reg_map, var_map),
         Expression::TemplateLiteral { expressions, .. } => {
-             for e in expressions { rename_expr(e, reg_map, var_map); }
+            for e in expressions {
+                rename_expr(e, reg_map, var_map);
+            }
         }
-        Expression::Yield { value, .. } | Expression::Await(value) => rename_expr(value, reg_map, var_map),
-        Expression::Conditional { condition, then_expr, else_expr } => {
-             rename_expr(condition, reg_map, var_map);
-             rename_expr(then_expr, reg_map, var_map);
-             rename_expr(else_expr, reg_map, var_map);
+        Expression::Yield { value, .. } | Expression::Await(value) => {
+            rename_expr(value, reg_map, var_map)
+        }
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            rename_expr(condition, reg_map, var_map);
+            rename_expr(then_expr, reg_map, var_map);
+            rename_expr(else_expr, reg_map, var_map);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod loop_head_tests {
+    use super::rename_param_registers;
+    use crate::ir::{AssignTarget, Binding, Expression, Statement, Value};
+
+    #[test]
+    fn a_for_in_over_a_parameter_takes_the_parameter_name() {
+        // r1 = arg1; for (k in r1) { r1[k] }  with parameter 1 named `source`
+        let mut stmts = vec![
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Register(1)),
+                value: Expression::Value(Value::Parameter(1)),
+            },
+            Statement::ForIn {
+                variable: "k".into(),
+                object: Expression::Value(Value::Binding(Binding::Register(1))),
+                body: vec![Statement::Expr(Expression::Value(Value::Binding(
+                    Binding::Register(1),
+                )))],
+            },
+        ];
+        rename_param_registers(&mut stmts, &[None, Some("source".into())]);
+        let text = format!("{:?}", stmts[1]);
+        assert!(text.contains("source"), "loop head renamed: {text}");
+        assert!(!text.contains("Register(1)"), "loop body renamed: {text}");
     }
 }

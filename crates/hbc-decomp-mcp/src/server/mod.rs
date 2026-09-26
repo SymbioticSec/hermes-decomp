@@ -2,6 +2,7 @@
 // types), `tools_analyze` (read and analysis tools), `tools_write` (write path
 // and RE tools). Each tool group builds its own router; `new` merges them.
 
+mod bounds;
 mod params;
 mod tools_analyze;
 mod tools_write;
@@ -41,9 +42,14 @@ impl HermesService {
         }
     }
 
+    // Every tool body runs through one of these two, so this is the single
+    // place where the work is moved onto a large-stack thread. The mutex guard
+    // stays on the calling thread (it is not Send); only a borrow of the loaded
+    // file crosses into the scoped thread, which ends before the guard drops.
     pub(crate) fn with_file<F, T>(&self, f: F) -> Result<T, McpError>
     where
-        F: FnOnce(&LoadedFile) -> Result<T, McpError>,
+        F: FnOnce(&LoadedFile) -> Result<T, McpError> + Send,
+        T: Send,
     {
         let guard = self
             .loaded
@@ -52,12 +58,13 @@ impl HermesService {
         let loaded = guard.as_ref().ok_or_else(|| {
             McpError::invalid_params("No file loaded. Use load_file first.", None)
         })?;
-        f(loaded)
+        run_scoped_with_large_stack(move || f(loaded))
     }
 
     pub(crate) fn with_file_mut<F, T>(&self, f: F) -> Result<T, McpError>
     where
-        F: FnOnce(&mut LoadedFile) -> Result<T, McpError>,
+        F: FnOnce(&mut LoadedFile) -> Result<T, McpError> + Send,
+        T: Send,
     {
         let mut guard = self
             .loaded
@@ -66,8 +73,29 @@ impl HermesService {
         let loaded = guard.as_mut().ok_or_else(|| {
             McpError::invalid_params("No file loaded. Use load_file first.", None)
         })?;
-        f(loaded)
+        run_scoped_with_large_stack(move || f(loaded))
     }
+}
+
+// Scoped counterpart of `hbc_decomp::run_with_large_stack` for closures that
+// borrow the loaded file. Tokio worker threads have a ~2 MB stack; structure
+// recovery and codegen on a real bundle overflow it on the calling thread.
+fn run_scoped_with_large_stack<T, F>(f: F) -> T
+where
+    T: Send,
+    F: FnOnce() -> T + Send,
+{
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .name("hbc-mcp-tool".into())
+            .stack_size(hbc_decomp::LARGE_STACK_SIZE)
+            .spawn_scoped(scope, f)
+            .expect("failed to spawn large-stack tool thread");
+        match handle.join() {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    })
 }
 
 impl LoadedFile {
@@ -107,5 +135,44 @@ impl ServerHandler for HermesService {
         );
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_scoped_with_large_stack;
+
+    // Recursion deep enough to blow a 2 MB stack (the frame is padded so the
+    // optimizer cannot shrink it) but comfortably inside 64 MB.
+    fn deep(n: u32) -> u32 {
+        let pad = [n; 32];
+        if n == 0 {
+            return std::hint::black_box(pad)[0];
+        }
+        std::hint::black_box(pad);
+        1 + deep(n - 1)
+    }
+
+    #[test]
+    fn scoped_helper_runs_deep_recursion_and_borrows() {
+        let data = [1u32, 2, 3];
+        let sum = run_scoped_with_large_stack(|| data.iter().sum::<u32>() + deep(50_000));
+        assert_eq!(sum, 6 + 50_000);
+    }
+
+    #[test]
+    fn lib_helper_runs_deep_recursion() {
+        assert_eq!(hbc_decomp::run_with_large_stack(|| deep(50_000)), 50_000);
+    }
+
+    #[test]
+    fn panics_are_resumed_on_the_caller() {
+        let r =
+            std::panic::catch_unwind(|| run_scoped_with_large_stack(|| -> u32 { panic!("boom") }));
+        assert!(r.is_err());
+        let r = std::panic::catch_unwind(|| {
+            hbc_decomp::run_with_large_stack(|| -> u32 { panic!("boom") })
+        });
+        assert!(r.is_err());
     }
 }

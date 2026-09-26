@@ -1,4 +1,4 @@
-use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, Statement, Value};
+use crate::ir::{AssignTarget, BinaryOp, Binding, Constant, Expression, Statement, Value};
 
 pub fn transform_logic(stmts: &mut [Statement]) {
     for stmt in stmts.iter_mut() {
@@ -90,7 +90,9 @@ pub fn transform_logic(stmts: &mut [Statement]) {
                             if t2 == t1 {
                                 // Check condition: if (r1) or if (r1 != null)
                                 let is_null_check = match condition {
-                                    Expression::Value(Value::Binding(Binding::Register(r))) => *r == *r1,
+                                    Expression::Value(Value::Binding(Binding::Register(r))) => {
+                                        *r == *r1
+                                    }
                                     Expression::Binary {
                                         op: BinaryOp::Neq | BinaryOp::StrictNeq,
                                         left,

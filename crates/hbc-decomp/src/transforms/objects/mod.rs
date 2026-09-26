@@ -1,12 +1,14 @@
-use crate::ir::{Binding, AssignTarget, Expression, ObjectProperty, PropertyKey, Statement, Value,
-    expr_uses_register, stmt_has_side_effects};
+use crate::ir::{
+    expr_uses_register, stmt_has_side_effects, AssignTarget, Binding, Expression, ObjectProperty,
+    PropertyKey, Statement, Value,
+};
 use std::collections::HashSet;
 
 mod inline_literals;
 mod slot_fills;
 
-pub use slot_fills::fold_slot_index_fills;
 use inline_literals::inline_single_use_literals;
+pub use slot_fills::fold_slot_index_fills;
 
 #[cfg(test)]
 mod tests;
@@ -220,12 +222,16 @@ fn value_uses_any_reg(expr: &Expression, regs: &HashSet<u32>) -> bool {
                 }
         }
         Expression::Call { callee, arguments } | Expression::New { callee, arguments } => {
-            value_uses_any_reg(callee, regs) || arguments.iter().any(|a| value_uses_any_reg(a, regs))
+            value_uses_any_reg(callee, regs)
+                || arguments.iter().any(|a| value_uses_any_reg(a, regs))
         }
         Expression::Object { properties } => properties
             .iter()
             .any(|p| value_uses_any_reg(&p.value, regs)),
-        Expression::Array { elements } => elements.iter().flatten().any(|e| value_uses_any_reg(e, regs)),
+        Expression::Array { elements } => elements
+            .iter()
+            .flatten()
+            .any(|e| value_uses_any_reg(e, regs)),
         _ => false,
     }
 }
@@ -245,11 +251,19 @@ fn registers_assigned_multiple_times(stmts: &[Statement]) -> HashSet<u32> {
 
 fn count_register_assigns(stmts: &[Statement], counts: &mut std::collections::HashMap<u32, usize>) {
     for stmt in stmts {
-        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. } = stmt {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            ..
+        } = stmt
+        {
             *counts.entry(*r).or_insert(0) += 1;
         }
         match stmt {
-            Statement::If { then_body, else_body, .. } => {
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 count_register_assigns(then_body, counts);
                 count_register_assigns(else_body, counts);
             }
@@ -259,7 +273,12 @@ fn count_register_assigns(stmts: &[Statement], counts: &mut std::collections::Ha
             | Statement::ForIn { body, .. }
             | Statement::ForOf { body, .. } => count_register_assigns(body, counts),
             Statement::Block(inner) => count_register_assigns(inner, counts),
-            Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
                 count_register_assigns(try_body, counts);
                 count_register_assigns(catch_body, counts);
                 count_register_assigns(finally_body, counts);

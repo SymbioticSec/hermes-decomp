@@ -16,7 +16,8 @@ pub(super) fn resolve_callee(
 ) -> Option<u32> {
     match callee {
         Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
-            if let Some(fid) = resolve_named_definition(name, defs, metro_registry, func_name_index) {
+            if let Some(fid) = resolve_named_definition(name, defs, metro_registry, func_name_index)
+            {
                 return Some(fid);
             }
             // Fallback: check if variable name matches a known function name
@@ -126,8 +127,16 @@ pub(super) fn extract_name_from_callee(callee: &Expression) -> Option<String> {
 
     // Strip common prefixes: get, fetch, load, read, find, create, make, build
     let prefixes = [
-        "get", "fetch", "load", "read", "find", "create", "make", "build",
-        "compute", "calculate",
+        "get",
+        "fetch",
+        "load",
+        "read",
+        "find",
+        "create",
+        "make",
+        "build",
+        "compute",
+        "calculate",
     ];
     let lower = name.to_lowercase();
 
@@ -176,7 +185,9 @@ pub(super) fn extract_object_name_from_method_call(callee: &Expression) -> Optio
             }
         }
 
-        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref() {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+            object.as_ref()
+        {
             // Filter out generic names
             if !super::inference::is_generic_name(name) {
                 return Some(name.clone());
@@ -195,7 +206,9 @@ pub(super) fn extract_object_name_from_method_call(callee: &Expression) -> Optio
 // only ever propagate a meaningful, source-derived identifier.
 pub(super) fn extract_method_object_name(callee: &Expression) -> Option<String> {
     if let Expression::Member { object, .. } = callee {
-        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref() {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+            object.as_ref()
+        {
             if !super::inference::is_generic_name(name) {
                 return Some(name.clone());
             }
@@ -229,7 +242,9 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Register(1)))),
+                    callee: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Register(1),
+                    ))),
                     arguments: vec![
                         Expression::Value(Value::Constant(crate::ir::Constant::Undefined)),
                         Expression::Value(Value::Binding(crate::ir::Binding::Register(0))),
@@ -268,7 +283,9 @@ mod tests {
             Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Register(1)))),
+                    callee: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Register(1),
+                    ))),
                     arguments: vec![],
                 },
             },
@@ -281,7 +298,11 @@ mod tests {
 
         let analysis = crate::analysis::run_ipa(&functions, &MetroRegistry::new(), &name_index);
         assert!(
-            analysis.graph.calls.get(&0).is_none_or(|c| !c.contains(&3) && !c.contains(&4)),
+            analysis
+                .graph
+                .calls
+                .get(&0)
+                .is_none_or(|c| !c.contains(&3) && !c.contains(&4)),
             "ambiguous name must not create a call edge"
         );
     }

@@ -118,11 +118,7 @@ fn collect_from_throw_expr(expr: &Expression, out: &mut BTreeMap<u32, Vec<String
     }
 }
 
-fn collect_params_and_strings(
-    expr: &Expression,
-    params: &mut Vec<u32>,
-    words: &mut Vec<String>,
-) {
+fn collect_params_and_strings(expr: &Expression, params: &mut Vec<u32>, words: &mut Vec<String>) {
     match expr {
         Expression::Value(Value::Parameter(i)) => params.push(*i),
         Expression::Value(Value::Constant(crate::ir::Constant::String(s))) => {
@@ -156,7 +152,10 @@ fn collect_params_and_strings(
             collect_params_and_strings(then_expr, params, words);
             collect_params_and_strings(else_expr, params, words);
         }
-        Expression::TemplateLiteral { expressions, quasis } => {
+        Expression::TemplateLiteral {
+            expressions,
+            quasis,
+        } => {
             for e in expressions {
                 collect_params_and_strings(e, params, words);
             }
@@ -188,9 +187,30 @@ fn extract_name_words(s: &str) -> Vec<String> {
         // Reject noise
         if matches!(
             token,
-            "to" | "be" | "is" | "of" | "in" | "at" | "an" | "or" | "and" | "not" | "the"
-                | "for" | "with" | "from" | "this" | "that" | "must" | "should" | "cannot"
-                | "invalid" | "expected" | "missing" | "required" | "undefined" | "null"
+            "to" | "be"
+                | "is"
+                | "of"
+                | "in"
+                | "at"
+                | "an"
+                | "or"
+                | "and"
+                | "not"
+                | "the"
+                | "for"
+                | "with"
+                | "from"
+                | "this"
+                | "that"
+                | "must"
+                | "should"
+                | "cannot"
+                | "invalid"
+                | "expected"
+                | "missing"
+                | "required"
+                | "undefined"
+                | "null"
         ) {
             continue;
         }
@@ -211,7 +231,9 @@ mod tests {
     #[test]
     fn extracts_email_from_error() {
         let throw = Statement::Throw(Expression::New {
-            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("Error".into())))),
+            callee: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("Error".into()),
+            ))),
             arguments: vec![
                 Expression::Value(Value::Constant(Constant::String("Invalid email".into()))),
                 Expression::Value(Value::Parameter(0)),
@@ -219,7 +241,9 @@ mod tests {
         });
         // Parameter may not be in Error() args often, put param in message build
         let throw2 = Statement::Throw(Expression::New {
-            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("TypeError".into())))),
+            callee: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("TypeError".into()),
+            ))),
             arguments: vec![Expression::Binary {
                 op: crate::ir::BinaryOp::Add,
                 left: Box::new(Expression::Value(Value::Constant(Constant::String(
@@ -229,7 +253,9 @@ mod tests {
             }],
         });
         let hints = hints_from_error_strings(&[throw, throw2]);
-        assert!(hints.get(&0).is_some_and(|v| v.iter().any(|s| s == "email")));
+        assert!(hints
+            .get(&0)
+            .is_some_and(|v| v.iter().any(|s| s == "email")));
     }
 
     #[test]
@@ -238,7 +264,9 @@ mod tests {
         // or "password" to arg0 vs arg1 by position would be a guess, so neither
         // parameter is named and both stay argN.
         let throw = Statement::Throw(Expression::New {
-            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("Error".into())))),
+            callee: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("Error".into()),
+            ))),
             arguments: vec![
                 Expression::Value(Value::Constant(Constant::String(
                     "bad email or password".into(),

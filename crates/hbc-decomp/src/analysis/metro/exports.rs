@@ -1,5 +1,7 @@
 use super::registry::MetroModule;
-use crate::ir::{Binding, extract_function_id, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{
+    extract_function_id, AssignTarget, Binding, Expression, PropertyKey, Statement, Value,
+};
 use std::collections::{BTreeMap, HashMap};
 
 // Analyzes the exports of a Metro module to find exported functions.
@@ -289,7 +291,7 @@ mod tests {
     use super::*;
     use crate::ir::FunctionId;
     use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
-    use std::collections::{HashMap, BTreeMap};
+    use std::collections::{BTreeMap, HashMap};
 
     fn make_func_expr(id: u32) -> Expression {
         Expression::Function {
@@ -348,6 +350,7 @@ mod tests {
             dependencies: vec![],
             exports: HashMap::new(),
             roles: crate::analysis::metro::registry::FactoryRoles::standard(),
+            name_from_default_export: false,
         };
 
         let mut functions = BTreeMap::new();

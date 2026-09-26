@@ -100,7 +100,9 @@ fn main() {
                 "parsed without panic: version={}, functions={}, scope_descriptors={}",
                 file.header.version,
                 file.function_headers.len(),
-                file.debug_info.as_ref().map_or(0, |d| d.scope_descriptors.len()),
+                file.debug_info
+                    .as_ref()
+                    .map_or(0, |d| d.scope_descriptors.len()),
             );
             println!("OK: issue #4 trigger handled gracefully.");
         }

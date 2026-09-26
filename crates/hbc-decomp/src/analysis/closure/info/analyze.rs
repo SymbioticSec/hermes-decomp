@@ -1,7 +1,7 @@
-use crate::ir::{Binding, AssignTarget, Statement};
-use std::collections::BTreeMap;
 use super::types::{ClosureInfo, ClosureSlotValue};
 use super::value::value_from_expr;
+use crate::ir::{AssignTarget, Binding, Statement};
+use std::collections::BTreeMap;
 
 impl ClosureInfo {
     pub fn analyze(stmts: &[Statement]) -> Self {
@@ -25,7 +25,7 @@ impl ClosureInfo {
                     }
                 }
 
-                if let AssignTarget::Binding(Binding::ClosureVar{ slot, .. }) = target {
+                if let AssignTarget::Binding(Binding::ClosureVar { slot, .. }) = target {
                     if let Some(val) = value_from_expr(value, Some(reg_values), true) {
                         self.store_slot(*slot, val);
                     }

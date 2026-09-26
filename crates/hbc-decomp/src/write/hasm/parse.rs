@@ -136,10 +136,7 @@ pub fn parse_hasm(text: &str) -> Result<HasmModule> {
     let mut current_name = None;
     let mut buf = String::new();
 
-    let flush = |id: u32,
-                 name: &Option<String>,
-                 buf: &str,
-                 functions: &mut Vec<HasmFunction>| {
+    let flush = |id: u32, name: &Option<String>, buf: &str, functions: &mut Vec<HasmFunction>| {
         if buf.trim().is_empty() {
             return;
         }
@@ -263,7 +260,9 @@ fn strip_offset_prefix<'a>(line: &'a str, known: &HashMap<String, u8>) -> Option
     // An offset prefix is a token of its own: `0000  Mnemonic` or `0x0000 Mnemonic`.
     let (run, rest) = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
         Some(body) => {
-            let end = body.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(body.len());
+            let end = body
+                .find(|c: char| !c.is_ascii_hexdigit())
+                .unwrap_or(body.len());
             (&body[..end], &body[end..])
         }
         None => {
@@ -386,7 +385,10 @@ fn parse_operand_token(
             if tok.starts_with('"') {
                 let unquoted = unquote(tok)?;
                 let id = strings.get(&unquoted).copied().ok_or_else(|| {
-                    Error::Write(format!("string not in table: {}", escape_js_string(&unquoted)))
+                    Error::Write(format!(
+                        "string not in table: {}",
+                        escape_js_string(&unquoted)
+                    ))
                 })?;
                 return match ty {
                     OperandType::UInt8S => Ok(OperandValue::U8(id as u8)),
@@ -491,9 +493,18 @@ mod offset_prefix_tests {
     fn a_real_offset_prefix_is_still_stripped() {
         // The disassembler writes offsets as four zero padded hex digits, so a
         // large one legitimately starts with a letter.
-        assert_eq!(strip_offset_prefix("0000  Ret r0", &known()), Some("Ret r0"));
-        assert_eq!(strip_offset_prefix("01a4  Ret r0", &known()), Some("Ret r0"));
-        assert_eq!(strip_offset_prefix("abcd  Ret r0", &known()), Some("Ret r0"));
+        assert_eq!(
+            strip_offset_prefix("0000  Ret r0", &known()),
+            Some("Ret r0")
+        );
+        assert_eq!(
+            strip_offset_prefix("01a4  Ret r0", &known()),
+            Some("Ret r0")
+        );
+        assert_eq!(
+            strip_offset_prefix("abcd  Ret r0", &known()),
+            Some("Ret r0")
+        );
         assert_eq!(strip_offset_prefix("0x1f Ret r0", &known()), Some("Ret r0"));
     }
 

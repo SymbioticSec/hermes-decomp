@@ -1,7 +1,10 @@
 use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Terminator, Value};
 use std::collections::BTreeMap;
 
-pub(super) fn substitute_terminator(term: &Terminator, copies: &BTreeMap<u32, Expression>) -> Terminator {
+pub(super) fn substitute_terminator(
+    term: &Terminator,
+    copies: &BTreeMap<u32, Expression>,
+) -> Terminator {
     match term {
         Terminator::Branch {
             condition,

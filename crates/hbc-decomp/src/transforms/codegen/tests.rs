@@ -5,7 +5,9 @@ use crate::ir::{Constant, Expression};
 fn test_simple_codegen() {
     let stmts = vec![
         Statement::let_stmt("x", Expression::constant(Constant::Integer(42))),
-        Statement::Return(Some(Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Register(0))))),
+        Statement::Return(Some(Expression::Value(crate::ir::Value::Binding(
+            crate::ir::Binding::Register(0),
+        )))),
     ];
 
     let mut codegen = Codegen::new(CodegenOptions::new());
@@ -42,14 +44,20 @@ fn test_require_import_comment() {
 
     let codegen = Codegen::new(CodegenOptions::new()).with_imports(imports);
     let expr = Expression::call(
-        Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("require".into()))),
+        Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+            "require".into(),
+        ))),
         vec![
             Expression::constant(Constant::Undefined),
             Expression::constant(Constant::Integer(5)),
         ],
     );
     let result = codegen.generate_expr(&expr);
-    assert!(result.contains("/* react-native */"), "Expected import comment, got: {}", result);
+    assert!(
+        result.contains("/* react-native */"),
+        "Expected import comment, got: {}",
+        result
+    );
 }
 
 #[test]
@@ -57,7 +65,9 @@ fn test_for_of_uses_generate_expr() {
     let stmts = vec![Statement::ForOf {
         variable: "item".into(),
         iterable: Expression::call(
-            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("require".into()))),
+            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+                "require".into(),
+            ))),
             vec![
                 Expression::constant(Constant::Undefined),
                 Expression::constant(Constant::Integer(3)),
@@ -71,16 +81,24 @@ fn test_for_of_uses_generate_expr() {
     let mut codegen = Codegen::new(CodegenOptions::new()).with_imports(imports);
     let output = codegen.generate_statements(&stmts);
     // ForOf should use generate_expr for iterable, which injects import comments
-    assert!(output.contains("/* utils */"), "ForOf should use generate_expr for iterable, got: {}", output);
+    assert!(
+        output.contains("/* utils */"),
+        "ForOf should use generate_expr for iterable, got: {}",
+        output
+    );
 }
 
 #[test]
 fn test_switch_uses_generate_expr() {
     let stmts = vec![Statement::Switch {
-        discriminant: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("x".into()))),
+        discriminant: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+            "x".into(),
+        ))),
         cases: vec![(
             Expression::constant(Constant::Integer(1)),
-            vec![Statement::Return(Some(Expression::constant(Constant::Integer(42))))],
+            vec![Statement::Return(Some(Expression::constant(
+                Constant::Integer(42),
+            )))],
         )],
         default: None,
     }];
@@ -96,21 +114,29 @@ fn test_switch_uses_generate_expr() {
 fn test_class_super_uses_generate_expr() {
     let stmts = vec![Statement::Class {
         name: "MyClass".into(),
-        super_class: Some(Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("BaseClass".into())))),
+        super_class: Some(Expression::Value(crate::ir::Value::Binding(
+            crate::ir::Binding::Variable("BaseClass".into()),
+        ))),
         constructor: None,
         methods: vec![],
     }];
 
     let mut codegen = Codegen::new(CodegenOptions::new());
     let output = codegen.generate_statements(&stmts);
-    assert!(output.contains("class MyClass extends BaseClass"), "got: {}", output);
+    assert!(
+        output.contains("class MyClass extends BaseClass"),
+        "got: {}",
+        output
+    );
 }
 
 #[test]
 fn test_assign_target_member() {
     let codegen = Codegen::new(CodegenOptions::new());
     let target = crate::ir::AssignTarget::Member {
-        object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("obj".into()))),
+        object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+            "obj".into(),
+        ))),
         property: "prop".into(),
     };
     let result = codegen.generate_assign_target(&target);
@@ -131,7 +157,9 @@ fn arrow_after_logical_or_is_parenthesized() {
     };
     let expr = Expression::Binary {
         op: crate::ir::BinaryOp::LogicalOr,
-        left: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("x".into())))),
+        left: Box::new(Expression::Value(Value::Binding(
+            crate::ir::Binding::Variable("x".into()),
+        ))),
         right: Box::new(arrow),
     };
     let out = codegen.generate_expr(&expr);
@@ -151,7 +179,9 @@ fn template_quasi_escapes_inner_backticks() {
     let codegen = Codegen::new(CodegenOptions::new());
     let expr = Expression::TemplateLiteral {
         quasis: vec!["warn: `nested` ".into(), "".into()],
-        expressions: vec![Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("x".into())))],
+        expressions: vec![Expression::Value(crate::ir::Value::Binding(
+            crate::ir::Binding::Variable("x".into()),
+        ))],
     };
     let out = codegen.generate_expr(&expr);
     assert!(
@@ -166,9 +196,15 @@ fn template_quasi_escapes_inner_backticks() {
 fn test_assign_target_destructuring_array() {
     let codegen = Codegen::new(CodegenOptions::new());
     let target = crate::ir::AssignTarget::DestructuringArray(vec![
-        Some((crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable("a".into())), None)),
+        Some((
+            crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable("a".into())),
+            None,
+        )),
         None,
-        Some((crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable("b".into())), None)),
+        Some((
+            crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable("b".into())),
+            None,
+        )),
     ]);
     let result = codegen.generate_assign_target(&target);
     assert_eq!(result, "[a, , b]");
@@ -180,7 +216,9 @@ fn test_esm_import_from_require() {
     let stmts = vec![Statement::let_stmt(
         "React",
         Expression::call(
-            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("require".into()))),
+            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+                "require".into(),
+            ))),
             vec![
                 Expression::constant(Constant::Undefined),
                 Expression::constant(Constant::Integer(0)),
@@ -198,15 +236,25 @@ fn test_esm_import_from_require() {
         .with_imports(import_map)
         .with_esm_mode(dep_names);
     let output = codegen.generate_esm_module(&stmts, 42, Some("my-module"));
-    assert!(output.contains("import React from \"react\""), "Expected import, got: {}", output);
-    assert!(output.contains("// Module 42 (my-module)"), "Expected header, got: {}", output);
+    assert!(
+        output.contains("import React from \"react\""),
+        "Expected import, got: {}",
+        output
+    );
+    assert!(
+        output.contains("// Module 42 (my-module)"),
+        "Expected header, got: {}",
+        output
+    );
 }
 
 #[test]
 fn test_esm_renames_array_result_import_binding() {
     let req = |id: i32| {
         Expression::call(
-            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("require".into()))),
+            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+                "require".into(),
+            ))),
             vec![
                 Expression::constant(Constant::Undefined),
                 Expression::constant(Constant::Integer(id)),
@@ -244,15 +292,23 @@ fn test_esm_export_from_assign() {
     // exports.default = value should become `export default value`
     let stmts = vec![Statement::Assign {
         target: crate::ir::AssignTarget::Member {
-            object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("exports".into()))),
+            object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+                "exports".into(),
+            ))),
             property: "default".into(),
         },
-        value: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("MyComponent".into()))),
+        value: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+            "MyComponent".into(),
+        ))),
     }];
 
     let mut codegen = Codegen::new(CodegenOptions::new()).with_esm_mode(BTreeMap::new());
     let output = codegen.generate_esm_module(&stmts, 10, Some("my-component"));
-    assert!(output.contains("export default MyComponent"), "Expected export, got: {}", output);
+    assert!(
+        output.contains("export default MyComponent"),
+        "Expected export, got: {}",
+        output
+    );
 }
 
 #[test]
@@ -261,7 +317,9 @@ fn test_esm_skip_esmodule_boilerplate() {
     let stmts = vec![
         Statement::Assign {
             target: crate::ir::AssignTarget::Member {
-                object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("exports".into()))),
+                object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+                    "exports".into(),
+                ))),
                 property: "__esModule".into(),
             },
             value: Expression::constant(Constant::Bool(true)),
@@ -272,8 +330,16 @@ fn test_esm_skip_esmodule_boilerplate() {
     let mut codegen = Codegen::new(CodegenOptions::new()).with_esm_mode(BTreeMap::new());
     let output = codegen.generate_esm_module(&stmts, 1, None);
     // Should NOT contain __esModule or return
-    assert!(!output.contains("__esModule"), "Expected skip, got: {}", output);
-    assert!(!output.contains("return"), "Expected skip return, got: {}", output);
+    assert!(
+        !output.contains("__esModule"),
+        "Expected skip, got: {}",
+        output
+    );
+    assert!(
+        !output.contains("return"),
+        "Expected skip return, got: {}",
+        output
+    );
 }
 
 #[test]
@@ -281,15 +347,23 @@ fn test_esm_named_export() {
     // exports.foo = bar -> export const foo = bar
     let stmts = vec![Statement::Assign {
         target: crate::ir::AssignTarget::Member {
-            object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("exports".into()))),
+            object: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+                "exports".into(),
+            ))),
             property: "loginWithToken".into(),
         },
-        value: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable("fn42".into()))),
+        value: Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+            "fn42".into(),
+        ))),
     }];
 
     let mut codegen = Codegen::new(CodegenOptions::new()).with_esm_mode(BTreeMap::new());
     let output = codegen.generate_esm_module(&stmts, 5, Some("auth"));
-    assert!(output.contains("export const loginWithToken = fn42"), "Expected named export, got: {}", output);
+    assert!(
+        output.contains("export const loginWithToken = fn42"),
+        "Expected named export, got: {}",
+        output
+    );
 }
 
 // A module factory's own IR is only its top level: the functions rendered inside

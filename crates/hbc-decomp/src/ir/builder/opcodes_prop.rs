@@ -1,7 +1,7 @@
 // Opcode handlers for property access operations.
 
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement};
 use crate::{BytecodeFile, Instruction};
 
 // Handle GetById opcodes.
@@ -336,7 +336,10 @@ pub fn handle_put_own_private_by_sym(inst: &Instruction) -> Option<Statement> {
     let sym = reg_expr(&inst.operands, 3)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Index { object: obj, key: sym },
+        target: AssignTarget::Index {
+            object: obj,
+            key: sym,
+        },
         value,
     })
 }
@@ -349,7 +352,10 @@ pub fn handle_add_own_private_by_sym(inst: &Instruction) -> Option<Statement> {
     let value = reg_expr(&inst.operands, 2)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Index { object: obj, key: sym },
+        target: AssignTarget::Index {
+            object: obj,
+            key: sym,
+        },
         value,
     })
 }

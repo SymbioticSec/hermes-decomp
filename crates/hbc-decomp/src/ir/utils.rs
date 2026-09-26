@@ -1,4 +1,6 @@
-use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, UnaryOp, Value};
+use crate::ir::{
+    AssignTarget, BinaryOp, Binding, Constant, Expression, PropertyKey, Statement, UnaryOp, Value,
+};
 
 pub fn expr_uses_register(expr: &Expression, reg: u32) -> bool {
     match expr {
@@ -67,7 +69,9 @@ pub fn target_to_key(target: &AssignTarget) -> Option<String> {
     match target {
         AssignTarget::Binding(Binding::Register(r)) => Some(format!("r{r}")),
         AssignTarget::Binding(Binding::Variable(name)) => Some(name.clone()),
-        AssignTarget::Binding(Binding::ClosureVar{ slot, level, .. }) => Some(format!("closure_{level}_{slot}")),
+        AssignTarget::Binding(Binding::ClosureVar { slot, level, .. }) => {
+            Some(format!("closure_{level}_{slot}"))
+        }
         _ => None,
     }
 }
@@ -293,7 +297,11 @@ pub fn for_each_target_expression_mut(
 // so a reader and a rewriter never disagree about what counts as a nested body.
 pub fn for_each_nested_body(stmt: &Statement, f: &mut impl FnMut(&[Statement])) {
     match stmt {
-        Statement::If { then_body, else_body, .. } => {
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
             f(then_body);
             f(else_body);
         }
@@ -302,7 +310,12 @@ pub fn for_each_nested_body(stmt: &Statement, f: &mut impl FnMut(&[Statement])) 
         | Statement::For { body, .. }
         | Statement::ForIn { body, .. }
         | Statement::ForOf { body, .. } => f(body),
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             f(try_body);
             f(catch_body);
             f(finally_body);
@@ -320,9 +333,16 @@ pub fn for_each_nested_body(stmt: &Statement, f: &mut impl FnMut(&[Statement])) 
     }
 }
 
-pub fn map_nested_bodies(stmt: Statement, mut f: impl FnMut(Vec<Statement>) -> Vec<Statement>) -> Statement {
+pub fn map_nested_bodies(
+    stmt: Statement,
+    mut f: impl FnMut(Vec<Statement>) -> Vec<Statement>,
+) -> Statement {
     match stmt {
-        Statement::If { condition, then_body, else_body } => Statement::If {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::If {
             condition,
             then_body: f(then_body),
             else_body: f(else_body),
@@ -335,29 +355,51 @@ pub fn map_nested_bodies(stmt: Statement, mut f: impl FnMut(Vec<Statement>) -> V
             body: f(body),
             condition,
         },
-        Statement::For { init, condition, update, body } => Statement::For {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
             init,
             condition,
             update,
             body: f(body),
         },
-        Statement::ForIn { variable, object, body } => Statement::ForIn {
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => Statement::ForIn {
             variable,
             object,
             body: f(body),
         },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => Statement::ForOf {
             variable,
             iterable,
             body: f(body),
         },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
             try_body: f(try_body),
             catch_param,
             catch_body: f(catch_body),
             finally_body: f(finally_body),
         },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => Statement::Switch {
             discriminant,
             cases: cases.into_iter().map(|(e, stmts)| (e, f(stmts))).collect(),
             default: default.map(&mut f),
@@ -367,16 +409,25 @@ pub fn map_nested_bodies(stmt: Statement, mut f: impl FnMut(Vec<Statement>) -> V
     }
 }
 
-pub fn map_nested_bodies_mut(stmt: &mut Statement, mut f: impl FnMut(Vec<Statement>) -> Vec<Statement>) {
+pub fn map_nested_bodies_mut(
+    stmt: &mut Statement,
+    mut f: impl FnMut(Vec<Statement>) -> Vec<Statement>,
+) {
     match stmt {
-        Statement::If { then_body, else_body, .. } => {
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
             let t = std::mem::take(then_body);
             *then_body = f(t);
             let e = std::mem::take(else_body);
             *else_body = f(e);
         }
-        Statement::While { body, .. } | Statement::DoWhile { body, .. }
-        | Statement::For { body, .. } | Statement::ForIn { body, .. }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::For { body, .. }
+        | Statement::ForIn { body, .. }
         | Statement::ForOf { body, .. } => {
             let b = std::mem::take(body);
             *body = f(b);
@@ -385,7 +436,12 @@ pub fn map_nested_bodies_mut(stmt: &mut Statement, mut f: impl FnMut(Vec<Stateme
             let b = std::mem::take(inner);
             *inner = f(b);
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             let t = std::mem::take(try_body);
             *try_body = f(t);
             let c = std::mem::take(catch_body);
@@ -447,13 +503,27 @@ pub fn is_simple_value(expr: &Expression) -> bool {
 // Check if a condition is `x !== x` or `!(x === x)` (NaN check pattern).
 // This pattern arises from Hermes bytecode and indicates dead code.
 pub fn is_nan_check(condition: &Expression) -> bool {
-    if let Expression::Binary { op: BinaryOp::StrictNeq, left, right } = condition {
+    if let Expression::Binary {
+        op: BinaryOp::StrictNeq,
+        left,
+        right,
+    } = condition
+    {
         if left == right {
             return true;
         }
     }
-    if let Expression::Unary { op: UnaryOp::Not, operand } = condition {
-        if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = operand.as_ref() {
+    if let Expression::Unary {
+        op: UnaryOp::Not,
+        operand,
+    } = condition
+    {
+        if let Expression::Binary {
+            op: BinaryOp::StrictEq,
+            left,
+            right,
+        } = operand.as_ref()
+        {
             if left == right {
                 return true;
             }
@@ -463,7 +533,10 @@ pub fn is_nan_check(condition: &Expression) -> bool {
 }
 
 pub fn is_undefined_expr(expr: &Expression) -> bool {
-    matches!(expr, Expression::Value(Value::Constant(Constant::Undefined)))
+    matches!(
+        expr,
+        Expression::Value(Value::Constant(Constant::Undefined))
+    )
 }
 
 #[cfg(test)]
@@ -472,7 +545,9 @@ mod tests {
     use crate::ir::Constant;
 
     fn make_body(n: i32) -> Vec<Statement> {
-        vec![Statement::Expr(Expression::Value(Value::Constant(Constant::Integer(n))))]
+        vec![Statement::Expr(Expression::Value(Value::Constant(
+            Constant::Integer(n),
+        )))]
     }
 
     #[test]
@@ -544,7 +619,10 @@ mod tests {
         let stmt = Statement::Block(make_body(1));
         let result = map_nested_bodies(stmt, |_| Vec::new());
         if let Statement::Block(body) = result {
-            assert!(body.is_empty(), "Body should have been replaced with empty vec");
+            assert!(
+                body.is_empty(),
+                "Body should have been replaced with empty vec"
+            );
         } else {
             panic!("Expected Block statement");
         }
@@ -560,7 +638,12 @@ mod tests {
 
         map_nested_bodies_mut(&mut stmt, |_| Vec::new());
 
-        if let Statement::If { then_body, else_body, .. } = &stmt {
+        if let Statement::If {
+            then_body,
+            else_body,
+            ..
+        } = &stmt
+        {
             assert!(then_body.is_empty());
             assert!(else_body.is_empty());
         } else {

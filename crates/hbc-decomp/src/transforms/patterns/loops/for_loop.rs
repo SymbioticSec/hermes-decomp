@@ -1,4 +1,4 @@
-use crate::ir::{Binding, Statement, Expression, Value, BinaryOp, AssignTarget};
+use crate::ir::{AssignTarget, BinaryOp, Binding, Expression, Statement, Value};
 
 // Detect for loop patterns from while loops.
 pub fn detect_for_loops(stmts: Vec<Statement>) -> Vec<Statement> {
@@ -14,13 +14,12 @@ pub fn detect_for_loops(stmts: Vec<Statement>) -> Vec<Statement> {
                     if let Some((update, new_body)) = extract_for_loop_update(body) {
                         // Check if the while condition uses the same variable
                         if uses_variable(condition, &target) {
-                            let Some(while_stmt) = iter.next() else { continue };
+                            let Some(while_stmt) = iter.next() else {
+                                continue;
+                            };
                             if let Statement::While { condition, body: _ } = while_stmt {
                                 result.push(Statement::For {
-                                    init: Some(Box::new(Statement::Assign {
-                                        target,
-                                        value,
-                                    })),
+                                    init: Some(Box::new(Statement::Assign { target, value })),
                                     condition: Some(condition),
                                     update: Some(Box::new(update)),
                                     body: detect_for_loops(new_body),
@@ -48,7 +47,11 @@ pub fn detect_for_loops(stmts: Vec<Statement>) -> Vec<Statement> {
                     });
                 }
             }
-            Statement::If { condition, then_body, else_body } => {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
                 result.push(Statement::If {
                     condition,
                     then_body: detect_for_loops(then_body),
@@ -74,9 +77,11 @@ fn extract_for_loop_update(body: &[Statement]) -> Option<(Statement, Vec<Stateme
 
     // Look for increment patterns: i = i + 1, i++, ++i
     match last {
-        Statement::Assign { target, value: Expression::Binary { op, left, right } }
-            if matches!(op, BinaryOp::Add | BinaryOp::Sub)
-                && (is_same_target(target, left) || is_same_target(target, right)) =>
+        Statement::Assign {
+            target,
+            value: Expression::Binary { op, left, right },
+        } if matches!(op, BinaryOp::Add | BinaryOp::Sub)
+            && (is_same_target(target, left) || is_same_target(target, right)) =>
         {
             let new_body = body[..body.len() - 1].to_vec();
             Some((last.clone(), new_body))
@@ -92,8 +97,14 @@ fn extract_for_loop_update(body: &[Statement]) -> Option<(Statement, Vec<Stateme
 // Check if an expression uses a given assignment target.
 fn uses_variable(expr: &Expression, target: &AssignTarget) -> bool {
     match (expr, target) {
-        (Expression::Value(Value::Binding(Binding::Register(r1))), AssignTarget::Binding(Binding::Register(r2))) => r1 == r2,
-        (Expression::Value(Value::Binding(Binding::Variable(v1))), AssignTarget::Binding(Binding::Variable(v2))) => v1 == v2,
+        (
+            Expression::Value(Value::Binding(Binding::Register(r1))),
+            AssignTarget::Binding(Binding::Register(r2)),
+        ) => r1 == r2,
+        (
+            Expression::Value(Value::Binding(Binding::Variable(v1))),
+            AssignTarget::Binding(Binding::Variable(v2)),
+        ) => v1 == v2,
         (Expression::Binary { left, right, .. }, _) => {
             uses_variable(left, target) || uses_variable(right, target)
         }
@@ -104,8 +115,14 @@ fn uses_variable(expr: &Expression, target: &AssignTarget) -> bool {
 // Check if an expression is the same as an assignment target.
 fn is_same_target(target: &AssignTarget, expr: &Expression) -> bool {
     match (target, expr) {
-        (AssignTarget::Binding(Binding::Register(r1)), Expression::Value(Value::Binding(Binding::Register(r2)))) => r1 == r2,
-        (AssignTarget::Binding(Binding::Variable(v1)), Expression::Value(Value::Binding(Binding::Variable(v2)))) => v1 == v2,
+        (
+            AssignTarget::Binding(Binding::Register(r1)),
+            Expression::Value(Value::Binding(Binding::Register(r2))),
+        ) => r1 == r2,
+        (
+            AssignTarget::Binding(Binding::Variable(v1)),
+            Expression::Value(Value::Binding(Binding::Variable(v2))),
+        ) => v1 == v2,
         _ => false,
     }
 }

@@ -1,9 +1,14 @@
-use crate::ir::{Binding, AssignTarget, Statement};
+use crate::ir::{AssignTarget, Binding, Expression, Statement};
 
 // Collect destructuring-pattern target names across the whole function.
 pub(super) fn collect_pattern_names(stmts: &[Statement], out: &mut Vec<String>) {
     for stmt in stmts {
-        if let Statement::Assign { target, .. } = stmt {
+        let target = match stmt {
+            Statement::Assign { target, .. } => Some(target),
+            Statement::Expr(Expression::Assignment { target, .. }) => Some(target.as_ref()),
+            _ => None,
+        };
+        if let Some(target) = target {
             if matches!(
                 target,
                 AssignTarget::DestructuringArray(_)
@@ -15,27 +20,34 @@ pub(super) fn collect_pattern_names(stmts: &[Statement], out: &mut Vec<String>) 
             }
         }
         match stmt {
-            Statement::If { then_body, else_body, .. } => {
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 collect_pattern_names(then_body, out);
                 collect_pattern_names(else_body, out);
             }
-            Statement::While { body, .. } | Statement::DoWhile { body, .. }
-            | Statement::For { body, .. } | Statement::ForIn { body, .. }
+            Statement::While { body, .. }
+            | Statement::DoWhile { body, .. }
+            | Statement::For { body, .. }
+            | Statement::ForIn { body, .. }
             | Statement::ForOf { body, .. } => collect_pattern_names(body, out),
             Statement::Block(inner) => collect_pattern_names(inner, out),
-            Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
                 collect_pattern_names(try_body, out);
                 collect_pattern_names(catch_body, out);
                 collect_pattern_names(finally_body, out);
             }
-            Statement::Switch { cases, default, .. } => {
-                for (_, body) in cases {
-                    collect_pattern_names(body, out);
-                }
-                if let Some(d) = default {
-                    collect_pattern_names(d, out);
-                }
-            }
+            // Case patterns are declared at the start of that case, not once
+            // for the whole function. One hoist would make every case share
+            // the same binding.
+            Statement::Switch { .. } => {}
             _ => {}
         }
     }

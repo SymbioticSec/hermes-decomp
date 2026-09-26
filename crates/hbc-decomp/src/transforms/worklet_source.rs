@@ -34,7 +34,11 @@ fn collect_in_stmt(stmt: &Statement, out: &mut BTreeMap<String, String>) {
     }
     // Recurse into nested bodies.
     match stmt {
-        Statement::If { then_body, else_body, .. } => {
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
             then_body.iter().for_each(|s| collect_in_stmt(s, out));
             else_body.iter().for_each(|s| collect_in_stmt(s, out));
         }
@@ -44,7 +48,12 @@ fn collect_in_stmt(stmt: &Statement, out: &mut BTreeMap<String, String>) {
         | Statement::ForIn { body, .. }
         | Statement::ForOf { body, .. } => body.iter().for_each(|s| collect_in_stmt(s, out)),
         Statement::Block(inner) => inner.iter().for_each(|s| collect_in_stmt(s, out)),
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             try_body.iter().for_each(|s| collect_in_stmt(s, out));
             catch_body.iter().for_each(|s| collect_in_stmt(s, out));
             finally_body.iter().for_each(|s| collect_in_stmt(s, out));
@@ -64,7 +73,8 @@ fn collect_in_stmt(stmt: &Statement, out: &mut BTreeMap<String, String>) {
 fn collect_in_expr(expr: &Expression, out: &mut BTreeMap<String, String>) {
     if let Expression::Object { properties } = expr {
         for p in properties {
-            let is_code = matches!(&p.key, PropertyKey::Ident(k) | PropertyKey::String(k) if k == "code");
+            let is_code =
+                matches!(&p.key, PropertyKey::Ident(k) | PropertyKey::String(k) if k == "code");
             if is_code {
                 if let Expression::Value(Value::Constant(Constant::String(src))) = &p.value {
                     if let Some(name) = worklet_fn_name(src) {
@@ -112,7 +122,10 @@ mod tests {
             worklet_fn_name("function fooWorklet(x){const{a}=this.__closure;return a;}"),
             Some("fooWorklet".to_string())
         );
-        assert_eq!(worklet_fn_name("function Abc123(){}"), Some("Abc123".to_string()));
+        assert_eq!(
+            worklet_fn_name("function Abc123(){}"),
+            Some("Abc123".to_string())
+        );
         assert_eq!(worklet_fn_name("not a function"), None);
         assert_eq!(worklet_fn_name("function (){}"), None); // anonymous
     }
@@ -133,6 +146,9 @@ mod tests {
         let mut all = BTreeMap::new();
         all.insert(0u32, stmts);
         let map = collect_worklet_sources(&all);
-        assert_eq!(map.get("w1").map(|s| s.as_str()), Some("function w1(p){return p;}"));
+        assert_eq!(
+            map.get("w1").map(|s| s.as_str()),
+            Some("function w1(p){return p;}")
+        );
     }
 }

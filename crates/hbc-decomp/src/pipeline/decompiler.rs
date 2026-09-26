@@ -55,11 +55,7 @@ impl Decompiler {
     }
 
     pub fn decompile_all(&self, options: &DecompileOptionsV2) -> Result<String> {
-        decompile_all_v2_with_closures(
-            &self.file,
-            &self.format,
-            options,
-        )
+        decompile_all_v2_with_closures(&self.file, &self.format, options)
     }
 
     pub fn decompile_to_ir(

@@ -1,23 +1,22 @@
-use crate::cli_args::{FunctionLayoutArg, LayoutArg};
+use crate::cli_args::{FormatArgs, FunctionLayoutArg, LayoutArg};
 use hbc_decomp::{BytecodeFile, BytecodeFormat, FunctionHeaderLayout, HeaderLayout};
 use std::fs;
 use std::path::PathBuf;
 
 pub fn load_file(
     input: &PathBuf,
-    layout: LayoutArg,
-    function_layout: FunctionLayoutArg,
+    args: &FormatArgs,
 ) -> Result<BytecodeFile, Box<dyn std::error::Error>> {
-    let (file, _) = load_file_with_bytes(input, layout, function_layout)?;
+    let (file, _) = load_file_with_bytes(input, args)?;
     Ok(file)
 }
 
 pub fn load_file_with_bytes(
     input: &PathBuf,
-    layout: LayoutArg,
-    function_layout: FunctionLayoutArg,
+    args: &FormatArgs,
 ) -> Result<(BytecodeFile, Vec<u8>), Box<dyn std::error::Error>> {
     let bytes = fs::read(input)?;
+    let (layout, function_layout) = (args.layout, args.function_layout);
     let file = match layout {
         LayoutArg::Auto => BytecodeFile::parse_auto(&bytes)?,
         LayoutArg::Legacy => {
@@ -61,6 +60,16 @@ pub fn load_format(
     Ok(format)
 }
 
+// The name the bytecode stores for a function, or None when it stores none
+// (anonymous functions carry an empty name).
+pub fn function_name(file: &BytecodeFile, id: u32) -> Option<String> {
+    file.function_headers
+        .get(id as usize)
+        .and_then(|h| file.string_at(h.function_name()))
+        .map(|e| e.value.clone())
+        .filter(|s| !s.is_empty())
+}
+
 pub fn write_output(
     output: Option<PathBuf>,
     content: &str,
@@ -69,12 +78,7 @@ pub fn write_output(
         fs::write(&path, content)?;
         let lines = content.lines().count();
         let kib = content.len() as f64 / 1024.0;
-        eprintln!(
-            "Wrote {} ({} lines, {:.1} KiB)",
-            path.display(),
-            lines,
-            kib
-        );
+        eprintln!("Wrote {} ({} lines, {:.1} KiB)", path.display(), lines, kib);
     } else {
         print!("{content}");
     }

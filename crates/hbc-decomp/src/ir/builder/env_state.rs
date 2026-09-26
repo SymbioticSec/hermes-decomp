@@ -97,8 +97,18 @@ impl EnvRegMap {
         level
     }
 
-    pub fn mark_created_env(&mut self, reg: u32) {
+    /// `reg` holds a block environment this function just built on top of the
+    /// one it runs in (a class binding's scope, a `let` inside a loop). Its
+    /// slots are not the running environment's slots: giving it level 0 wrote
+    /// a class constructor over the factory's `global` parameter under one
+    /// name. It gets a level of its own, past `NESTED_ENV_LEVEL_BASE`; a later
+    /// store of it into a parent slot re-identifies it by that slot.
+    pub fn claim_created_env(&mut self, reg: u32) -> u32 {
+        self.extra_env_count += 1;
+        let level = (NESTED_ENV_LEVEL_BASE + self.extra_env_count).min(MAX_LEVEL);
+        self.set_level(reg, level);
         self.created_envs.insert(reg);
+        level
     }
 
     pub fn is_created_env(&self, reg: u32) -> bool {
@@ -200,8 +210,8 @@ mod tests {
     #[test]
     fn captured_created_env_takes_the_capture_slot_identity() {
         let mut m = EnvRegMap::new();
-        m.set_level(20, 0);
-        m.mark_created_env(20);
+        let own = m.claim_created_env(20);
+        assert!(own >= NESTED_ENV_LEVEL_BASE);
         assert!(m.is_created_env(20));
 
         // StoreToEnvironment r1(level 0), slot 3, r20
@@ -237,7 +247,7 @@ mod tests {
         assert!(!m.reg_level.contains_key(&5));
 
         // A Mov of a created environment carries that fact to the destination.
-        m.mark_created_env(3);
+        m.claim_created_env(3);
         m.copy_reg(9, 3);
         assert!(m.is_created_env(9));
         m.copy_reg(9, 7); // src is not a created env → clear

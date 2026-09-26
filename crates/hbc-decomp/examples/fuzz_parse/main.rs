@@ -44,9 +44,21 @@ fn probe(bytes: &[u8]) -> Option<String> {
     PROBES.fetch_add(1, Ordering::Relaxed);
     let result = panic::catch_unwind(|| {
         // Explicit layouts (the issue mentioned --layout modern).
-        let _ = BytecodeFile::parse_with_layout(bytes, HeaderLayout::Legacy, FunctionHeaderLayout::Legacy16);
-        let _ = BytecodeFile::parse_with_layout(bytes, HeaderLayout::Modern, FunctionHeaderLayout::Modern12);
-        let _ = BytecodeFile::parse_with_layout(bytes, HeaderLayout::Modern, FunctionHeaderLayout::Legacy16);
+        let _ = BytecodeFile::parse_with_layout(
+            bytes,
+            HeaderLayout::Legacy,
+            FunctionHeaderLayout::Legacy16,
+        );
+        let _ = BytecodeFile::parse_with_layout(
+            bytes,
+            HeaderLayout::Modern,
+            FunctionHeaderLayout::Modern12,
+        );
+        let _ = BytecodeFile::parse_with_layout(
+            bytes,
+            HeaderLayout::Modern,
+            FunctionHeaderLayout::Legacy16,
+        );
 
         if let Ok(file) = BytecodeFile::parse_auto(bytes) {
             if let Ok((format, _)) = BytecodeFormat::for_version_or_latest(file.header.version) {
@@ -130,7 +142,9 @@ fn fuzz_base(path: &str, f: &mut Findings) {
     // 5) Pseudo-random multi-byte flips (deterministic LCG, seeded per file).
     let mut state: u64 = 0x9E3779B97F4A7C15 ^ (base.len() as u64);
     let mut next = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         state >> 33
     };
     let iters: usize = std::env::var("FUZZ_FLIPS")

@@ -1,4 +1,4 @@
-use super::{Expression, PropertyKey, BinaryOp};
+use super::{BinaryOp, Expression, PropertyKey};
 use std::fmt;
 
 impl fmt::Display for PropertyKey {
@@ -22,7 +22,18 @@ fn escape_js_string(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            // Non-ASCII is escaped as on the value side: the Unicode line
+            // terminators are legal in a string since ES2019 but every
+            // line-based tool splits on them, and a lone surrogate survives
+            // only as an escape.
+            c if c.is_control() || !c.is_ascii() => {
+                let code = c as u32;
+                if code <= 0xFFFF {
+                    out.push_str(&format!("\\u{code:04x}"));
+                } else {
+                    out.push_str(&format!("\\u{{{code:x}}}"));
+                }
+            }
             c => out.push(c),
         }
     }
@@ -31,8 +42,17 @@ fn escape_js_string(s: &str) -> String {
 
 // The `#field` name behind a computed key, when the key is just that name. Any
 // other computed expression keeps bracket syntax.
+// The private name a property key spells, if it is one.
+pub fn private_field_name_of(key: &crate::ir::PropertyKey) -> Option<&str> {
+    match key {
+        crate::ir::PropertyKey::Computed(e) => private_field_name(e),
+        _ => None,
+    }
+}
+
 pub fn private_field_name(expr: &Expression) -> Option<&str> {
-    let Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(name))) = expr else {
+    let Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(name))) = expr
+    else {
         return None;
     };
     let rest = name.strip_prefix('#')?;
@@ -79,7 +99,9 @@ pub fn format_key(key: &PropertyKey) -> String {
 // Format a member access expression with a customizable computed-key formatter.
 // Display and Codegen share logic for Ident/String/Index; only Computed keys differ.
 pub fn format_member_access_with(
-    obj: &str, opt: &str, key: &PropertyKey,
+    obj: &str,
+    opt: &str,
+    key: &PropertyKey,
     format_computed: impl Fn(&Expression) -> String,
 ) -> String {
     match key {
@@ -123,7 +145,9 @@ fn format_property(prop: &super::ObjectProperty) -> String {
     use crate::ir::Value;
 
     if let PropertyKey::Ident(key_name) = &prop.key {
-        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(var_name))) = &prop.value {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(var_name))) =
+            &prop.value
+        {
             if key_name == var_name {
                 return key_name.clone();
             }
@@ -131,7 +155,11 @@ fn format_property(prop: &super::ObjectProperty) -> String {
     }
 
     if let PropertyKey::Ident(key_name) = &prop.key {
-        if let Expression::Function { name: Some(fn_name), .. } = &prop.value {
+        if let Expression::Function {
+            name: Some(fn_name),
+            ..
+        } = &prop.value
+        {
             if key_name == fn_name {
                 return format_expr(&prop.value);
             }
@@ -147,7 +175,11 @@ fn format_expr_with_parens(expr: &Expression, parent_prec: u8) -> String {
         _ => false,
     };
     let s = format_expr(expr);
-    if needs_parens { format!("({s})") } else { s }
+    if needs_parens {
+        format!("({s})")
+    } else {
+        s
+    }
 }
 
 fn join_exprs(exprs: &[Expression]) -> String {
@@ -165,7 +197,7 @@ fn format_call(callee: &Expression, arguments: &[Expression], extra_suffix: &str
         let is_trivial_this = matches!(
             first,
             Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::Undefined))
-            | Expression::Value(crate::ir::Value::Global)
+                | Expression::Value(crate::ir::Value::Global)
         ) || matches!(first, Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis");
 
         if is_trivial_this {
@@ -180,7 +212,12 @@ fn format_call(callee: &Expression, arguments: &[Expression], extra_suffix: &str
             if is_method_call {
                 format!("{}({}){}", callee_str, join_exprs(rest), extra_suffix)
             } else {
-                format!("{}.call({}){}", callee_str, join_exprs(arguments), extra_suffix)
+                format!(
+                    "{}.call({}){}",
+                    callee_str,
+                    join_exprs(arguments),
+                    extra_suffix
+                )
             }
         }
     } else {
@@ -206,14 +243,23 @@ pub fn format_expr(expr: &Expression) -> String {
         Expression::Unary { op, operand } => {
             format!("{op}{}", format_expr(operand))
         }
-        Expression::Conditional { condition, then_expr, else_expr } => {
-            format!("{} ? {} : {}",
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            format!(
+                "{} ? {} : {}",
                 format_expr(condition),
                 format_expr(then_expr),
                 format_expr(else_expr)
             )
         }
-        Expression::Member { object, property, optional } => {
+        Expression::Member {
+            object,
+            property,
+            optional,
+        } => {
             if !*optional {
                 if let Expression::Value(crate::ir::Value::Global) = &**object {
                     if let PropertyKey::Ident(name) = property {
@@ -222,7 +268,10 @@ pub fn format_expr(expr: &Expression) -> String {
                         }
                     }
                 }
-                if let Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(v))) = &**object {
+                if let Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+                    v,
+                ))) = &**object
+                {
                     if v == "globalThis" {
                         if let PropertyKey::Ident(name) = property {
                             if is_builtin_global(name) {
@@ -244,7 +293,12 @@ pub fn format_expr(expr: &Expression) -> String {
             format_member_access(&obj, opt, property)
         }
         Expression::Call { callee, arguments } => {
-            if let Expression::Member { object, property: super::PropertyKey::Ident(method), .. } = callee.as_ref() {
+            if let Expression::Member {
+                object,
+                property: super::PropertyKey::Ident(method),
+                ..
+            } = callee.as_ref()
+            {
                 if method == "apply" && arguments.len() >= 3 {
                     let args_str = format_expr(&arguments[arguments.len() - 1]);
                     if args_str == "arguments" {
@@ -258,7 +312,8 @@ pub fn format_expr(expr: &Expression) -> String {
             format!("new {}({})", format_expr(callee), join_exprs(arguments))
         }
         Expression::Array { elements } => {
-            let elems: Vec<String> = elements.iter()
+            let elems: Vec<String> = elements
+                .iter()
                 .map(|e| e.as_ref().map(format_expr).unwrap_or_default())
                 .collect();
             format!("[{}]", elems.join(", "))
@@ -271,21 +326,33 @@ pub fn format_expr(expr: &Expression) -> String {
                 format!("{{ {} }}", props.join(", "))
             }
         }
-        Expression::Function { id, name, is_arrow, is_async, is_generator } => {
+        Expression::Function {
+            id,
+            name,
+            is_arrow,
+            is_async,
+            is_generator,
+        } => {
             let async_prefix = if *is_async { "async " } else { "" };
             let gen_star = if *is_generator { "*" } else { "" };
             match (is_arrow, name) {
                 (true, Some(n)) => format!("{async_prefix}function {n}() {{ ... }}"),
                 (true, None) => format!("{async_prefix}() => {{ ... }}"),
                 (false, Some(n)) => format!("{async_prefix}function{gen_star} {n}() {{ ... }}"),
-                (false, None) => format!("/* F{} */ {}function{}() {{ ... }}", id.0, async_prefix, gen_star),
+                (false, None) => format!(
+                    "/* F{} */ {}function{}() {{ ... }}",
+                    id.0, async_prefix, gen_star
+                ),
             }
         }
         Expression::Assignment { target, value } => {
             format!("{target} = {}", format_expr(value))
         }
         Expression::Spread(inner) => format!("...{}", format_expr(inner)),
-        Expression::TemplateLiteral { quasis, expressions } => {
+        Expression::TemplateLiteral {
+            quasis,
+            expressions,
+        } => {
             let mut out = String::from("`");
             for (i, quasi) in quasis.iter().enumerate() {
                 out.push_str(quasi);
@@ -305,56 +372,161 @@ pub fn format_expr(expr: &Expression) -> String {
             }
         }
         Expression::Await(value) => format!("await {}", format_expr(value)),
-        Expression::JSXElement { tag, attributes, children } => {
+        Expression::JSXElement {
+            tag,
+            attributes,
+            children,
+        } => {
             let mut attrs = Vec::new();
             for (key, val) in attributes {
                 // If the value is a string constant without expressions, we could ideally render `key="value"`,
                 // but for simplicity we render `key={value}` until refinement.
                 attrs.push(format!("{}={{{}}}", key, format_expr(val)));
             }
-            let attr_str = if attrs.is_empty() { String::new() } else { format!(" {}", attrs.join(" ")) };
+            let attr_str = if attrs.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", attrs.join(" "))
+            };
 
             if children.is_empty() {
                 format!("<{tag}{attr_str} />")
             } else {
-                let child_str = children.iter().map(format_expr).collect::<Vec<_>>().join("");
+                let child_str = children
+                    .iter()
+                    .map(format_expr)
+                    .collect::<Vec<_>>()
+                    .join("");
                 format!("<{tag}{attr_str}>{child_str}</{tag}>")
             }
         }
-        Expression::Unknown { opcode, operands } => format!("/* {} {} */", opcode, operands.join(", ")),
+        Expression::Unknown { opcode, operands } => {
+            format!("/* {} {} */", opcode, operands.join(", "))
+        }
     }
 }
 
 pub fn is_builtin_global(name: &str) -> bool {
-    matches!(name,
-        "Object" | "Array" | "Function" | "String" | "Number" | "Boolean" | "Symbol" |
-        "Math" | "JSON" | "Date" | "RegExp" | "Promise" | "Proxy" | "Reflect" |
-        "Map" | "Set" | "WeakMap" | "WeakSet" | "WeakRef" |
-        "Error" | "TypeError" | "RangeError" | "ReferenceError" | "SyntaxError" | "URIError" | "EvalError" |
-        "ArrayBuffer" | "SharedArrayBuffer" | "DataView" |
-        "Int8Array" | "Uint8Array" | "Uint8ClampedArray" |
-        "Int16Array" | "Uint16Array" | "Int32Array" | "Uint32Array" |
-        "Float32Array" | "Float64Array" | "BigInt64Array" | "BigUint64Array" |
-        "BigInt" | "Intl" | "Atomics" |
-        "console" | "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval" |
-        "parseInt" | "parseFloat" | "isNaN" | "isFinite" |
-        "encodeURI" | "decodeURI" | "encodeURIComponent" | "decodeURIComponent" |
-        "NaN" | "Infinity" | "undefined" |
-        "queueMicrotask" | "structuredClone" | "atob" | "btoa" |
-        "fetch" | "Request" | "Response" | "Headers" | "URL" | "URLSearchParams" |
-        "TextEncoder" | "TextDecoder" | "AbortController" | "AbortSignal" |
-        "FormData" | "Blob" | "File" | "FileReader" |
-        "performance" | "navigator" | "location" | "document" | "window" |
-        "alert" | "confirm" | "prompt" |
-        "HermesInternal" | "HermesBuiltin" | "__DEV__" | "ErrorUtils" | "__d" | "__r" |
-        "requestAnimationFrame" | "cancelAnimationFrame" |
-        "requestIdleCallback" | "cancelIdleCallback" |
-        "setImmediate" | "clearImmediate" |
-        "reportError" | "global" | "self" | "globalThis" |
-        "process" | "Buffer" | "module" | "exports" | "require" |
-        "WebSocket" | "XMLHttpRequest" | "Event" | "EventTarget" |
-        "ReadableStream" | "WritableStream" | "TransformStream" |
-        "DOMRect" | "DOMRectReadOnly" | "crypto" | "unescape" | "escape"
+    matches!(
+        name,
+        "Object"
+            | "Array"
+            | "Function"
+            | "String"
+            | "Number"
+            | "Boolean"
+            | "Symbol"
+            | "Math"
+            | "JSON"
+            | "Date"
+            | "RegExp"
+            | "Promise"
+            | "Proxy"
+            | "Reflect"
+            | "Map"
+            | "Set"
+            | "WeakMap"
+            | "WeakSet"
+            | "WeakRef"
+            | "Error"
+            | "TypeError"
+            | "RangeError"
+            | "ReferenceError"
+            | "SyntaxError"
+            | "URIError"
+            | "EvalError"
+            | "ArrayBuffer"
+            | "SharedArrayBuffer"
+            | "DataView"
+            | "Int8Array"
+            | "Uint8Array"
+            | "Uint8ClampedArray"
+            | "Int16Array"
+            | "Uint16Array"
+            | "Int32Array"
+            | "Uint32Array"
+            | "Float32Array"
+            | "Float64Array"
+            | "BigInt64Array"
+            | "BigUint64Array"
+            | "BigInt"
+            | "Intl"
+            | "Atomics"
+            | "console"
+            | "setTimeout"
+            | "setInterval"
+            | "clearTimeout"
+            | "clearInterval"
+            | "parseInt"
+            | "parseFloat"
+            | "isNaN"
+            | "isFinite"
+            | "encodeURI"
+            | "decodeURI"
+            | "encodeURIComponent"
+            | "decodeURIComponent"
+            | "NaN"
+            | "Infinity"
+            | "undefined"
+            | "queueMicrotask"
+            | "structuredClone"
+            | "atob"
+            | "btoa"
+            | "fetch"
+            | "Request"
+            | "Response"
+            | "Headers"
+            | "URL"
+            | "URLSearchParams"
+            | "TextEncoder"
+            | "TextDecoder"
+            | "AbortController"
+            | "AbortSignal"
+            | "FormData"
+            | "Blob"
+            | "File"
+            | "FileReader"
+            | "performance"
+            | "navigator"
+            | "location"
+            | "document"
+            | "window"
+            | "alert"
+            | "confirm"
+            | "prompt"
+            | "HermesInternal"
+            | "HermesBuiltin"
+            | "__DEV__"
+            | "ErrorUtils"
+            | "__d"
+            | "__r"
+            | "requestAnimationFrame"
+            | "cancelAnimationFrame"
+            | "requestIdleCallback"
+            | "cancelIdleCallback"
+            | "setImmediate"
+            | "clearImmediate"
+            | "reportError"
+            | "global"
+            | "self"
+            | "globalThis"
+            | "process"
+            | "Buffer"
+            | "module"
+            | "exports"
+            | "require"
+            | "WebSocket"
+            | "XMLHttpRequest"
+            | "Event"
+            | "EventTarget"
+            | "ReadableStream"
+            | "WritableStream"
+            | "TransformStream"
+            | "DOMRect"
+            | "DOMRectReadOnly"
+            | "crypto"
+            | "unescape"
+            | "escape"
     )
 }
 
@@ -418,17 +590,20 @@ mod tests {
     fn special_property_names_use_brackets() {
         use crate::ir::Value;
         let expr = Expression::Member {
-            object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj".into())))),
+            object: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("obj".into()),
+            ))),
             property: PropertyKey::Ident("#private".into()),
             optional: false,
         };
         assert_eq!(format!("{expr}"), "obj[\"#private\"]");
         let expr = Expression::Member {
-            object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("obj".into())))),
+            object: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("obj".into()),
+            ))),
             property: PropertyKey::Ident("@wry/context:Slot".into()),
             optional: false,
         };
         assert_eq!(format!("{expr}"), "obj[\"@wry/context:Slot\"]");
     }
 }
-

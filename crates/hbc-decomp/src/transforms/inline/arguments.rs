@@ -11,7 +11,9 @@
 //   const array = [...arguments];
 //   BODY
 
-use crate::ir::{Binding, map_nested_bodies_mut, AssignTarget, Expression, Statement, Value, VarKind};
+use crate::ir::{
+    map_nested_bodies_mut, AssignTarget, Binding, Expression, Statement, Value, VarKind,
+};
 
 // Simplify Babel arguments-to-array copy pattern.
 pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
@@ -22,10 +24,21 @@ pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
         // Try to detect: length = arguments.length
         let length_var = match &stmt {
             Statement::Let { name, value, .. } => {
-                if is_arguments_length(value) { Some(name.clone()) } else { None }
+                if is_arguments_length(value) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
             }
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
-                if is_arguments_length(value) { Some(name.clone()) } else { None }
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable(name)),
+                value,
+            } => {
+                if is_arguments_length(value) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
             }
             _ => None,
         };
@@ -37,12 +50,19 @@ pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
                     Statement::Let { name, value, kind } => {
                         if is_empty_new_array(value) {
                             Some((name.clone(), true, Some(*kind)))
-                        } else { None }
+                        } else {
+                            None
+                        }
                     }
-                    Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
+                    Statement::Assign {
+                        target: AssignTarget::Binding(Binding::Variable(name)),
+                        value,
+                    } => {
                         if is_empty_new_array(value) {
                             Some((name.clone(), false, None))
-                        } else { None }
+                        } else {
+                            None
+                        }
                     }
                     _ => None,
                 };
@@ -52,14 +72,17 @@ pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
 
                     // Check next: if (0 >= length) { BODY } else { COPY_LOOP }
                     if let Some(if_stmt) = iter.peek() {
-                        let body_opt = extract_arguments_copy_body(if_stmt, &length_name, &array_name);
+                        let body_opt =
+                            extract_arguments_copy_body(if_stmt, &length_name, &array_name);
                         if let Some(body) = body_opt {
                             iter.next(); // consume if/else
 
                             // Emit: array = [...arguments]
                             let spread_args = Expression::Array {
                                 elements: vec![Some(Expression::Spread(Box::new(
-                                    Expression::Value(Value::Binding(Binding::Variable("arguments".to_string())))
+                                    Expression::Value(Value::Binding(Binding::Variable(
+                                        "arguments".to_string(),
+                                    ))),
                                 )))],
                             };
                             if is_let {
@@ -95,7 +118,9 @@ pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
                         Statement::Let {
                             name: array_name,
                             value: Expression::New {
-                                callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("Array".to_string())))),
+                                callee: Box::new(Expression::Value(Value::Binding(
+                                    Binding::Variable("Array".to_string()),
+                                ))),
                                 arguments: vec![],
                             },
                             kind: var_kind.unwrap_or(VarKind::Const),
@@ -104,7 +129,9 @@ pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
                         Statement::Assign {
                             target: AssignTarget::Binding(Binding::Variable(array_name)),
                             value: Expression::New {
-                                callee: Box::new(Expression::Value(Value::Binding(Binding::Variable("Array".to_string())))),
+                                callee: Box::new(Expression::Value(Value::Binding(
+                                    Binding::Variable("Array".to_string()),
+                                ))),
                                 arguments: vec![],
                             },
                         }
@@ -131,7 +158,12 @@ pub fn simplify_arguments_copy(stmts: Vec<Statement>) -> Vec<Statement> {
 
 // Check if expression is `arguments.length`
 fn is_arguments_length(expr: &Expression) -> bool {
-    if let Expression::Member { object, property: crate::ir::PropertyKey::Ident(prop), .. } = expr {
+    if let Expression::Member {
+        object,
+        property: crate::ir::PropertyKey::Ident(prop),
+        ..
+    } = expr
+    {
         if prop == "length" {
             return matches!(&**object,
                 Expression::Value(Value::Binding(Binding::Variable(v))) if v == "arguments"
@@ -149,11 +181,14 @@ fn is_empty_new_array(expr: &Expression) -> bool {
         }
         return match &**callee {
             Expression::Value(Value::Binding(Binding::Variable(v))) => v == "Array",
-            Expression::Member { object, property: crate::ir::PropertyKey::Ident(prop), .. } => {
-                prop == "Array" && (
-                    matches!(&**object, Expression::Value(Value::Global))
-                    || matches!(&**object, Expression::Value(Value::Binding(Binding::Variable(v))) if v == "globalThis")
-                )
+            Expression::Member {
+                object,
+                property: crate::ir::PropertyKey::Ident(prop),
+                ..
+            } => {
+                prop == "Array"
+                    && (matches!(&**object, Expression::Value(Value::Global))
+                        || matches!(&**object, Expression::Value(Value::Binding(Binding::Variable(v))) if v == "globalThis"))
             }
             _ => false,
         };
@@ -164,28 +199,46 @@ fn is_empty_new_array(expr: &Expression) -> bool {
 // Extract BODY from `if (!(0 < length)) { BODY } else { COPY_LOOP }` pattern.
 // Also handles `if (0 >= length)` and `if (length <= 0)` forms.
 // Returns the then-branch body if the pattern matches.
-fn extract_arguments_copy_body(stmt: &Statement, length_name: &str, _array_name: &str) -> Option<Vec<Statement>> {
-    if let Statement::If { condition, then_body, else_body } = stmt {
+fn extract_arguments_copy_body(
+    stmt: &Statement,
+    length_name: &str,
+    _array_name: &str,
+) -> Option<Vec<Statement>> {
+    if let Statement::If {
+        condition,
+        then_body,
+        else_body,
+    } = stmt
+    {
         // Check condition: 0 >= length (or length <= 0 or !(0 < length))
         let is_zero_ge_length = match condition {
-            Expression::Binary { op: crate::ir::BinaryOp::Ge, left, right } => {
-                is_zero_or_const(left) && is_var_named(right, length_name)
-            }
-            Expression::Binary { op: crate::ir::BinaryOp::Le, left, right } => {
-                is_var_named(left, length_name) && is_zero_or_const(right)
-            }
+            Expression::Binary {
+                op: crate::ir::BinaryOp::Ge,
+                left,
+                right,
+            } => is_zero_or_const(left) && is_var_named(right, length_name),
+            Expression::Binary {
+                op: crate::ir::BinaryOp::Le,
+                left,
+                right,
+            } => is_var_named(left, length_name) && is_zero_or_const(right),
             // !(0 < length) -- structure recovery often emits this form
-            Expression::Unary { op: crate::ir::UnaryOp::Not, operand } => {
-                match &**operand {
-                    Expression::Binary { op: crate::ir::BinaryOp::Lt, left, right } => {
-                        is_zero_or_const(left) && is_var_named(right, length_name)
-                    }
-                    Expression::Binary { op: crate::ir::BinaryOp::Gt, left, right } => {
-                        is_var_named(left, length_name) && is_zero_or_const(right)
-                    }
-                    _ => false,
-                }
-            }
+            Expression::Unary {
+                op: crate::ir::UnaryOp::Not,
+                operand,
+            } => match &**operand {
+                Expression::Binary {
+                    op: crate::ir::BinaryOp::Lt,
+                    left,
+                    right,
+                } => is_zero_or_const(left) && is_var_named(right, length_name),
+                Expression::Binary {
+                    op: crate::ir::BinaryOp::Gt,
+                    left,
+                    right,
+                } => is_var_named(left, length_name) && is_zero_or_const(right),
+                _ => false,
+            },
             _ => false,
         };
 
@@ -194,11 +247,10 @@ fn extract_arguments_copy_body(stmt: &Statement, length_name: &str, _array_name:
         }
 
         // Check else_body has the copy loop pattern (arguments reference + while loop)
-        let has_copy_pattern = else_body.iter().any(|s| {
-            matches!(s, Statement::While { .. })
-        }) && else_body.iter().any(|s| {
-            stmt_references_arguments(s)
-        });
+        let has_copy_pattern = else_body
+            .iter()
+            .any(|s| matches!(s, Statement::While { .. }))
+            && else_body.iter().any(stmt_references_arguments);
 
         if has_copy_pattern {
             return Some(then_body.clone());
@@ -251,9 +303,7 @@ fn expr_references_arguments(expr: &Expression) -> bool {
         Expression::Call { callee, arguments } => {
             expr_references_arguments(callee) || arguments.iter().any(expr_references_arguments)
         }
-        Expression::Array { elements } => {
-            elements.iter().flatten().any(expr_references_arguments)
-        }
+        Expression::Array { elements } => elements.iter().flatten().any(expr_references_arguments),
         _ => false,
     }
 }

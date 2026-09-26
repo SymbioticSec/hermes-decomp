@@ -1,11 +1,15 @@
 // Variable definition/use counting and substitution functions for named variable inlining.
 
-use crate::ir::{Binding, AssignTarget, Expression, MutVisitor, Statement, Value, Visitor};
+use crate::ir::{AssignTarget, Binding, Expression, MutVisitor, Statement, Value, Visitor};
 use std::collections::BTreeMap;
 
 // --- Counting ---
 
-pub(super) fn count_var_defs_uses(stmts: &[Statement], defs: &mut BTreeMap<String, usize>, uses: &mut BTreeMap<String, usize>) {
+pub(super) fn count_var_defs_uses(
+    stmts: &[Statement],
+    defs: &mut BTreeMap<String, usize>,
+    uses: &mut BTreeMap<String, usize>,
+) {
     let mut counter = VarCounter { defs, uses };
     for stmt in stmts {
         counter.visit_statement(stmt);
@@ -49,7 +53,10 @@ impl<'a, 'c> Visitor<'a> for VarCounter<'c> {
 
 // --- Substitution ---
 
-pub(super) fn substitute_vars_in_expr(expr: &mut Expression, pending: &BTreeMap<String, Expression>) {
+pub(super) fn substitute_vars_in_expr(
+    expr: &mut Expression,
+    pending: &BTreeMap<String, Expression>,
+) {
     let mut substitutor = VarSubstitutor { pending };
     substitutor.visit_expression(expr);
 }
@@ -71,7 +78,10 @@ impl<'p> MutVisitor for VarSubstitutor<'p> {
 
 // --- Apply pending to statement ---
 
-pub(super) fn apply_pending_to_stmt(stmt: &mut Statement, pending: &mut BTreeMap<String, Expression>) {
+pub(super) fn apply_pending_to_stmt(
+    stmt: &mut Statement,
+    pending: &mut BTreeMap<String, Expression>,
+) {
     match stmt {
         Statement::Assign { target, value } => {
             apply_pending_to_target(target, pending);
@@ -82,6 +92,13 @@ pub(super) fn apply_pending_to_stmt(stmt: &mut Statement, pending: &mut BTreeMap
         Statement::Let { value, .. } => {
             substitute_vars_in_expr(value, pending);
             remove_used_from_pending(value, pending);
+        }
+        Statement::Class {
+            super_class: Some(sc),
+            ..
+        } => {
+            substitute_vars_in_expr(sc, pending);
+            remove_used_from_pending(sc, pending);
         }
         Statement::Expr(e) => {
             substitute_vars_in_expr(e, pending);
@@ -94,6 +111,10 @@ pub(super) fn apply_pending_to_stmt(stmt: &mut Statement, pending: &mut BTreeMap
         Statement::Throw(e) => {
             substitute_vars_in_expr(e, pending);
             remove_used_from_pending(e, pending);
+        }
+        Statement::Delete { target, .. } => {
+            substitute_vars_in_expr(target, pending);
+            remove_used_from_pending(target, pending);
         }
         _ => {
             // For structured statements (if/while/for/etc.), flush all pending first
@@ -113,7 +134,10 @@ fn apply_pending_to_target(target: &mut AssignTarget, pending: &mut BTreeMap<Str
     }
 }
 
-pub(super) fn flush_pending(pending: &mut BTreeMap<String, Expression>, result: &mut Vec<Statement>) {
+pub(super) fn flush_pending(
+    pending: &mut BTreeMap<String, Expression>,
+    result: &mut Vec<Statement>,
+) {
     let items = std::mem::take(pending);
     for (name, value) in items {
         result.push(Statement::Assign {
@@ -125,7 +149,10 @@ pub(super) fn flush_pending(pending: &mut BTreeMap<String, Expression>, result: 
 
 // Collect all variable names referenced in an expression using the Visitor trait,
 // then remove them from the pending map.
-fn remove_used_from_pending(expr: &Expression, pending: &mut BTreeMap<String, Expression>) {
+pub(super) fn remove_used_from_pending(
+    expr: &Expression,
+    pending: &mut BTreeMap<String, Expression>,
+) {
     struct UsedVarCollector {
         names: Vec<String>,
     }

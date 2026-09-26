@@ -21,7 +21,7 @@
 
 use super::{is_iterator_call, unwrap_iterator_body};
 use crate::analysis::rename_registers;
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
 use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 
@@ -31,7 +31,11 @@ pub fn detect_legacy_for_of(stmts: Vec<Statement>) -> Vec<Statement> {
     // Build a register -> defining-expression map for this statement level.
     let mut defs: HashMap<u32, Expression> = HashMap::new();
     for s in &stmts {
-        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = s {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            value,
+        } = s
+        {
             defs.insert(*r, value.clone());
         }
     }
@@ -70,7 +74,11 @@ pub fn detect_legacy_for_of(stmts: Vec<Statement>) -> Vec<Statement> {
             continue;
         }
         // Drop statements that define a protocol register.
-        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. } = &s {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            ..
+        } = &s
+        {
             if m.protocol_regs.contains(r) {
                 continue;
             }
@@ -99,28 +107,37 @@ fn match_legacy_for_of(
     use crate::ir::UnaryOp;
     // condition: `!done`
     let done_reg = match condition {
-        Expression::Unary { op: UnaryOp::Not, operand } => reg_of(operand)?,
+        Expression::Unary {
+            op: UnaryOp::Not,
+            operand,
+        } => reg_of(operand)?,
         _ => return None,
     };
     // done = result.done
     let result_reg = match defs.get(&done_reg)? {
-        Expression::Member { object, property: PropertyKey::Ident(p), .. } if p == "done" => {
-            reg_of(object)?
-        }
+        Expression::Member {
+            object,
+            property: PropertyKey::Ident(p),
+            ..
+        } if p == "done" => reg_of(object)?,
         _ => return None,
     };
     // body[0]: value = result.value
     let (value_reg, rest) = match body.split_first()? {
-        (Statement::Assign { target: AssignTarget::Binding(Binding::Register(v)), value }, rest) => {
-            match value {
-                Expression::Member { object, property: PropertyKey::Ident(p), .. }
-                    if p == "value" && reg_of(object) == Some(result_reg) =>
-                {
-                    (*v, rest)
-                }
-                _ => return None,
-            }
-        }
+        (
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Register(v)),
+                value,
+            },
+            rest,
+        ) => match value {
+            Expression::Member {
+                object,
+                property: PropertyKey::Ident(p),
+                ..
+            } if p == "value" && reg_of(object) == Some(result_reg) => (*v, rest),
+            _ => return None,
+        },
         _ => return None,
     };
 
@@ -135,15 +152,18 @@ fn match_legacy_for_of(
                 // next.call(iter): callee is a register holding `iter.next`
                 protocol_regs.insert(next_reg);
                 match defs.get(&next_reg)? {
-                    Expression::Member { object, property: PropertyKey::Ident(p), .. }
-                        if p == "next" =>
-                    {
-                        reg_of(object)?
-                    }
+                    Expression::Member {
+                        object,
+                        property: PropertyKey::Ident(p),
+                        ..
+                    } if p == "next" => reg_of(object)?,
                     _ => return None,
                 }
-            } else if let Expression::Member { object, property: PropertyKey::Ident(p), .. } =
-                callee.as_ref()
+            } else if let Expression::Member {
+                object,
+                property: PropertyKey::Ident(p),
+                ..
+            } = callee.as_ref()
             {
                 // iter.next() directly
                 if p != "next" {
@@ -168,11 +188,11 @@ fn match_legacy_for_of(
             let access_reg = reg_of(callee)?;
             protocol_regs.insert(access_reg);
             match defs.get(&access_reg)? {
-                Expression::Member { object, property: PropertyKey::Computed(c), .. }
-                    if is_symbol_iterator(c, defs, &mut protocol_regs) =>
-                {
-                    (**object).clone()
-                }
+                Expression::Member {
+                    object,
+                    property: PropertyKey::Computed(c),
+                    ..
+                } if is_symbol_iterator(c, defs, &mut protocol_regs) => (**object).clone(),
                 _ => return None,
             }
         }
@@ -201,7 +221,12 @@ fn match_legacy_for_of(
     // try/return iterator-cleanup wrapper around the body.
     let loop_body = unwrap_iterator_body(rest, iter_reg);
 
-    Some(LegacyForOf { iterable, value_reg, protocol_regs, loop_body })
+    Some(LegacyForOf {
+        iterable,
+        value_reg,
+        protocol_regs,
+        loop_body,
+    })
 }
 
 // `c` is `Symbol.iterator` (possibly via a register holding it). Records any
@@ -248,7 +273,11 @@ fn is_ensure_object_stmt(s: &Statement) -> bool {
         _ => return false,
     };
     if let Expression::Call { callee, .. } = expr {
-        if let Expression::Member { property: PropertyKey::Ident(p), .. } = callee.as_ref() {
+        if let Expression::Member {
+            property: PropertyKey::Ident(p),
+            ..
+        } = callee.as_ref()
+        {
             return p == "ensureObject";
         }
     }
@@ -267,36 +296,56 @@ fn recurse_legacy(stmts: Vec<Statement>) -> Vec<Statement> {
                 body: detect_legacy_for_of(body),
                 condition,
             },
-            Statement::If { condition, then_body, else_body } => Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => Statement::If {
                 condition,
                 then_body: detect_legacy_for_of(then_body),
                 else_body: detect_legacy_for_of(else_body),
             },
-            Statement::For { init, condition, update, body } => Statement::For {
+            Statement::For {
+                init,
+                condition,
+                update,
+                body,
+            } => Statement::For {
                 init,
                 condition,
                 update,
                 body: detect_legacy_for_of(body),
             },
-            Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+            Statement::ForOf {
+                variable,
+                iterable,
+                body,
+            } => Statement::ForOf {
                 variable,
                 iterable,
                 body: detect_legacy_for_of(body),
             },
-            Statement::ForIn { variable, object, body } => Statement::ForIn {
+            Statement::ForIn {
+                variable,
+                object,
+                body,
+            } => Statement::ForIn {
                 variable,
                 object,
                 body: detect_legacy_for_of(body),
             },
             Statement::Block(inner) => Statement::Block(detect_legacy_for_of(inner)),
-            Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => {
-                Statement::TryCatch {
-                    try_body: detect_legacy_for_of(try_body),
-                    catch_param,
-                    catch_body: detect_legacy_for_of(catch_body),
-                    finally_body: detect_legacy_for_of(finally_body),
-                }
-            }
+            Statement::TryCatch {
+                try_body,
+                catch_param,
+                catch_body,
+                finally_body,
+            } => Statement::TryCatch {
+                try_body: detect_legacy_for_of(try_body),
+                catch_param,
+                catch_body: detect_legacy_for_of(catch_body),
+                finally_body: detect_legacy_for_of(finally_body),
+            },
             other => other,
         })
         .collect()

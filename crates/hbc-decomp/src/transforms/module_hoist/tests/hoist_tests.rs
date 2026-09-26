@@ -75,7 +75,10 @@ fn hoist_rewrites_nested_import_default_and_injects() {
             ..
         } => {
             assert!(
-                matches!(object.as_ref(), Expression::Value(Value::Binding(crate::ir::Binding::Variable(_)))),
+                matches!(
+                    object.as_ref(),
+                    Expression::Value(Value::Binding(crate::ir::Binding::Variable(_)))
+                ),
                 "importDefault(530) should be rewritten to a binding, got {object:?}"
             );
         }
@@ -148,7 +151,9 @@ fn reuses_existing_assign_binding() {
         Statement::Expr(Expression::Member { object, .. }) => {
             assert_eq!(
                 object.as_ref(),
-                &Expression::Value(Value::Binding(crate::ir::Binding::Variable("HTTPUtils".into())))
+                &Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                    "HTTPUtils".into()
+                )))
             );
         }
         other => panic!("expected rewritten member: {other:?}"),
@@ -397,6 +402,7 @@ fn does_not_treat_sibling_factory_as_descendant() {
         dependencies: vec![99],
         exports: HashMap::new(),
         roles: FactoryRoles::from_param_count(7),
+        name_from_default_export: false,
     };
     reg.function_to_module.insert(factory_b, 20);
     reg.factories.insert(factory_b, sibling.clone());

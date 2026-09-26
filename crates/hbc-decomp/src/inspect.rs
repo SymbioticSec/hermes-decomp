@@ -197,12 +197,18 @@ pub fn dump_table(file: &BytecodeFile, kind: TableKind) -> String {
                 "literal_value_buffer: {} bytes\n",
                 file.literal_value_buffer.len()
             ));
-            out.push_str(&format!("obj_key_buffer: {} bytes\n", file.obj_key_buffer.len()));
+            out.push_str(&format!(
+                "obj_key_buffer: {} bytes\n",
+                file.obj_key_buffer.len()
+            ));
             out.push_str(&format!(
                 "obj_value_buffer: {} bytes\n",
                 file.obj_value_buffer.len()
             ));
-            out.push_str(&format!("preview: [{}]\n", hex_preview(&file.array_buffer, 32)));
+            out.push_str(&format!(
+                "preview: [{}]\n",
+                hex_preview(&file.array_buffer, 32)
+            ));
         }
     }
     out
@@ -377,11 +383,7 @@ fn fn_name(file: &BytecodeFile, id: u32) -> String {
 }
 
 // Restrict an edge map to nodes reachable from `root` within `depth` hops.
-fn reachable_within(
-    calls: &BTreeMap<u32, Vec<u32>>,
-    root: u32,
-    depth: usize,
-) -> BTreeSet<u32> {
+fn reachable_within(calls: &BTreeMap<u32, Vec<u32>>, root: u32, depth: usize) -> BTreeSet<u32> {
     let mut keep = BTreeSet::new();
     keep.insert(root);
     let mut queue: VecDeque<(u32, usize)> = VecDeque::new();
@@ -417,11 +419,9 @@ pub fn render_call_graph(
     let calls = &analysis.graph.calls;
 
     // Determine which nodes (callers) we render edges for.
-    let allowed: Option<BTreeSet<u32>> =
-        root.map(|r| reachable_within(calls, r, depth));
+    let allowed: Option<BTreeSet<u32>> = root.map(|r| reachable_within(calls, r, depth));
 
-    let node_allowed =
-        |id: u32| allowed.as_ref().map(|s| s.contains(&id)).unwrap_or(true);
+    let node_allowed = |id: u32| allowed.as_ref().map(|s| s.contains(&id)).unwrap_or(true);
 
     let mut out = String::new();
 

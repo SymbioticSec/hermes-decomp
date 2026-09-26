@@ -1,11 +1,11 @@
 // defineProperty-based module name inference.
 
-use crate::analysis::metro::registry::FactoryRoles;
 use super::inference::infer_from_expr;
 use crate::analysis::metro::detection::is_meaningful_name;
+use crate::analysis::metro::registry::FactoryRoles;
 use crate::ir::{target_to_key, Expression, PropertyKey, Statement, Value};
-use std::collections::HashMap;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 // Try to infer a module name from a defineProperty(exports, "name", descriptor) call.
 pub(super) fn infer_name_from_define_property(
@@ -28,18 +28,26 @@ pub(super) fn infer_name_from_define_property(
         }
         _ => false,
     };
-    if !is_define_prop { return None; }
+    if !is_define_prop {
+        return None;
+    }
 
     // Determine argument layout (with or without this-arg)
     let (name_idx, desc_idx) = if arguments.len() == 3 {
         (1, 2)
     } else if arguments.len() >= 4 {
         let first_is_exports = match &arguments[0] {
-            Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => FactoryRoles::matches_exports_name(n),
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => {
+                FactoryRoles::matches_exports_name(n)
+            }
             Expression::Value(Value::Parameter(idx)) if FactoryRoles::is_exports_idx(*idx) => true,
             _ => false,
         };
-        if first_is_exports { (1, 2) } else { (2, 3) }
+        if first_is_exports {
+            (1, 2)
+        } else {
+            (2, 3)
+        }
     } else {
         return None;
     };
@@ -50,13 +58,19 @@ pub(super) fn infer_name_from_define_property(
         _ => return None,
     };
 
-    if prop_name == "__esModule" { return None; }
+    if prop_name == "__esModule" {
+        return None;
+    }
 
     // Try to extract the exported value/function name from the descriptor
     let descriptor = &arguments[desc_idx];
     let resolved_descriptor = match descriptor {
-        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => var_defs.get(name.as_str()).copied(),
-        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => var_defs.get(&format!("r{r}")).copied(),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
+            var_defs.get(name.as_str()).copied()
+        }
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
+            var_defs.get(&format!("r{r}")).copied()
+        }
         _ => Some(descriptor),
     };
 
@@ -75,7 +89,8 @@ pub(super) fn infer_name_from_define_property(
                         if let Expression::Function { id, .. } = &prop.value {
                             if visited.insert(id.0) {
                                 if let Some(body) = functions.get(&id.0) {
-                                    let mut getter_defs: HashMap<String, &Expression> = HashMap::new();
+                                    let mut getter_defs: HashMap<String, &Expression> =
+                                        HashMap::new();
                                     for stmt in body {
                                         match stmt {
                                             Statement::Assign { target, value } => {
@@ -92,24 +107,35 @@ pub(super) fn infer_name_from_define_property(
 
                                     for stmt in body {
                                         if let Statement::Return(Some(ret_val)) = stmt {
-                                            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) = ret_val {
+                                            if let Expression::Value(Value::Binding(
+                                                crate::ir::Binding::Variable(v),
+                                            )) = ret_val
+                                            {
                                                 if is_meaningful_name(v) {
                                                     return Some(v.clone());
                                                 }
                                             }
                                             let ret_key = match ret_val {
-                                                Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
-                                                Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) => Some(v.clone()),
+                                                Expression::Value(Value::Binding(
+                                                    crate::ir::Binding::Register(r),
+                                                )) => Some(format!("r{r}")),
+                                                Expression::Value(Value::Binding(
+                                                    crate::ir::Binding::Variable(v),
+                                                )) => Some(v.clone()),
                                                 _ => None,
                                             };
                                             if let Some(key) = ret_key {
                                                 if let Some(def_expr) = getter_defs.get(&key) {
-                                                    if let Some(name) = infer_from_expr(def_expr, functions, visited) {
+                                                    if let Some(name) = infer_from_expr(
+                                                        def_expr, functions, visited,
+                                                    ) {
                                                         return Some(name);
                                                     }
                                                 }
                                                 if let Some(def_expr) = var_defs.get(&key) {
-                                                    if let Some(name) = infer_from_expr(def_expr, functions, visited) {
+                                                    if let Some(name) = infer_from_expr(
+                                                        def_expr, functions, visited,
+                                                    ) {
                                                         return Some(name);
                                                     }
                                                 }
@@ -124,7 +150,9 @@ pub(super) fn infer_name_from_define_property(
                         if let Some(name) = infer_from_expr(&prop.value, functions, visited) {
                             return Some(name);
                         }
-                        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) = &prop.value {
+                        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) =
+                            &prop.value
+                        {
                             if is_meaningful_name(v) {
                                 return Some(v.clone());
                             }
@@ -145,9 +173,7 @@ pub(super) fn infer_name_from_define_property(
 }
 
 // For unnamed modules, try to infer a name from the first meaningful named export property.
-pub(super) fn infer_name_from_all_define_properties(
-    stmts: &[Statement],
-) -> Option<String> {
+pub(super) fn infer_name_from_all_define_properties(stmts: &[Statement]) -> Option<String> {
     use crate::ir::Constant;
 
     let mut first_named_export: Option<String> = None;
@@ -161,22 +187,36 @@ pub(super) fn infer_name_from_all_define_properties(
                     }
                     _ => false,
                 };
-                if !is_define_prop { continue; }
+                if !is_define_prop {
+                    continue;
+                }
 
                 let name_idx = if arguments.len() == 3 {
                     1
                 } else if arguments.len() >= 4 {
                     let first_is_exports = match &arguments[0] {
-                        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => FactoryRoles::matches_exports_name(n),
-                        Expression::Value(Value::Parameter(idx)) if FactoryRoles::is_exports_idx(*idx) => true,
+                        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => {
+                            FactoryRoles::matches_exports_name(n)
+                        }
+                        Expression::Value(Value::Parameter(idx))
+                            if FactoryRoles::is_exports_idx(*idx) =>
+                        {
+                            true
+                        }
                         _ => false,
                     };
-                    if first_is_exports { 1 } else { 2 }
+                    if first_is_exports {
+                        1
+                    } else {
+                        2
+                    }
                 } else {
                     continue;
                 };
 
-                if let Expression::Value(Value::Constant(Constant::String(s))) = &arguments[name_idx] {
+                if let Expression::Value(Value::Constant(Constant::String(s))) =
+                    &arguments[name_idx]
+                {
                     if s != "__esModule" && s != "default" && is_meaningful_name(s) {
                         if first_named_export.is_none() {
                             first_named_export = Some(s.clone());

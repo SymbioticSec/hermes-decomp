@@ -1,14 +1,17 @@
 // Metro registry + parallel optimized IR generation.
-use std::collections::BTreeMap;
+use super::super::{apply_register_naming, generate_ir, DecompileOptionsV2};
+use super::PipelineContext;
 use crate::file::BytecodeFile;
 use crate::ir::Statement;
 use crate::opcode::BytecodeFormat;
 use crate::transforms;
-use super::super::{apply_register_naming, generate_ir, DecompileOptionsV2};
-use super::PipelineContext;
+use std::collections::BTreeMap;
 
 impl PipelineContext {
-    pub(super) fn build_metro_registry(file: &BytecodeFile, format: &BytecodeFormat) -> crate::analysis::MetroRegistry {
+    pub(super) fn build_metro_registry(
+        file: &BytecodeFile,
+        format: &BytecodeFormat,
+    ) -> crate::analysis::MetroRegistry {
         let t = std::time::Instant::now();
         let raw_options = DecompileOptionsV2 {
             resolve_strings: true,
@@ -29,7 +32,11 @@ impl PipelineContext {
         if let Ok(stmts) = generate_ir(file, format, global_idx, &raw_options, None, false) {
             registry.analyze_statements_with_params(&stmts, &param_counts);
         }
-        log::debug!("[pipeline] metro detection: {:.2?} ({} modules)", t.elapsed(), registry.modules.len());
+        log::debug!(
+            "[pipeline] metro detection: {:.2?} ({} modules)",
+            t.elapsed(),
+            registry.modules.len()
+        );
         registry
     }
 
@@ -59,7 +66,10 @@ impl PipelineContext {
                 })
                 .collect()
         };
-        log::debug!("[pipeline] optimized IR generation (parallel): {:.2?}", t.elapsed());
+        log::debug!(
+            "[pipeline] optimized IR generation (parallel): {:.2?}",
+            t.elapsed()
+        );
 
         let t = std::time::Instant::now();
         let mut all_ir = BTreeMap::new();

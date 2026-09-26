@@ -19,6 +19,13 @@ pub struct IRBuilder<'a> {
     file: &'a BytecodeFile,
     format: &'a BytecodeFormat,
     options: IRBuilderOptions,
+    // Functions the last built function created with one of its block
+    // environments: (child id, builder level of that environment). A
+    // closure created with a block environment reads that block at level 1,
+    // so the closure context must make the block scope its parent, not the
+    // function: with the function as parent, `addEventPoolingTo` resolved the
+    // factory's block slot 40 (`releasePooledEvent`) as an unnamed slot.
+    pub created_in_block: Vec<(u32, u32)>,
 }
 
 impl<'a> IRBuilder<'a> {
@@ -31,34 +38,54 @@ impl<'a> IRBuilder<'a> {
             file,
             format,
             options,
+            created_in_block: Vec::new(),
         }
     }
 
     pub fn build_function(&mut self, function_id: u32) -> Result<CFG> {
+        self.created_in_block.clear();
         let instructions = self
             .file
             .decode_function_instructions(self.format, function_id)?;
-        let handlers = self.file.exception_handlers.get(&function_id)
+        let handlers = self
+            .file
+            .exception_handlers
+            .get(&function_id)
             .map(|h| h.as_slice())
             .unwrap_or(&[]);
         // Compute function's bytecode offset in the global instructions array
-        let func_bytecode_offset = self.file.function_headers
+        let func_bytecode_offset = self
+            .file
+            .function_headers
             .get(function_id as usize)
             .map(|h| h.offset().saturating_sub(self.file.instruction_offset))
             .unwrap_or(0);
         // Frame size drives the implicit call/construct argument register layout.
-        let frame_size = self.file.function_headers
+        let frame_size = self
+            .file
+            .function_headers
             .get(function_id as usize)
             .map(|h| h.frame_size())
             .unwrap_or(0);
-        let mut cfg = self.build_from_instructions(&instructions, handlers, func_bytecode_offset, frame_size)?;
+        let mut cfg = self.build_from_instructions(
+            &instructions,
+            handlers,
+            func_bytecode_offset,
+            frame_size,
+        )?;
 
         super::generator_cfg::transform_generator_cfg(&mut cfg);
 
         Ok(cfg)
     }
 
-    fn build_from_instructions(&mut self, instructions: &[Instruction], exception_handlers: &[ExceptionHandler], func_bytecode_offset: u32, frame_size: u32) -> Result<CFG> {
+    fn build_from_instructions(
+        &mut self,
+        instructions: &[Instruction],
+        exception_handlers: &[ExceptionHandler],
+        func_bytecode_offset: u32,
+        frame_size: u32,
+    ) -> Result<CFG> {
         if instructions.is_empty() {
             let mut cfg = CFG::new();
             cfg.get_mut(cfg.entry)
@@ -67,7 +94,13 @@ impl<'a> IRBuilder<'a> {
             return Ok(cfg);
         }
 
-        let block_starts = find_block_starts_with_handlers(instructions, self.format, self.file, exception_handlers, func_bytecode_offset);
+        let block_starts = find_block_starts_with_handlers(
+            instructions,
+            self.format,
+            self.file,
+            exception_handlers,
+            func_bytecode_offset,
+        );
 
         let mut offset_to_block: BTreeMap<u32, BlockId> = BTreeMap::new();
         let mut cfg = CFG::new();
@@ -107,9 +140,14 @@ impl<'a> IRBuilder<'a> {
                 offset_to_block.get(&handler.start),
                 offset_to_block.get(&handler.target),
             ) {
+                let try_blocks: Vec<BlockId> = offset_to_block
+                    .range(handler.start..handler.end)
+                    .map(|(_, &b)| b)
+                    .collect();
                 cfg.exception_handlers.push(crate::ir::CfgExceptionHandler {
                     try_block_start: try_start,
                     catch_block,
+                    try_blocks,
                 });
             }
         }
@@ -167,6 +205,12 @@ impl<'a> IRBuilder<'a> {
                 frame_size,
                 &mut env_map,
             );
+            if let Some((child, env_reg)) = created_function_and_env(self.format, inst) {
+                let level = env_map.level_of(env_reg);
+                if level >= super::env_state::NESTED_ENV_LEVEL_BASE {
+                    self.created_in_block.push((child, level));
+                }
+            }
 
             match result {
                 // A handler that lowers one opcode to several statements returns
@@ -186,7 +230,14 @@ impl<'a> IRBuilder<'a> {
                         .expect("current block must exist")
                         .set_terminator(Terminator::Jump(target_block));
                     current_stmts = Vec::new();
-                    current_block = target_block;
+                    // The block that follows a `Jmp` always starts a new block, so
+                    // the current one stays closed until then. Switching to the
+                    // target here let the next block start "finalize" a forward
+                    // target that had not been built yet, which gave it a jump to
+                    // whatever block happened to come next in the instruction
+                    // stream. Every jump target followed by a fallthrough into a
+                    // handler start lost its real successor that way, and the
+                    // try/catch behind it with it.
                 }
                 FlowResult::Branch {
                     condition,
@@ -318,7 +369,10 @@ fn is_rethrow_only_handler(
     target_offset: u32,
 ) -> bool {
     let opcode_name = |inst: &Instruction| -> Option<&str> {
-        format.definitions.get(inst.opcode as usize).map(|d| d.name.as_str())
+        format
+            .definitions
+            .get(inst.opcode as usize)
+            .map(|d| d.name.as_str())
     };
 
     let idx = match insts.iter().position(|i| i.offset == target_offset) {
@@ -353,7 +407,10 @@ fn is_iterator_cleanup_handler(
     target_offset: u32,
 ) -> bool {
     let opcode_name = |inst: &Instruction| -> Option<&str> {
-        format.definitions.get(inst.opcode as usize).map(|d| d.name.as_str())
+        format
+            .definitions
+            .get(inst.opcode as usize)
+            .map(|d| d.name.as_str())
     };
 
     let idx = match insts.iter().position(|i| i.offset == target_offset) {
@@ -368,9 +425,12 @@ fn is_iterator_cleanup_handler(
     // a shared `... IteratorClose; Throw`). Stop at the next handler's `Catch`.
     let jmp_target = |inst: &Instruction| -> Option<usize> {
         let rel = inst.operands.iter().find_map(|o| {
-            matches!(o.ty, crate::opcode::OperandType::Addr8 | crate::opcode::OperandType::Addr32)
-                .then(|| o.value.as_i32())
-                .flatten()
+            matches!(
+                o.ty,
+                crate::opcode::OperandType::Addr8 | crate::opcode::OperandType::Addr32
+            )
+            .then(|| o.value.as_i32())
+            .flatten()
         })?;
         let tgt = (inst.offset as i64 + rel as i64) as u32;
         insts.iter().position(|x| x.offset == tgt)
@@ -396,4 +456,35 @@ fn is_iterator_cleanup_handler(
         i += 1;
     }
     false
+}
+
+// The function a closure-creating opcode instantiates and the register of
+// the environment it is created with. `CreateClosure`, `CreateAsyncClosure`,
+// `CreateGeneratorClosure` and `CreateGenerator` are (dst, env, function);
+// the class opcodes are (dst, home, env, …, function).
+fn created_function_and_env(
+    format: &BytecodeFormat,
+    inst: &crate::file::Instruction,
+) -> Option<(u32, u32)> {
+    let name = format.definitions.get(inst.opcode as usize)?.name.as_str();
+    let (env_idx, func_last) = match name {
+        "CreateClosure"
+        | "CreateClosureLongIndex"
+        | "CreateAsyncClosure"
+        | "CreateGeneratorClosure"
+        | "CreateGenerator"
+        | "CreateGeneratorLongIndex" => (1, false),
+        "CreateBaseClass"
+        | "CreateBaseClassLongIndex"
+        | "CreateDerivedClass"
+        | "CreateDerivedClassLongIndex" => (2, true),
+        _ => return None,
+    };
+    let env = inst.operands.get(env_idx)?.value.as_u32()?;
+    let func = if func_last {
+        inst.operands.last()?.value.as_u32()?
+    } else {
+        inst.operands.get(2)?.value.as_u32()?
+    };
+    Some((func, env))
 }

@@ -1,5 +1,5 @@
 use super::state::{infer_name_from_expr, VariableNamer};
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
 
 pub fn analyze_stmt(namer: &mut VariableNamer, stmt: &Statement) {
     match stmt {
@@ -33,9 +33,7 @@ pub fn analyze_stmt(namer: &mut VariableNamer, stmt: &Statement) {
                     if let Some(name) = infer_name_from_expr(value) {
                         // Don't rename if we infer the same generic name
                         if name != *v && !name.starts_with(v) {
-                            log::debug!(
-                                "Variable '{v}' inferred name '{name}' from expression"
-                            );
+                            log::debug!("Variable '{v}' inferred name '{name}' from expression");
                             namer.suggest_name(v, &name);
                         }
                     }

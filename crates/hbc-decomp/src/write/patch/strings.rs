@@ -54,21 +54,20 @@ fn locate_string_bytes(file: &BytecodeFile, id: u32) -> Result<(usize, usize)> {
         let is_utf16 = (raw_e & UTF16) != 0;
         let offset = (raw_e >> OFF_SHIFT) & OFF_MASK;
         let length = (raw_e >> LEN_SHIFT) & LEN_MASK;
-        let (off, len) =
-            if length == LEN_OVERFLOW || offset == OFF_OVERFLOW {
-                let ov_base = overflow_off
-                    .ok_or_else(|| Error::Write("overflow string table missing".into()))?;
-                let ov_slot = ov_base + overflow_index * 8;
-                if ov_slot + 8 > raw.len() {
-                    return Err(Error::Write("overflow string table OOB".into()));
-                }
-                let o = u32::from_le_bytes(raw[ov_slot..ov_slot + 4].try_into().unwrap());
-                let l = u32::from_le_bytes(raw[ov_slot + 4..ov_slot + 8].try_into().unwrap());
-                overflow_index += 1;
-                (o, l)
-            } else {
-                (offset, length)
-            };
+        let (off, len) = if length == LEN_OVERFLOW || offset == OFF_OVERFLOW {
+            let ov_base =
+                overflow_off.ok_or_else(|| Error::Write("overflow string table missing".into()))?;
+            let ov_slot = ov_base + overflow_index * 8;
+            if ov_slot + 8 > raw.len() {
+                return Err(Error::Write("overflow string table OOB".into()));
+            }
+            let o = u32::from_le_bytes(raw[ov_slot..ov_slot + 4].try_into().unwrap());
+            let l = u32::from_le_bytes(raw[ov_slot + 4..ov_slot + 8].try_into().unwrap());
+            overflow_index += 1;
+            (o, l)
+        } else {
+            (offset, length)
+        };
         if i == id as usize {
             if is_utf16 {
                 return Err(Error::Write("patch_string: UTF-16 not supported".into()));
@@ -135,8 +134,8 @@ fn read_all_string_locs(file: &BytecodeFile) -> Result<Vec<StrLoc>> {
         let offset = (raw_e >> OFF_SHIFT) & OFF_MASK;
         let length = (raw_e >> LEN_SHIFT) & LEN_MASK;
         let (off, len) = if length == LEN_OVERFLOW || offset == OFF_OVERFLOW {
-            let ov_base = overflow_off
-                .ok_or_else(|| Error::Write("overflow string table missing".into()))?;
+            let ov_base =
+                overflow_off.ok_or_else(|| Error::Write("overflow string table missing".into()))?;
             let ov_slot = ov_base + overflow_index * 8;
             if ov_slot + 8 > raw.len() {
                 return Err(Error::Write("overflow string table OOB".into()));
@@ -229,11 +228,7 @@ pub(super) fn legacy_debug_info_offset_pos(header: &crate::format::BytecodeHeade
 // Legacy layout, non-overflowed function headers, non-identifier UTF-8 target
 // only. Refuses anything that would need an overflow string entry or an
 // identifier-hash rebuild, so it never emits a silently corrupt file.
-fn patch_string_resize(
-    file: &mut BytecodeFile,
-    id: u32,
-    new_value: &str,
-) -> Result<Vec<u8>> {
+fn patch_string_resize(file: &mut BytecodeFile, id: u32, new_value: &str) -> Result<Vec<u8>> {
     let modern = matches!(
         file.header.function_header_layout,
         crate::format::FunctionHeaderLayout::Modern12
@@ -302,7 +297,11 @@ fn patch_string_resize(
             if start + byte_len > raw.len() {
                 return Err(Error::Write("string storage OOB during rebuild".into()));
             }
-            (raw[start..start + byte_len].to_vec(), loc.len_field, loc.is_utf16)
+            (
+                raw[start..start + byte_len].to_vec(),
+                loc.len_field,
+                loc.is_utf16,
+            )
         };
         let off = new_storage.len() as u32;
         new_storage.extend_from_slice(&bytes);
@@ -583,7 +582,13 @@ mod tests {
         // "gen" is a plain (non-identifier) string in this fixture.
         let id = file.strings.iter().position(|s| s.value == "gen");
         let Some(id) = id else { return };
-        let out = patch_string_by_id(&mut file, &format, id as u32, "genXXXXX", &PatchOptions::default());
+        let out = patch_string_by_id(
+            &mut file,
+            &format,
+            id as u32,
+            "genXXXXX",
+            &PatchOptions::default(),
+        );
         if let Ok(out) = out {
             assert!(verify_footer(&out));
             let re = BytecodeFile::parse_auto(&out).unwrap();
@@ -600,9 +605,8 @@ mod tests {
         // "done" shares storage with "next" here, so an in place patch would
         // overlap. The patch must still succeed by rebuilding the table unpacked.
         if file.strings.get(5).map(|s| s.value.as_str()) == Some("done") {
-            let out =
-                patch_string_by_id(&mut file, &format, 5, "GONE", &PatchOptions::default())
-                    .expect("packed same length patch should resize, not fail");
+            let out = patch_string_by_id(&mut file, &format, 5, "GONE", &PatchOptions::default())
+                .expect("packed same length patch should resize, not fail");
             assert!(verify_footer(&out));
             let re = BytecodeFile::parse_auto(&out).unwrap();
             assert_eq!(re.strings[5].value, "GONE");
@@ -631,18 +635,32 @@ mod tests {
             .position(|s| !s.is_utf16 && s.value.is_ascii() && s.value.len() >= 3);
         let Some(id) = id else { return };
         // Latin1-range only characters still require UTF-16 (they are not ASCII).
-        let out = patch_string_by_id(&mut file, &format, id as u32, "éàü", &PatchOptions::default())
-            .expect("patch to non-ascii");
+        let out = patch_string_by_id(
+            &mut file,
+            &format,
+            id as u32,
+            "éàü",
+            &PatchOptions::default(),
+        )
+        .expect("patch to non-ascii");
         assert!(verify_footer(&out));
         let re = BytecodeFile::parse_auto(&out).unwrap();
-        assert!(re.strings[id].is_utf16, "non-ascii value must be stored UTF-16");
+        assert!(
+            re.strings[id].is_utf16,
+            "non-ascii value must be stored UTF-16"
+        );
         assert_eq!(re.strings[id].value, "éàü");
 
         // A character above the basic plane also round trips.
         let (mut file2, format2) = load(FIXTURE);
-        let out2 =
-            patch_string_by_id(&mut file2, &format2, id as u32, "a€☕", &PatchOptions::default())
-                .expect("patch to astral");
+        let out2 = patch_string_by_id(
+            &mut file2,
+            &format2,
+            id as u32,
+            "a€☕",
+            &PatchOptions::default(),
+        )
+        .expect("patch to astral");
         let re2 = BytecodeFile::parse_auto(&out2).unwrap();
         assert!(re2.strings[id].is_utf16);
         assert_eq!(re2.strings[id].value, "a€☕");
@@ -660,8 +678,14 @@ mod tests {
             .iter()
             .position(|s| !s.is_utf16 && s.value.is_ascii() && s.value.len() >= 3);
         let Some(id) = id else { return };
-        let out = patch_string_by_id(&mut file, &format, id as u32, "PLAINASCII", &PatchOptions::default())
-            .expect("patch ascii");
+        let out = patch_string_by_id(
+            &mut file,
+            &format,
+            id as u32,
+            "PLAINASCII",
+            &PatchOptions::default(),
+        )
+        .expect("patch ascii");
         let re = BytecodeFile::parse_auto(&out).unwrap();
         assert!(!re.strings[id].is_utf16, "ascii value must stay one byte");
         assert_eq!(re.strings[id].value, "PLAINASCII");

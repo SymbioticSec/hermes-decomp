@@ -16,8 +16,8 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::analysis::{ClosureContext, ClosureInfo};
 use crate::analysis::naming::rename_variables_in_stmts;
+use crate::analysis::{ClosureContext, ClosureInfo};
 use crate::ir::{Expression, Statement, Value, Visitor};
 
 pub fn inherit_ancestor_closure_names(
@@ -47,14 +47,42 @@ pub fn inherit_ancestor_closure_names(
 
         // Resolve each capture to a candidate name, and count how many distinct
         // captures land on each target so ambiguous targets can be dropped.
+        // A `closure_N` this function reads but never writes is a capture of
+        // its parent's slot N: an own slot is always written by its owner. It
+        // was printed without a level because the slot had no name when the
+        // read was baked (`get_slot_name`), and the owner was named later:
+        // 1 059 reads of moment's `thresholds` stayed `closure_105` while the
+        // owner bound the slot as `dependencyMap3`.
+        let written = all_ir
+            .get(&fid)
+            .map(|stmts| written_names(stmts))
+            .unwrap_or_default();
         let mut candidates: Vec<(String, String)> = Vec::new();
         let mut target_counts: HashMap<String, u32> = HashMap::new();
         for name in &closure_names {
-            let Some((level, slot)) = parse_level_slot(name) else { continue };
+            // A single-number name carries no level: the exact origin the
+            // bake recorded is the only safe source (guessing level 1 renamed
+            // moment's `locales` object after the thresholds' slot).
+            let (level, slot) = match parse_level_slot(name) {
+                Some(ls) => ls,
+                None => match parse_single_slot(name) {
+                    Some(_) if !written.contains(name) => match closure_ctx
+                        .baked_captures
+                        .get(&fid)
+                        .and_then(|m| m.get(name))
+                    {
+                        Some(&origin) => origin,
+                        None => continue,
+                    },
+                    _ => continue,
+                },
+            };
             if level == 0 {
                 continue;
             }
-            let Some(ancestor) = closure_ctx.ancestor_at(fid, level) else { continue };
+            let Some(ancestor) = closure_ctx.slot_owner(fid, level) else {
+                continue;
+            };
             let info = info_cache
                 .entry(ancestor)
                 .or_insert_with(|| closure_ctx.get_closure_info_for(ancestor));
@@ -87,6 +115,37 @@ pub fn inherit_ancestor_closure_names(
         }
     }
     total
+}
+
+// The single-number form `closure_{slot}`.
+fn parse_single_slot(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("closure_")?;
+    if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse().ok()
+}
+
+// Every name the statements assign or declare, nested blocks included.
+fn written_names(stmts: &[Statement]) -> HashSet<String> {
+    use crate::ir::AssignTarget;
+    struct W(HashSet<String>);
+    impl<'a> Visitor<'a> for W {
+        fn visit_assign_target(&mut self, t: &'a AssignTarget) {
+            if let AssignTarget::Binding(crate::ir::Binding::Variable(n)) = t {
+                self.0.insert(n.clone());
+            }
+            self.walk_assign_target(t);
+        }
+        fn visit_binding_def(&mut self, name: &'a str) {
+            self.0.insert(name.to_string());
+        }
+    }
+    let mut w = W(HashSet::new());
+    for s in stmts {
+        w.visit_statement(s);
+    }
+    w.0
 }
 
 // Parse the baked two-number form `closure_{level}_{slot}` into (level, slot).

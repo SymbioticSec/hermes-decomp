@@ -7,7 +7,9 @@ fn null() -> Expression {
 
 fn themes(prop: &str) -> Expression {
     Expression::Member {
-        object: Box::new(Expression::Value(Value::Binding(Binding::Variable("Themes".into())))),
+        object: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+            "Themes".into(),
+        )))),
         property: PropertyKey::Ident(prop.into()),
         optional: false,
     }
@@ -119,8 +121,14 @@ fn does_not_fold_forward_referenced_value() {
             name: "obj".into(),
             value: Expression::Object {
                 properties: vec![
-                    ObjectProperty { key: PropertyKey::Ident("a".into()), value: null() },
-                    ObjectProperty { key: PropertyKey::Ident("b".into()), value: null() },
+                    ObjectProperty {
+                        key: PropertyKey::Ident("a".into()),
+                        value: null(),
+                    },
+                    ObjectProperty {
+                        key: PropertyKey::Ident("b".into()),
+                        value: null(),
+                    },
                 ],
             },
             kind: VarKind::Let,
@@ -135,26 +143,51 @@ fn does_not_fold_forward_referenced_value() {
             },
             kind: VarKind::Let,
         },
-        index_assign("obj", 0, Expression::Value(Value::Binding(Binding::Variable("config".into())))),
+        index_assign(
+            "obj",
+            0,
+            Expression::Value(Value::Binding(Binding::Variable("config".into()))),
+        ),
         index_assign("obj", 1, themes("ACTIVE")),
     ];
     fold_slot_index_fills(&mut stmts);
     // The forward-ref fill for slot 0 stays (as `obj.a = config`, not hoisted);
     // the config def stays; slot 1 folds into the literal.
-    let has_forward_fill = stmts.iter().any(|s| matches!(
-        s,
-        Statement::Assign {
-            target: AssignTarget::Member { property, .. },
-            value: Expression::Value(Value::Binding(Binding::Variable(v))),
-        } if property == "a" && v == "config"
-    ));
-    assert!(has_forward_fill, "forward-ref fill must be preserved: {stmts:?}");
-    let obj = stmts.iter().find_map(|s| match s {
-        Statement::Let { name, value: Expression::Object { properties }, .. } if name == "obj" => Some(properties),
-        _ => None,
-    }).expect("obj literal present");
-    assert!(matches!(&obj[0].value, Expression::Value(Value::Constant(Constant::Null))), "slot 0 stays placeholder");
-    assert!(matches!(&obj[1].value, Expression::Member { .. }), "slot 1 clean value folds");
+    let has_forward_fill = stmts.iter().any(|s| {
+        matches!(
+            s,
+            Statement::Assign {
+                target: AssignTarget::Member { property, .. },
+                value: Expression::Value(Value::Binding(Binding::Variable(v))),
+            } if property == "a" && v == "config"
+        )
+    });
+    assert!(
+        has_forward_fill,
+        "forward-ref fill must be preserved: {stmts:?}"
+    );
+    let obj = stmts
+        .iter()
+        .find_map(|s| match s {
+            Statement::Let {
+                name,
+                value: Expression::Object { properties },
+                ..
+            } if name == "obj" => Some(properties),
+            _ => None,
+        })
+        .expect("obj literal present");
+    assert!(
+        matches!(
+            &obj[0].value,
+            Expression::Value(Value::Constant(Constant::Null))
+        ),
+        "slot 0 stays placeholder"
+    );
+    assert!(
+        matches!(&obj[1].value, Expression::Member { .. }),
+        "slot 1 clean value folds"
+    );
 }
 
 #[test]
@@ -178,8 +211,16 @@ fn does_not_fold_slot_fills_inside_switch() {
             },
             kind: VarKind::Let,
         },
-        index_assign("obj", 0, Expression::Value(Value::Binding(Binding::Variable("type".into())))),
-        index_assign("obj", 1, Expression::Value(Value::Binding(Binding::Variable("guild_id".into())))),
+        index_assign(
+            "obj",
+            0,
+            Expression::Value(Value::Binding(Binding::Variable("type".into()))),
+        ),
+        index_assign(
+            "obj",
+            1,
+            Expression::Value(Value::Binding(Binding::Variable("guild_id".into()))),
+        ),
     ];
     let mut stmts = vec![Statement::Switch {
         discriminant: Expression::Value(Value::Binding(Binding::Variable("type".into()))),
@@ -192,7 +233,12 @@ fn does_not_fold_slot_fills_inside_switch() {
     fold_slot_index_fills(&mut stmts);
     match &stmts[0] {
         Statement::Switch { cases, .. } => {
-            assert_eq!(cases[0].1.len(), 3, "nested fills must stay: {:?}", cases[0].1);
+            assert_eq!(
+                cases[0].1.len(),
+                3,
+                "nested fills must stay: {:?}",
+                cases[0].1
+            );
         }
         other => panic!("expected switch, got {other:?}"),
     }
@@ -225,7 +271,11 @@ fn rewrites_forward_ref_slot_index_to_named_member() {
             value: Expression::Value(Value::Binding(Binding::Variable("type".into()))),
             kind: VarKind::Let,
         },
-        index_assign("obj", 1, Expression::Value(Value::Binding(Binding::Variable("user_id".into())))),
+        index_assign(
+            "obj",
+            1,
+            Expression::Value(Value::Binding(Binding::Variable("user_id".into()))),
+        ),
     ];
     fold_slot_index_fills(&mut stmts);
     assert_eq!(stmts.len(), 3, "forward-ref fill stays: {stmts:?}");

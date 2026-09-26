@@ -1,6 +1,9 @@
 // Object/Array literal folding passes.
 
-use crate::ir::{Binding, map_nested_bodies_mut, AssignTarget, Expression, ObjectProperty, PropertyKey, Statement, Value, VarKind};
+use crate::ir::{
+    map_nested_bodies_mut, AssignTarget, Binding, Expression, ObjectProperty, PropertyKey,
+    Statement, Value, VarKind,
+};
 
 // === Object literal folding pass ===
 // Folds `obj = {}; obj.a = 1; obj.b = 2;` -> `obj = { a: 1, b: 2 }`
@@ -14,12 +17,15 @@ pub fn fold_object_literals(stmts: Vec<Statement>) -> Vec<Statement> {
     while let Some(stmt) = iter.next() {
         // Try to detect an object initialization statement
         let (obj_name, mut properties, is_let, var_kind) = match &stmt {
-            Statement::Let { name, value: Expression::Object { properties }, kind } => {
-                (name.clone(), properties.clone(), true, Some(*kind))
-            }
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value: Expression::Object { properties } } => {
-                (name.clone(), properties.clone(), false, None)
-            }
+            Statement::Let {
+                name,
+                value: Expression::Object { properties },
+                kind,
+            } => (name.clone(), properties.clone(), true, Some(*kind)),
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable(name)),
+                value: Expression::Object { properties },
+            } => (name.clone(), properties.clone(), false, None),
             _ => {
                 let mut s = stmt;
                 fold_object_literals_recurse(&mut s);
@@ -37,7 +43,8 @@ pub fn fold_object_literals(stmts: Vec<Statement>) -> Vec<Statement> {
                     value,
                 } => {
                     // Check object is Variable(obj_name)
-                    if !matches!(object, Expression::Value(Value::Binding(Binding::Variable(n))) if n == &obj_name) {
+                    if !matches!(object, Expression::Value(Value::Binding(Binding::Variable(n))) if n == &obj_name)
+                    {
                         break;
                     }
                     // Don't fold if value references the object itself (e.g. obj.constructor = obj)
@@ -66,9 +73,16 @@ pub fn fold_object_literals(stmts: Vec<Statement>) -> Vec<Statement> {
             // Reconstruct with the folded properties
             let obj_expr = Expression::Object { properties };
             let mut s = if is_let {
-                Statement::Let { name: obj_name, value: obj_expr, kind: var_kind.unwrap_or(VarKind::Let) }
+                Statement::Let {
+                    name: obj_name,
+                    value: obj_expr,
+                    kind: var_kind.unwrap_or(VarKind::Let),
+                }
             } else {
-                Statement::Assign { target: AssignTarget::Binding(Binding::Variable(obj_name)), value: obj_expr }
+                Statement::Assign {
+                    target: AssignTarget::Binding(Binding::Variable(obj_name)),
+                    value: obj_expr,
+                }
             };
             fold_object_literals_recurse(&mut s);
             result.push(s);
@@ -103,20 +117,27 @@ fn expr_references_var(expr: &Expression, var_name: &str) -> bool {
                 || arguments.iter().any(|a| expr_references_var(a, var_name))
         }
         Expression::Member { object, .. } => expr_references_var(object, var_name),
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             expr_references_var(condition, var_name)
                 || expr_references_var(then_expr, var_name)
                 || expr_references_var(else_expr, var_name)
         }
-        Expression::Array { elements } => {
-            elements.iter().flatten().any(|e| expr_references_var(e, var_name))
-        }
-        Expression::Object { properties } => {
-            properties.iter().any(|p| expr_references_var(&p.value, var_name))
-        }
+        Expression::Array { elements } => elements
+            .iter()
+            .flatten()
+            .any(|e| expr_references_var(e, var_name)),
+        Expression::Object { properties } => properties
+            .iter()
+            .any(|p| expr_references_var(&p.value, var_name)),
         Expression::Assignment { target, value } => {
             let mut hit = false;
-            crate::ir::for_each_target_expression(target, &mut |e| hit |= expr_references_var(e, var_name));
+            crate::ir::for_each_target_expression(target, &mut |e| {
+                hit |= expr_references_var(e, var_name)
+            });
             hit || expr_references_var(value, var_name)
         }
         Expression::Spread(inner) => expr_references_var(inner, var_name),
@@ -136,12 +157,15 @@ pub fn fold_array_literals(stmts: Vec<Statement>) -> Vec<Statement> {
     while let Some(stmt) = iter.next() {
         // Try to detect an array initialization statement
         let (arr_name, mut elements, is_let, var_kind) = match &stmt {
-            Statement::Let { name, value: Expression::Array { elements }, kind } => {
-                (name.clone(), elements.clone(), true, Some(*kind))
-            }
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value: Expression::Array { elements } } => {
-                (name.clone(), elements.clone(), false, None)
-            }
+            Statement::Let {
+                name,
+                value: Expression::Array { elements },
+                kind,
+            } => (name.clone(), elements.clone(), true, Some(*kind)),
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable(name)),
+                value: Expression::Array { elements },
+            } => (name.clone(), elements.clone(), false, None),
             _ => {
                 let mut s = stmt;
                 fold_array_literals_recurse(&mut s);
@@ -159,12 +183,15 @@ pub fn fold_array_literals(stmts: Vec<Statement>) -> Vec<Statement> {
                     value,
                 } => {
                     // Check object is Variable(arr_name)
-                    if !matches!(object, Expression::Value(Value::Binding(Binding::Variable(n))) if n == &arr_name) {
+                    if !matches!(object, Expression::Value(Value::Binding(Binding::Variable(n))) if n == &arr_name)
+                    {
                         break;
                     }
                     // Check key is a constant integer index
                     let idx = match key {
-                        Expression::Value(Value::Constant(crate::ir::Constant::Integer(i))) => *i as usize,
+                        Expression::Value(Value::Constant(crate::ir::Constant::Integer(i))) => {
+                            *i as usize
+                        }
                         _ => break,
                     };
                     // Don't fold if value references the array itself
@@ -186,9 +213,16 @@ pub fn fold_array_literals(stmts: Vec<Statement>) -> Vec<Statement> {
         if folded_count > 0 {
             let arr_expr = Expression::Array { elements };
             let mut s = if is_let {
-                Statement::Let { name: arr_name, value: arr_expr, kind: var_kind.unwrap_or(VarKind::Let) }
+                Statement::Let {
+                    name: arr_name,
+                    value: arr_expr,
+                    kind: var_kind.unwrap_or(VarKind::Let),
+                }
             } else {
-                Statement::Assign { target: AssignTarget::Binding(Binding::Variable(arr_name)), value: arr_expr }
+                Statement::Assign {
+                    target: AssignTarget::Binding(Binding::Variable(arr_name)),
+                    value: arr_expr,
+                }
             };
             fold_array_literals_recurse(&mut s);
             result.push(s);
@@ -205,4 +239,3 @@ pub fn fold_array_literals(stmts: Vec<Statement>) -> Vec<Statement> {
 fn fold_array_literals_recurse(stmt: &mut Statement) {
     map_nested_bodies_mut(stmt, fold_array_literals);
 }
-

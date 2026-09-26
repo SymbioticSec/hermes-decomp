@@ -1,6 +1,6 @@
 use super::{is_iterator_call, unwrap_iterator_body};
 use crate::analysis::rename_registers;
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
 use std::collections::BTreeMap;
 
 // Detect for-of loop patterns and rebuild them as `for (item of source)`.
@@ -47,36 +47,56 @@ fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
                 body: detect_for_of_loops(body),
                 condition,
             },
-            Statement::If { condition, then_body, else_body } => Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => Statement::If {
                 condition,
                 then_body: detect_for_of_loops(then_body),
                 else_body: detect_for_of_loops(else_body),
             },
-            Statement::For { init, condition, update, body } => Statement::For {
+            Statement::For {
+                init,
+                condition,
+                update,
+                body,
+            } => Statement::For {
                 init,
                 condition,
                 update,
                 body: detect_for_of_loops(body),
             },
-            Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+            Statement::ForOf {
+                variable,
+                iterable,
+                body,
+            } => Statement::ForOf {
                 variable,
                 iterable,
                 body: detect_for_of_loops(body),
             },
-            Statement::ForIn { variable, object, body } => Statement::ForIn {
+            Statement::ForIn {
+                variable,
+                object,
+                body,
+            } => Statement::ForIn {
                 variable,
                 object,
                 body: detect_for_of_loops(body),
             },
             Statement::Block(inner) => Statement::Block(detect_for_of_loops(inner)),
-            Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => {
-                Statement::TryCatch {
-                    try_body: detect_for_of_loops(try_body),
-                    catch_param,
-                    catch_body: detect_for_of_loops(catch_body),
-                    finally_body: detect_for_of_loops(finally_body),
-                }
-            }
+            Statement::TryCatch {
+                try_body,
+                catch_param,
+                catch_body,
+                finally_body,
+            } => Statement::TryCatch {
+                try_body: detect_for_of_loops(try_body),
+                catch_param,
+                catch_body: detect_for_of_loops(catch_body),
+                finally_body: detect_for_of_loops(finally_body),
+            },
             other => other,
         })
         .collect()
@@ -89,9 +109,10 @@ fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
 fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
     // [0] iter = src[Symbol.iterator]()
     let (iter_reg, source) = match &stmts[0] {
-        Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } => {
-            (*r, is_iterator_call(value)?)
-        }
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            value,
+        } => (*r, is_iterator_call(value)?),
         _ => return None,
     };
 
@@ -109,9 +130,10 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
     while let Some(stmt) = stmts.get(idx) {
         match stmt {
             // val = <alias>.next()
-            Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value }
-                if iter_aliases.iter().any(|&a| is_next_call(value, a)) =>
-            {
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Register(r)),
+                value,
+            } if iter_aliases.iter().any(|&a| is_next_call(value, a)) => {
                 val_reg = Some(*r);
                 idx += 1;
             }
@@ -151,7 +173,9 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
 
     // while (<iter-alias> !== <undefined>) { body }
     let body = match stmts.get(idx)? {
-        Statement::While { condition, body } if is_iter_done_check(condition, &iter_aliases) => body,
+        Statement::While { condition, body } if is_iter_done_check(condition, &iter_aliases) => {
+            body
+        }
         _ => return None,
     };
 
@@ -175,9 +199,15 @@ fn try_match_for_of(stmts: &[Statement]) -> Option<(usize, Vec<Statement>)> {
 fn is_next_call(expr: &Expression, iter_reg: u32) -> bool {
     if let Expression::Call { callee, arguments } = expr {
         if arguments.is_empty() {
-            if let Expression::Member { object, property: PropertyKey::Ident(p), .. } = callee.as_ref() {
+            if let Expression::Member {
+                object,
+                property: PropertyKey::Ident(p),
+                ..
+            } = callee.as_ref()
+            {
                 if p == "next" {
-                    if let Expression::Value(Value::Binding(Binding::Register(r))) = object.as_ref() {
+                    if let Expression::Value(Value::Binding(Binding::Register(r))) = object.as_ref()
+                    {
                         return *r == iter_reg;
                     }
                 }
@@ -193,17 +223,25 @@ fn is_next_call(expr: &Expression, iter_reg: u32) -> bool {
 // preceding `iter.next()` already established this is an iterator loop.
 fn is_iter_done_check(expr: &Expression, iter_aliases: &[u32]) -> bool {
     use crate::ir::{BinaryOp, UnaryOp};
-    let touches_iter = |e: &Expression| {
-        matches!(e, Expression::Value(Value::Binding(Binding::Register(r))) if iter_aliases.contains(r))
-    };
+    let touches_iter = |e: &Expression| matches!(e, Expression::Value(Value::Binding(Binding::Register(r))) if iter_aliases.contains(r));
     match expr {
         // iter !== undefined
-        Expression::Binary { op: BinaryOp::StrictNeq, left, right } => {
-            touches_iter(left) || touches_iter(right)
-        }
+        Expression::Binary {
+            op: BinaryOp::StrictNeq,
+            left,
+            right,
+        } => touches_iter(left) || touches_iter(right),
         // !(iter === undefined)
-        Expression::Unary { op: UnaryOp::Not, operand } => {
-            if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = operand.as_ref() {
+        Expression::Unary {
+            op: UnaryOp::Not,
+            operand,
+        } => {
+            if let Expression::Binary {
+                op: BinaryOp::StrictEq,
+                left,
+                right,
+            } = operand.as_ref()
+            {
                 touches_iter(left) || touches_iter(right)
             } else {
                 false

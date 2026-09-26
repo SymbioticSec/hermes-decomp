@@ -55,25 +55,25 @@ pub fn write_modern_header(
     // Every u32 field in order after the source hash. file_length (offset 32) is
     // patched after the footer; the zeros are the empty buffer/table sections.
     let fields: [u32; 19] = [
-        function_count,     // 40
-        string_kind_count,  // 44
-        identifier_count,   // 48
-        string_count,       // 52
-        0,                  // 56 overflow_string_count
+        function_count,      // 40
+        string_kind_count,   // 44
+        identifier_count,    // 48
+        string_count,        // 52
+        0,                   // 56 overflow_string_count
         string_storage_size, // 60
-        0,                  // 64 big_int_count
-        0,                  // 68 big_int_storage_size
-        0,                  // 72 reg_exp_count
-        0,                  // 76 reg_exp_storage_size
-        0,                  // 80 literal_value_buffer_size
-        0,                  // 84 obj_key_buffer_size
-        0,                  // 88 obj_shape_table_count
-        0,                  // 92 num_string_switch_imms
-        0,                  // 96 segment_id
-        0,                  // 100 cjs_module_count
-        0,                  // 104 function_source_count
-        0,                  // 108 debug_info_offset
-        0,                  // 112 options (only low byte is read)
+        0,                   // 64 big_int_count
+        0,                   // 68 big_int_storage_size
+        0,                   // 72 reg_exp_count
+        0,                   // 76 reg_exp_storage_size
+        0,                   // 80 literal_value_buffer_size
+        0,                   // 84 obj_key_buffer_size
+        0,                   // 88 obj_shape_table_count
+        0,                   // 92 num_string_switch_imms
+        0,                   // 96 segment_id
+        0,                   // 100 cjs_module_count
+        0,                   // 104 function_source_count
+        0,                   // 108 debug_info_offset
+        0,                   // 112 options (only low byte is read)
     ];
     for (i, v) in fields.iter().enumerate() {
         let off = 40 + i * 4;

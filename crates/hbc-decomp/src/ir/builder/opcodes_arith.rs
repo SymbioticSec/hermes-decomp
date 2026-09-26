@@ -1,7 +1,7 @@
 // Opcode handlers for arithmetic and binary operations.
 
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{Binding, AssignTarget, BinaryOp, Expression, Statement, UnaryOp};
+use crate::ir::{AssignTarget, BinaryOp, Binding, Expression, Statement, UnaryOp};
 use crate::Instruction;
 
 // Handle binary arithmetic opcodes.

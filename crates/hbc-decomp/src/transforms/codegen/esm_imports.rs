@@ -37,7 +37,10 @@ pub(super) fn consolidate_imports(imports: Vec<String>) -> Vec<String> {
             Some((specs, tail)) => {
                 let key = tail.clone();
                 let gi = *group_index.entry(key).or_insert_with(|| {
-                    groups.push(Group { specs: Vec::new(), tail: tail.clone() });
+                    groups.push(Group {
+                        specs: Vec::new(),
+                        tail: tail.clone(),
+                    });
                     order.push(Slot::Group(groups.len() - 1));
                     groups.len() - 1
                 });
@@ -166,7 +169,10 @@ fn collapse_same_export_specs(specs: &[String]) -> (Vec<String>, Vec<(String, St
         if !groups.contains_key(&export) {
             order.push(export.clone());
         }
-        groups.entry(export).or_default().push((spec.clone(), local, aliased));
+        groups
+            .entry(export)
+            .or_default()
+            .push((spec.clone(), local, aliased));
     }
     let mut kept = Vec::new();
     let mut rewrites = Vec::new();
@@ -352,11 +358,14 @@ mod tests {
             "import _curry2 from \"_curry2\" /* 3159 */;".to_string(),
             "import _curry2 from \"_curry2\" /* 3192 */;".to_string(),
         ];
-        assert_eq!(consolidate_imports(input), vec![
-            "import _curry2 from \"_curry2\" /* 3100 */;".to_string(),
-            "import _curry2 from \"_curry2\" /* 3159 */;".to_string(),
-            "import _curry2 from \"_curry2\" /* 3192 */;".to_string(),
-        ]);
+        assert_eq!(
+            consolidate_imports(input),
+            vec![
+                "import _curry2 from \"_curry2\" /* 3100 */;".to_string(),
+                "import _curry2 from \"_curry2\" /* 3159 */;".to_string(),
+                "import _curry2 from \"_curry2\" /* 3192 */;".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -387,7 +396,10 @@ mod tests {
             vec!["import { MessageType } from \"module_1307\" /* 1307 */;".to_string()]
         );
         assert!(extras.is_empty());
-        assert_eq!(body, vec!["use(MessageType, MessageType, MessageType);".to_string()]);
+        assert_eq!(
+            body,
+            vec!["use(MessageType, MessageType, MessageType);".to_string()]
+        );
     }
 
     #[test]
@@ -454,8 +466,9 @@ pub(super) fn make_default_imports_distinct(
     use std::collections::{HashMap, HashSet};
     use std::sync::OnceLock;
     static DEFAULT_IMPORT: OnceLock<regex::Regex> = OnceLock::new();
-    let rx = DEFAULT_IMPORT
-        .get_or_init(|| regex::Regex::new(r#"^import\s+([A-Za-z_$][\w$]*)\s+from\s"#).expect("static"));
+    let rx = DEFAULT_IMPORT.get_or_init(|| {
+        regex::Regex::new(r#"^import\s+([A-Za-z_$][\w$]*)\s+from\s"#).expect("static")
+    });
 
     // name -> the import line that claimed it first
     let mut owner: HashMap<String, String> = HashMap::new();
@@ -547,16 +560,16 @@ mod distinct_default_import_tests {
         let mut body = v(&["let prop = prop_mod;\n"]);
         let mut exports = v(&[]);
         make_default_imports_distinct(&mut imports, &mut body, &mut exports);
-        assert_eq!(imports[0], "import prop_mod from \"defineLazyObjectProperty\";");
+        assert_eq!(
+            imports[0],
+            "import prop_mod from \"defineLazyObjectProperty\";"
+        );
         assert_eq!(imports[1], "import prop_mod2 from \"module_91\";");
     }
 
     #[test]
     fn the_body_follows_the_rename() {
-        let mut imports = v(&[
-            "import m from \"a\";",
-            "import m from \"b\";",
-        ]);
+        let mut imports = v(&["import m from \"a\";", "import m from \"b\";"]);
         let mut body = v(&["let x = m;\n", "use(m, m_other);\n"]);
         let mut exports = v(&["export const y = m;"]);
         make_default_imports_distinct(&mut imports, &mut body, &mut exports);
@@ -571,7 +584,10 @@ mod distinct_default_import_tests {
         let mut body = v(&["let x = m;\n"]);
         let mut exports = v(&[]);
         make_default_imports_distinct(&mut imports, &mut body, &mut exports);
-        assert_eq!(imports[1], "import m from \"a\";", "no rename for one dependency");
+        assert_eq!(
+            imports[1], "import m from \"a\";",
+            "no rename for one dependency"
+        );
         assert_eq!(body[0], "let x = m;\n");
     }
 

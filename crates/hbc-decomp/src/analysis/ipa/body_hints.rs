@@ -65,54 +65,100 @@ fn collect_body_param_hints_stmt(
             collect_body_param_hints_expr(value, hints);
         }
         Statement::Let { value, .. } => collect_body_param_hints_expr(value, hints),
-        Statement::Return(Some(e)) | Statement::Throw(e) => {
-            collect_body_param_hints_expr(e, hints)
-        }
-        Statement::If { condition, then_body, else_body } => {
+        Statement::Return(Some(e)) | Statement::Throw(e) => collect_body_param_hints_expr(e, hints),
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             collect_body_param_hints_expr(condition, hints);
-            for s in then_body { collect_body_param_hints_stmt(s, hints); }
-            for s in else_body { collect_body_param_hints_stmt(s, hints); }
+            for s in then_body {
+                collect_body_param_hints_stmt(s, hints);
+            }
+            for s in else_body {
+                collect_body_param_hints_stmt(s, hints);
+            }
         }
         Statement::While { condition, body } | Statement::DoWhile { body, condition } => {
             collect_body_param_hints_expr(condition, hints);
-            for s in body { collect_body_param_hints_stmt(s, hints); }
+            for s in body {
+                collect_body_param_hints_stmt(s, hints);
+            }
         }
-        Statement::For { init, condition, update, body } => {
-            if let Some(i) = init { collect_body_param_hints_stmt(i, hints); }
-            if let Some(c) = condition { collect_body_param_hints_expr(c, hints); }
-            if let Some(u) = update { collect_body_param_hints_stmt(u, hints); }
-            for s in body { collect_body_param_hints_stmt(s, hints); }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(i) = init {
+                collect_body_param_hints_stmt(i, hints);
+            }
+            if let Some(c) = condition {
+                collect_body_param_hints_expr(c, hints);
+            }
+            if let Some(u) = update {
+                collect_body_param_hints_stmt(u, hints);
+            }
+            for s in body {
+                collect_body_param_hints_stmt(s, hints);
+            }
         }
         Statement::ForIn { object, body, .. } => {
             if let Expression::Value(Value::Parameter(idx)) = object {
                 hints.entry(*idx).or_default().push("obj".to_string());
             }
             collect_body_param_hints_expr(object, hints);
-            for s in body { collect_body_param_hints_stmt(s, hints); }
+            for s in body {
+                collect_body_param_hints_stmt(s, hints);
+            }
         }
         Statement::ForOf { iterable, body, .. } => {
             if let Expression::Value(Value::Parameter(idx)) = iterable {
                 hints.entry(*idx).or_default().push("items".to_string());
             }
             collect_body_param_hints_expr(iterable, hints);
-            for s in body { collect_body_param_hints_stmt(s, hints); }
+            for s in body {
+                collect_body_param_hints_stmt(s, hints);
+            }
         }
         Statement::Block(inner) => {
-            for s in inner { collect_body_param_hints_stmt(s, hints); }
+            for s in inner {
+                collect_body_param_hints_stmt(s, hints);
+            }
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
-            for s in try_body { collect_body_param_hints_stmt(s, hints); }
-            for s in catch_body { collect_body_param_hints_stmt(s, hints); }
-            for s in finally_body { collect_body_param_hints_stmt(s, hints); }
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            for s in try_body {
+                collect_body_param_hints_stmt(s, hints);
+            }
+            for s in catch_body {
+                collect_body_param_hints_stmt(s, hints);
+            }
+            for s in finally_body {
+                collect_body_param_hints_stmt(s, hints);
+            }
         }
-        Statement::Switch { discriminant, cases, default } => {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
             collect_body_param_hints_expr(discriminant, hints);
             for (e, body) in cases {
                 collect_body_param_hints_expr(e, hints);
-                for s in body { collect_body_param_hints_stmt(s, hints); }
+                for s in body {
+                    collect_body_param_hints_stmt(s, hints);
+                }
             }
             if let Some(d) = default {
-                for s in d { collect_body_param_hints_stmt(s, hints); }
+                for s in d {
+                    collect_body_param_hints_stmt(s, hints);
+                }
             }
         }
         _ => {}
@@ -142,7 +188,12 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
             if let Expression::Value(Value::Parameter(idx)) = &**callee {
                 hints.entry(*idx).or_default().push("fn".to_string());
             }
-            if let Expression::Member { object, property: PropertyKey::Ident(method), .. } = &**callee {
+            if let Expression::Member {
+                object,
+                property: PropertyKey::Ident(method),
+                ..
+            } = &**callee
+            {
                 if let Expression::Value(Value::Parameter(idx)) = &**object {
                     if let Some(type_name) = param_name_from_method(method) {
                         hints.entry(*idx).or_default().push(type_name.to_string());
@@ -150,9 +201,13 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
                 }
                 // Check for Array.isArray(arg)
                 if method == "isArray" {
-                    if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = &**object {
+                    if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+                        &**object
+                    {
                         if name == "Array" {
-                            if let Some(Expression::Value(Value::Parameter(idx))) = arguments.first() {
+                            if let Some(Expression::Value(Value::Parameter(idx))) =
+                                arguments.first()
+                            {
                                 hints.entry(*idx).or_default().push("arr".to_string());
                             }
                         }
@@ -160,9 +215,15 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
                 }
             }
             collect_body_param_hints_expr(callee, hints);
-            for a in arguments { collect_body_param_hints_expr(a, hints); }
+            for a in arguments {
+                collect_body_param_hints_expr(a, hints);
+            }
         }
-        Expression::Member { object, property: PropertyKey::Ident(prop), .. } => {
+        Expression::Member {
+            object,
+            property: PropertyKey::Ident(prop),
+            ..
+        } => {
             if let Expression::Value(Value::Parameter(idx)) = &**object {
                 if !is_generic_property(prop) && param_name_from_method(prop).is_none() {
                     hints.entry(*idx).or_default().push(prop.clone());
@@ -171,9 +232,15 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
             collect_body_param_hints_expr(object, hints);
         }
         Expression::Binary { left, right, .. } => {
-            if let Expression::Unary { op: crate::ir::UnaryOp::TypeOf, operand } = &**left {
+            if let Expression::Unary {
+                op: crate::ir::UnaryOp::TypeOf,
+                operand,
+            } = &**left
+            {
                 if let Expression::Value(Value::Parameter(idx)) = &**operand {
-                    if let Expression::Value(Value::Constant(crate::ir::Constant::String(s))) = &**right {
+                    if let Expression::Value(Value::Constant(crate::ir::Constant::String(s))) =
+                        &**right
+                    {
                         if let Some(name) = type_string_to_param_name(s) {
                             hints.entry(*idx).or_default().push(name.to_string());
                         }
@@ -185,16 +252,24 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
         }
         Expression::New { callee, arguments } => {
             collect_body_param_hints_expr(callee, hints);
-            for a in arguments { collect_body_param_hints_expr(a, hints); }
+            for a in arguments {
+                collect_body_param_hints_expr(a, hints);
+            }
         }
         Expression::Unary { operand, .. } => collect_body_param_hints_expr(operand, hints),
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             collect_body_param_hints_expr(condition, hints);
             collect_body_param_hints_expr(then_expr, hints);
             collect_body_param_hints_expr(else_expr, hints);
         }
         Expression::Array { elements } => {
-            for e in elements.iter().flatten() { collect_body_param_hints_expr(e, hints); }
+            for e in elements.iter().flatten() {
+                collect_body_param_hints_expr(e, hints);
+            }
         }
         Expression::Object { properties } => {
             for p in properties {
@@ -210,10 +285,14 @@ fn collect_body_param_hints_expr(expr: &Expression, hints: &mut BTreeMap<u32, Ve
             }
         }
         Expression::Assignment { target, value } => {
-            crate::ir::for_each_target_expression(target, &mut |e| collect_body_param_hints_expr(e, hints));
+            crate::ir::for_each_target_expression(target, &mut |e| {
+                collect_body_param_hints_expr(e, hints)
+            });
             collect_body_param_hints_expr(value, hints);
         }
-        Expression::Spread(inner) | Expression::Await(inner) => collect_body_param_hints_expr(inner, hints),
+        Expression::Spread(inner) | Expression::Await(inner) => {
+            collect_body_param_hints_expr(inner, hints)
+        }
         Expression::Yield { value, .. } => collect_body_param_hints_expr(value, hints),
         _ => {}
     }

@@ -1,6 +1,6 @@
 // Opcode handlers for load/store operations.
 
-use crate::ir::{Binding, AssignTarget, Constant, Expression, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Constant, Expression, Statement, Value};
 use crate::{BytecodeFile, Instruction};
 
 // Handle load constant opcodes.
@@ -136,5 +136,7 @@ pub fn get_reg(operands: &[crate::opcode::Operand], idx: usize) -> Option<u32> {
 
 // Helper to get register as expression.
 pub fn reg_expr(operands: &[crate::opcode::Operand], idx: usize) -> Option<Expression> {
-    Some(Expression::Value(Value::Binding(Binding::Register(get_reg(operands, idx)?))))
+    Some(Expression::Value(Value::Binding(Binding::Register(
+        get_reg(operands, idx)?,
+    ))))
 }

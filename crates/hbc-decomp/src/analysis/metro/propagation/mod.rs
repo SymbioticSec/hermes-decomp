@@ -14,13 +14,13 @@ pub use depmap_rewrite::rewrite_dependency_map_indices as rewrite_dependency_map
 use super::detection::is_meaningful_name;
 use super::registry::{FactoryRoles, MetroRegistry};
 use crate::analysis::ClosureContext;
-use crate::ir::{Binding, target_to_key, Expression, Statement, Value};
-use std::collections::HashMap;
+use crate::ir::{target_to_key, Binding, Expression, Statement, Value};
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use inference::infer_module_name_from_stmts;
-use phases::{propagate_reexport_names, reverse_require_naming};
 pub(crate) use phases::propagate_module_names_to_closures;
+use phases::{propagate_reexport_names, reverse_require_naming};
 use require_resolution::resolve_require_module;
 
 // Maximum iterations for dependency-chain module naming.
@@ -35,21 +35,38 @@ pub(super) fn is_dep_array_name(name: &str, roles: &FactoryRoles) -> bool {
         || name == "dependencyMap"
         || name == "_dependencyMap"
         || name == "deps"
-        || (name.starts_with("dependencyMap") && name["dependencyMap".len()..].chars().all(|c| c.is_ascii_digit()))
+        || (name.starts_with("dependencyMap")
+            && name["dependencyMap".len()..]
+                .chars()
+                .all(|c| c.is_ascii_digit()))
         || (name.starts_with("deps") && name[4..].chars().all(|c| c.is_ascii_digit()))
 }
 
 pub(super) fn is_meaningful_require_name(name: &str) -> bool {
-    if name.len() < 2 { return false; }
+    if name.len() < 2 {
+        return false;
+    }
     // Reject obviously generic names (shared core: exact matches, prefixes, *Result)
-    if super::is_obviously_generic(name) { return false; }
+    if super::is_obviously_generic(name) {
+        return false;
+    }
     // Reject register-like names: r0, r123, v0, v123
-    if name.starts_with('r') && name[1..].chars().all(|c| c.is_ascii_digit()) { return false; }
-    if name.starts_with('v') && name[1..].chars().all(|c| c.is_ascii_digit()) { return false; }
+    if name.starts_with('r') && name[1..].chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    if name.starts_with('v') && name[1..].chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
     // Reject short generic names: obj, obj2, fn, fn2, arr, arr2
-    if name.starts_with("obj") && name.len() <= 5 { return false; }
-    if name.starts_with("fn") && name.len() <= 4 { return false; }
-    if name.starts_with("arr") && name.len() <= 5 { return false; }
+    if name.starts_with("obj") && name.len() <= 5 {
+        return false;
+    }
+    if name.starts_with("fn") && name.len() <= 4 {
+        return false;
+    }
+    if name.starts_with("arr") && name.len() <= 5 {
+        return false;
+    }
     true
 }
 
@@ -58,6 +75,31 @@ pub fn propagate_module_names(
     registry: &mut MetroRegistry,
     closure_ctx: &mut Option<ClosureContext>,
 ) {
+    // PHASE 0 (first): libraries recognised by their complete export surface
+    // (React, react-native, AssetRegistry): no path and no default-export
+    // function name identify them, their exports do. First, because a name
+    // taken from one export key (`Activity` for React) would otherwise sit on
+    // the module until the final pass drops it, blocking every better one.
+    let mut recognised = 0usize;
+    for module in registry.modules.values_mut() {
+        if module.name.is_some() {
+            continue;
+        }
+        let Some(stmts) = functions.get(&module.function_id) else {
+            continue;
+        };
+        if let Some(name) = crate::analysis::metro::known_libraries::recognize(stmts) {
+            module.name = Some(name.to_string());
+            module.name_from_default_export = true;
+            recognised += 1;
+        }
+    }
+    if recognised > 0 {
+        log::debug!(
+            "[pipeline] module naming: {recognised} libraries recognised by export surface"
+        );
+    }
+
     // PHASE 0: Reverse require naming, scan all factories for `varName = require(depId)`
     // where varName is meaningful, and use it to name the referenced module.
     reverse_require_naming(functions, registry);
@@ -71,7 +113,9 @@ pub fn propagate_module_names(
         if module.name.is_none() {
             if let Some(factory_stmts) = functions.get(&module.function_id) {
                 let mut visited = std::collections::HashSet::new();
-                if let Some(name) = infer_module_name_from_stmts(factory_stmts, functions, &mut visited) {
+                if let Some(name) =
+                    infer_module_name_from_stmts(factory_stmts, functions, &mut visited)
+                {
                     inferred_names.insert(*mod_id, name);
                 }
             }
@@ -80,7 +124,8 @@ pub fn propagate_module_names(
 
     // Store inferred names back into the registry so downstream consumers see them
     let inferred_count = inferred_names.len();
-    for (mod_id, name) in &inferred_names {
+    for (mod_id, inferred) in &inferred_names {
+        let name = &inferred.name;
         if let Some(module) = registry.modules.get_mut(mod_id) {
             // A name that describes an action names one of the module's functions,
             // not the module. Inference reaches a module through whatever single
@@ -91,9 +136,10 @@ pub fn propagate_module_names(
             // slots, so the honest id is what gets propagated.
             if module.name.is_none()
                 && is_meaningful_name(name)
-                && !crate::analysis::metro::names_an_action(name)
+                && (inferred.from_default_export || !crate::analysis::metro::names_an_action(name))
             {
                 module.name = Some(name.clone());
+                module.name_from_default_export = inferred.from_default_export;
             }
         }
     }
@@ -106,34 +152,66 @@ pub fn propagate_module_names(
     // This handles CJS interop wrappers and single-dep re-export modules
     let mut _dep_named = 0;
     for _ in 0..MAX_MODULE_NAME_ITERATIONS {
-        let mut new_dep_names: Vec<(u32, String)> = Vec::new();
+        let mut new_dep_names: Vec<(u32, String, bool)> = Vec::new();
         let mut dep_mod_ids: Vec<_> = registry.modules.keys().copied().collect();
         dep_mod_ids.sort();
         for mid in &dep_mod_ids {
             let module = &registry.modules[mid];
-            if module.name.is_some() { continue; }
-            let Some(stmts) = functions.get(&module.function_id) else { continue };
+            // A thin wrapper keeps a name of its own, unless the dependency
+            // it wraps is identified (recognised library, default-export
+            // function): the wrapper named `registerAsset` after one key it
+            // re-exposes is AssetRegistry's interop, and reads better as such.
+            if module.name.is_some() && module.name_from_default_export {
+                continue;
+            }
+            let Some(stmts) = functions.get(&module.function_id) else {
+                continue;
+            };
             // Only thin wrappers: 1 dep (≤15 stmts) or 2 deps (≤8 stmts)
             let ndeps = module.dependencies.len();
-            if ndeps == 0 || ndeps > 2 { continue; }
-            if ndeps == 1 && stmts.len() > 15 { continue; }
-            if ndeps == 2 && stmts.len() > 8 { continue; }
+            if ndeps == 0 || ndeps > 2 {
+                continue;
+            }
+            if ndeps == 1 && stmts.len() > 15 {
+                continue;
+            }
+            if ndeps == 2 && stmts.len() > 8 {
+                continue;
+            }
             let dep_id = module.dependencies[0];
             if let Some(dep_mod) = registry.modules.get(&dep_id) {
                 if let Some(dep_name) = &dep_mod.name {
-                    if is_meaningful_name(dep_name) {
-                        new_dep_names.push((module.module_id, dep_name.clone()));
+                    let identified = dep_mod.name_from_default_export;
+                    if is_meaningful_name(dep_name) && (module.name.is_none() || identified) {
+                        new_dep_names.push((module.module_id, dep_name.clone(), identified));
                     }
                 }
             }
         }
-        if new_dep_names.is_empty() { break; }
+        if new_dep_names.is_empty() {
+            break;
+        }
         _dep_named += new_dep_names.len();
-        for (mod_id, name) in new_dep_names {
+        for (mod_id, name, identified) in new_dep_names {
             if let Some(module) = registry.modules.get_mut(&mod_id) {
-                if module.name.is_none() {
+                if module.name.is_none() || identified {
                     module.name = Some(name);
+                    module.name_from_default_export = identified;
                 }
+            }
+        }
+    }
+
+    // Whatever pass named a module, the name is the module's own identity
+    // when it is the function name of its default export. The reverse pass
+    // names a helper from `const _slicedToArray = require(32)` at its
+    // consumers before inference runs, so the flag is derived here, from the
+    // export itself, for every module.
+    for module in registry.modules.values_mut() {
+        let Some(name) = &module.name else { continue };
+        if let Some(stmts) = functions.get(&module.function_id) {
+            if inference::default_export_function_name(stmts).as_deref() == Some(name.as_str()) {
+                module.name_from_default_export = true;
             }
         }
     }
@@ -152,7 +230,11 @@ pub fn propagate_module_names(
     }
 
     // Count how many modules have names now
-    let named_total = registry.modules.values().filter(|m| m.name.is_some()).count();
+    let named_total = registry
+        .modules
+        .values()
+        .filter(|m| m.name.is_some())
+        .count();
     let total = registry.modules.len();
     log::debug!("[pipeline] module naming: {named_total}/{total} named ({inferred_count} inferred, {reexport_count} re-export)");
 
@@ -194,10 +276,7 @@ pub fn propagate_module_names(
         .modules
         .iter()
         .map(|(id, m)| {
-            let name = m
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("module_{id}"));
+            let name = m.name.clone().unwrap_or_else(|| format!("module_{id}"));
 
             // Ensure valid identifier
             let sanitized = if name.chars().all(|c| c.is_ascii_digit()) {
@@ -246,6 +325,15 @@ pub fn propagate_module_names(
         let effective_func_id = func_to_factory.get(func_id).copied().unwrap_or(*func_id);
 
         let mut renames = BTreeMap::<String, String>::new();
+        // A module named after the class this function declares (a native
+        // `FeedbackManager` imported by the JS `FeedbackManager`) must not
+        // give the import binding the class's name.
+        let class_names = declared_class_names(stmts);
+        let effective_names = |mod_id: &u32| {
+            effective_names
+                .get(mod_id)
+                .filter(|n| !class_names.contains(*n))
+        };
 
         // Track register/variable sources for simple constant propagation
         // Map Name -> Parameter Index
@@ -279,8 +367,12 @@ pub fn propagate_module_names(
                             ..
                         } => {
                             let base_name = match &**object {
-                                Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
-                                Expression::Value(Value::Binding(Binding::Variable(n))) => Some(n.clone()),
+                                Expression::Value(Value::Binding(Binding::Register(r))) => {
+                                    Some(format!("r{r}"))
+                                }
+                                Expression::Value(Value::Binding(Binding::Variable(n))) => {
+                                    Some(n.clone())
+                                }
                                 Expression::Value(Value::Parameter(i)) => Some(format!("arg{i}")),
                                 _ => None,
                             };
@@ -315,17 +407,26 @@ pub fn propagate_module_names(
             // 2. Check for require calls or propagation
             if let Statement::Assign { target, value } = stmt {
                 // Case 1: Direct require() call
-                if let Some(mod_id) =
-                    resolve_require_module(value, effective_func_id, registry, &reg_params, &reg_props)
-                {
-                    if let Some(name) = effective_names.get(&mod_id) {
+                if let Some(mod_id) = resolve_require_module(
+                    value,
+                    effective_func_id,
+                    registry,
+                    &reg_params,
+                    &reg_props,
+                ) {
+                    if let Some(name) = effective_names(&mod_id) {
                         // Found a target to rename!
                         if let Some(var_name) = target_to_key(target) {
                             renames.insert(var_name, name.clone());
                         }
 
                         // Handle closure variables specifically
-                        if let crate::ir::AssignTarget::Binding(Binding::ClosureVar{ slot, level, .. }) = target {
+                        if let crate::ir::AssignTarget::Binding(Binding::ClosureVar {
+                            slot,
+                            level,
+                            ..
+                        }) = target
+                        {
                             if let Some(ctx) = closure_ctx {
                                 // Walk up levels to find the defining function
                                 let mut defining_func = *func_id;
@@ -341,12 +442,15 @@ pub fn propagate_module_names(
                     }
                 } else if matches!(
                     value,
-                    Expression::Value(Value::Binding(Binding::Variable(_))) | Expression::Value(Value::Binding(Binding::Register(_)))
+                    Expression::Value(Value::Binding(Binding::Variable(_)))
+                        | Expression::Value(Value::Binding(Binding::Register(_)))
                 ) {
                     // Case 2: Simple assignment (x = y)
                     let source_name = match value {
                         Expression::Value(Value::Binding(Binding::Variable(v))) => Some(v.clone()),
-                        Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
+                        Expression::Value(Value::Binding(Binding::Register(r))) => {
+                            Some(format!("r{r}"))
+                        }
                         _ => None,
                     };
 
@@ -355,7 +459,11 @@ pub fn propagate_module_names(
                             if let Some(var_name) = target_to_key(target) {
                                 renames.insert(var_name, name.clone());
                             }
-                            if let crate::ir::AssignTarget::Binding(Binding::ClosureVar{ slot, level, .. }) = target
+                            if let crate::ir::AssignTarget::Binding(Binding::ClosureVar {
+                                slot,
+                                level,
+                                ..
+                            }) = target
                             {
                                 if let Some(ctx) = closure_ctx {
                                     let mut defining_func = *func_id;
@@ -394,7 +502,7 @@ pub fn propagate_module_names(
                             &reg_params,
                             &reg_props,
                         ) {
-                            if let Some(name) = effective_names.get(&mod_id) {
+                            if let Some(name) = effective_names(&mod_id) {
                                 propagated_name = Some(name.clone());
                             }
                         }
@@ -420,7 +528,11 @@ pub fn propagate_module_names(
                                 renames.insert(var_name, name.clone());
                             }
                             // 4. Update Closure Context if it's a closure variable
-                            if let crate::ir::AssignTarget::Binding(Binding::ClosureVar{ slot, level, .. }) = target
+                            if let crate::ir::AssignTarget::Binding(Binding::ClosureVar {
+                                slot,
+                                level,
+                                ..
+                            }) = target
                             {
                                 if let Some(ctx) = closure_ctx {
                                     let mut defining_func = *func_id;
@@ -431,7 +543,9 @@ pub fn propagate_module_names(
                                     }
                                     ctx.update_slot_variable(defining_func, *slot, name.clone());
                                 }
-                            } else if let crate::ir::AssignTarget::Binding(Binding::Variable(v)) = target {
+                            } else if let crate::ir::AssignTarget::Binding(Binding::Variable(v)) =
+                                target
+                            {
                                 // Fallback: handle "closure_N" as a slot update
                                 if let Some(slot_id_str) = v.strip_prefix("closure_") {
                                     if let Ok(slot) = slot_id_str.parse::<u32>() {
@@ -452,4 +566,24 @@ pub fn propagate_module_names(
             crate::analysis::naming::rename_variables_in_stmts(stmts, &renames);
         }
     }
+}
+
+// The names of the classes these statements declare, nested blocks included
+// (nested function bodies are other functions).
+fn declared_class_names(stmts: &[Statement]) -> std::collections::HashSet<String> {
+    use crate::ir::Visitor;
+    struct C(std::collections::HashSet<String>);
+    impl<'a> Visitor<'a> for C {
+        fn visit_statement(&mut self, s: &'a Statement) {
+            if let Statement::Class { name, .. } = s {
+                self.0.insert(name.clone());
+            }
+            self.walk_statement(s);
+        }
+    }
+    let mut c = C(std::collections::HashSet::new());
+    for s in stmts {
+        c.visit_statement(s);
+    }
+    c.0
 }

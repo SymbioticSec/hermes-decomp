@@ -1,4 +1,4 @@
-use crate::ir::{Binding, is_undefined_expr, map_nested_bodies, Statement, AssignTarget};
+use crate::ir::{is_undefined_expr, map_nested_bodies, AssignTarget, Binding, Statement};
 
 pub(super) fn remove_undefined_initializations(stmts: Vec<Statement>) -> Vec<Statement> {
     let mut result = Vec::new();

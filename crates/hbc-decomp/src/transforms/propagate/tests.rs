@@ -12,7 +12,9 @@ fn test_constant_propagation() {
         1,
         Expression::Value(Value::Binding(Binding::Register(0))),
     ));
-    builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(1)))));
+    builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(
+        1,
+    )))));
 
     let mut cfg = builder.finish();
     propagate(&mut cfg, &PropagationConfig::new());
@@ -53,7 +55,9 @@ fn test_cross_block_copy_propagation() {
             Expression::constant(Constant::Integer(1)),
         ),
     ));
-    builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(5)))));
+    builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(
+        5,
+    )))));
 
     let mut cfg = builder.finish();
     propagate_copies(&mut cfg);
@@ -108,7 +112,9 @@ fn test_copy_not_propagated_when_source_reassigned() {
             Expression::constant(Constant::Integer(1)),
         ),
     ));
-    builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(7)))));
+    builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(
+        7,
+    )))));
 
     let mut cfg = builder.finish();
     propagate_copies(&mut cfg);
@@ -141,12 +147,23 @@ fn test_param_copy_chain_resolves_across_blocks() {
     // b1:  return r2          ; must resolve to Parameter(0)
     let mut builder = CFGBuilder::new();
     let b1 = builder.create_block();
-    builder.emit(Statement::assign_reg(0, Expression::Value(Value::Parameter(0))));
-    builder.emit(Statement::assign_reg(1, Expression::Value(Value::Binding(Binding::Register(0)))));
-    builder.emit(Statement::assign_reg(2, Expression::Value(Value::Binding(Binding::Register(1)))));
+    builder.emit(Statement::assign_reg(
+        0,
+        Expression::Value(Value::Parameter(0)),
+    ));
+    builder.emit(Statement::assign_reg(
+        1,
+        Expression::Value(Value::Binding(Binding::Register(0))),
+    ));
+    builder.emit(Statement::assign_reg(
+        2,
+        Expression::Value(Value::Binding(Binding::Register(1))),
+    ));
     builder.emit_jump(b1);
     builder.set_current_block(b1);
-    builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(2)))));
+    builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(
+        2,
+    )))));
 
     let mut cfg = builder.finish();
     propagate(&mut cfg, &PropagationConfig::new());

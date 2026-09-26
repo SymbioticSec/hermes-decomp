@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::ir::{Binding, AssignTarget, Constant, Expression, PropertyKey, Statement, Value, Visitor};
+use crate::ir::{
+    AssignTarget, Binding, Constant, Expression, PropertyKey, Statement, Value, Visitor,
+};
 
 use super::kinds::{LoaderKind, LOADER_NAMES};
 
@@ -162,10 +164,6 @@ pub(super) fn collect_loader_ids(
             self.walk_expression(e);
         }
     }
-    let mut c = C {
-        aliases,
-        deps,
-        out,
-    };
+    let mut c = C { aliases, deps, out };
     c.visit_expression(expr);
 }

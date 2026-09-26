@@ -14,7 +14,9 @@ pub(super) fn resolve_require_module(
 ) -> Option<u32> {
     if let Expression::Call { callee, arguments } = expr {
         let is_require = match &**callee {
-            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => FactoryRoles::matches_require_loader_name(name),
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
+                FactoryRoles::matches_require_loader_name(name)
+            }
             Expression::Value(Value::Parameter(idx)) if *idx == 1 => true,
             _ => false,
         };
@@ -37,8 +39,12 @@ pub(super) fn resolve_require_module(
 
                 // Sub-case 1.2: Register (Dynamic Require via Dependency Array)
                 let reg_name = match arg {
-                    Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
-                    Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => Some(n.clone()),
+                    Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
+                        Some(format!("r{r}"))
+                    }
+                    Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => {
+                        Some(n.clone())
+                    }
                     _ => None,
                 };
 
@@ -48,17 +54,18 @@ pub(super) fn resolve_require_module(
                         // Check if base is a parameter (argN) or named dependency array
                         let is_dep = is_dep_array_name(base, &FactoryRoles::from_param_count(7))
                             || is_dep_array_name(base, &FactoryRoles::from_param_count(5));
-                        let param_idx = reg_params.get(base).copied().or_else(|| {
-                            FactoryRoles::extract_param_index(base)
-                        });
+                        let param_idx = reg_params
+                            .get(base)
+                            .copied()
+                            .or_else(|| FactoryRoles::extract_param_index(base));
 
                         if is_dep || param_idx.is_some_and(FactoryRoles::is_deps_idx) {
-                                if let Some(module) = registry.get_module_for_function(func_id) {
-                                    if (*idx as usize) < module.dependencies.len() {
-                                        let mod_id = module.dependencies[*idx as usize];
-                                        return Some(mod_id);
-                                    }
+                            if let Some(module) = registry.get_module_for_function(func_id) {
+                                if (*idx as usize) < module.dependencies.len() {
+                                    let mod_id = module.dependencies[*idx as usize];
+                                    return Some(mod_id);
                                 }
+                            }
                         }
                     }
                 }
@@ -71,22 +78,27 @@ pub(super) fn resolve_require_module(
                 }) = arg_expr
                 {
                     let base_name = match &**object {
-                        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
-                        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => Some(n.clone()),
+                        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
+                            Some(format!("r{r}"))
+                        }
+                        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => {
+                            Some(n.clone())
+                        }
                         Expression::Value(Value::Parameter(i)) => Some(format!("arg{i}")),
                         _ => None,
                     };
                     if let Some(base) = base_name {
-                        let is_dep_array = is_dep_array_name(&base, &FactoryRoles::from_param_count(7))
-                            || is_dep_array_name(&base, &FactoryRoles::from_param_count(5));
+                        let is_dep_array =
+                            is_dep_array_name(&base, &FactoryRoles::from_param_count(7))
+                                || is_dep_array_name(&base, &FactoryRoles::from_param_count(5));
                         let param_idx = FactoryRoles::extract_param_index(&base)
                             .or_else(|| reg_params.get(&base).copied());
                         if is_dep_array || param_idx.is_some_and(FactoryRoles::is_deps_idx) {
-                                if let Some(module) = registry.get_module_for_function(func_id) {
-                                    if (*idx as usize) < module.dependencies.len() {
-                                        return Some(module.dependencies[*idx as usize]);
-                                    }
+                            if let Some(module) = registry.get_module_for_function(func_id) {
+                                if (*idx as usize) < module.dependencies.len() {
+                                    return Some(module.dependencies[*idx as usize]);
                                 }
+                            }
                         }
                     }
                 }
@@ -156,7 +168,9 @@ fn extract_module_id_from_arg(arg: &Expression) -> Option<u32> {
         Expression::Member {
             object, property, ..
         } => {
-            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref() {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+                object.as_ref()
+            {
                 if is_dep_array_name(name, &FactoryRoles::from_param_count(7))
                     || is_dep_array_name(name, &FactoryRoles::from_param_count(5))
                 {

@@ -1,7 +1,7 @@
 // Opcode handlers for control flow operations.
 
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{Binding, BinaryOp, Expression, Statement};
+use crate::ir::{BinaryOp, Binding, Expression, Statement};
 use crate::opcode::OperandType;
 use crate::{BytecodeFile, BytecodeFormat, Instruction};
 
@@ -102,21 +102,6 @@ pub fn handle_jmp_comparison(
     })
 }
 
-// Map Hermes type ID enum to typeof string.
-pub fn typeof_id_to_string(id: u32) -> &'static str {
-    match id {
-        0 => "undefined",
-        1 => "object",
-        2 => "boolean",
-        3 => "number",
-        4 => "string",
-        5 => "function",
-        6 => "symbol",
-        7 => "bigint",
-        _ => "unknown",
-    }
-}
-
 // TypeOfIsTypes bitmask (HBC >=97 `TypeOfIs` / `JmpTypeOfIs`). The third operand
 // is not a string index, it is a set of type bits. `object` covers both Object
 // and Null because `typeof null === "object"`; every other type is a single bit.
@@ -156,7 +141,11 @@ pub fn typeof_is_condition(src: Expression, mask: u32) -> Expression {
         .collect();
     let mut it = matched.into_iter();
     let Some(first) = it.next() else {
-        return E::binary(BinaryOp::StrictEq, type_of(src), str_val(&format!("type{mask}")));
+        return E::binary(
+            BinaryOp::StrictEq,
+            type_of(src),
+            str_val(&format!("type{mask}")),
+        );
     };
     let mut cond = E::binary(BinaryOp::StrictEq, type_of(src.clone()), str_val(first));
     for t in it {
@@ -186,18 +175,22 @@ pub fn handle_jmp_typeof_is(
     })
 }
 
-// Handle JmpBuiltinIs/JmpBuiltinIsNot opcodes.
+// Handle JmpBuiltinIs/JmpBuiltinIsNot opcodes. The second operand is an index
+// into this version's builtin table, not a typeof type id: hermesc guards a
+// `f.call(...)` / `f.apply(...)` site with `JmpBuiltinIs functionPrototypeCall`
+// so the fast path can call `f` directly when `call` is the intrinsic. The
+// condition is spelled `f.call === HermesBuiltin.functionPrototypeCall`; the
+// fold that drops the fast path lives in `transforms::optimize::builtin_guard`.
 pub fn handle_jmp_builtin_is(
     name: &str,
     inst: &Instruction,
     format: &BytecodeFormat,
+    version: u32,
 ) -> Option<FlowResult> {
     let target = get_jump_target(inst, format)?;
-    let type_id = inst.operands.get(1)?.value.as_u32()?;
+    let builtin_idx = inst.operands.get(1)?.value.as_u32()?;
     let src = reg_expr(&inst.operands, 2)?;
     let fallthrough = inst.offset.wrapping_add(inst.length);
-
-    let type_str = typeof_id_to_string(type_id).to_string();
 
     let op = if name.contains("Not") {
         crate::ir::BinaryOp::StrictNeq
@@ -205,17 +198,27 @@ pub fn handle_jmp_builtin_is(
         crate::ir::BinaryOp::StrictEq
     };
 
-    let condition = Expression::binary(
-        op,
-        Expression::unary(crate::ir::UnaryOp::TypeOf, src),
-        Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::String(type_str))),
-    );
+    let condition = Expression::binary(op, src, builtin_ref_expr(builtin_idx, version));
 
     Some(FlowResult::Branch {
         condition,
         target,
         fallthrough,
     })
+}
+
+// The expression that names builtin `idx` of this version's table, as the
+// `JmpBuiltinIs` guard compares against it. An index the table does not know
+// keeps a placeholder that says so instead of a wrong name.
+pub fn builtin_ref_expr(idx: u32, version: u32) -> Expression {
+    let table = crate::opcode::builtins_for_version(version);
+    match table.get(idx as usize) {
+        Some(name) => crate::ir::builder::opcodes_call::builtin_name_to_expr(name),
+        None => Expression::Unknown {
+            opcode: format!("builtin{idx}"),
+            operands: vec![],
+        },
+    }
 }
 
 // Handle Ret opcode.
@@ -280,7 +283,9 @@ pub fn handle_catch(inst: &Instruction) -> Option<FlowResult> {
     let dst = get_reg(&inst.operands, 0)?;
     Some(FlowResult::Statement(Statement::Assign {
         target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
-        value: Expression::Value(crate::ir::Value::Binding(Binding::Variable("__exception".to_string()))),
+        value: Expression::Value(crate::ir::Value::Binding(Binding::Variable(
+            "__exception".to_string(),
+        ))),
     }))
 }
 

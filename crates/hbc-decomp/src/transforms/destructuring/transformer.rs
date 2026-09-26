@@ -1,6 +1,6 @@
 use super::arrays::try_array_destructuring;
 use super::utils::{exprs_equal, extract_property_access, get_index};
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement};
 
 // Main in-place destructuring transform.
 pub fn transform_destructuring(stmts: &mut Vec<Statement>) {
@@ -36,7 +36,9 @@ pub fn transform_destructuring(stmts: &mut Vec<Statement>) {
                 // Check for default assignment for the LAST property
                 if let Some(last_prop) = properties.last_mut() {
                     if last_prop.2.is_none() {
-                        if let Some(default_val) = extract_default_assignment(&stmts[j], &last_prop.1) {
+                        if let Some(default_val) =
+                            extract_default_assignment(&stmts[j], &last_prop.1)
+                        {
                             last_prop.2 = Some(default_val);
                             j += 1;
                             continue;
@@ -66,10 +68,13 @@ pub fn transform_destructuring(stmts: &mut Vec<Statement>) {
 
                 if all_indices && try_array_destructuring(&properties) {
                     // Array Destructuring
-                    let mut indexed_props: Vec<(i64, AssignTarget, Option<Expression>)> = properties
-                        .iter()
-                        .filter_map(|(k, t, def)| get_index(k).map(|idx| (idx, t.clone(), def.clone())))
-                        .collect();
+                    let mut indexed_props: Vec<(i64, AssignTarget, Option<Expression>)> =
+                        properties
+                            .iter()
+                            .filter_map(|(k, t, def)| {
+                                get_index(k).map(|idx| (idx, t.clone(), def.clone()))
+                            })
+                            .collect();
 
                     if indexed_props.is_empty() {
                         i += 1;
@@ -82,7 +87,8 @@ pub fn transform_destructuring(stmts: &mut Vec<Statement>) {
                     // Only create array destructuring if indices are consecutive from 0
                     let expected_count = (max_idx + 1) as usize;
                     if indexed_props.len() == expected_count && indexed_props[0].0 == 0 {
-                        let mut targets: Vec<Option<(AssignTarget, Option<Expression>)>> = vec![None; expected_count];
+                        let mut targets: Vec<Option<(AssignTarget, Option<Expression>)>> =
+                            vec![None; expected_count];
                         for (idx, t, def) in indexed_props {
                             if idx >= 0 && (idx as usize) < targets.len() {
                                 targets[idx as usize] = Some((t, def));
@@ -153,7 +159,9 @@ fn is_global_object(e: &Expression) -> bool {
     use crate::ir::Value;
     match e {
         Expression::Value(Value::Global) => true,
-        Expression::Value(Value::Binding(Binding::Variable(v))) => v == "globalThis" || v == "global",
+        Expression::Value(Value::Binding(Binding::Variable(v))) => {
+            v == "globalThis" || v == "global"
+        }
         _ => false,
     }
 }
@@ -161,25 +169,39 @@ fn is_global_object(e: &Expression) -> bool {
 // Check if a statement is a default assignment for a given target.
 // E.g. `if (target === undefined) target = default_val;`
 fn extract_default_assignment(stmt: &Statement, target: &AssignTarget) -> Option<Expression> {
-    if let Statement::If { condition, then_body, else_body } = stmt {
+    if let Statement::If {
+        condition,
+        then_body,
+        else_body,
+    } = stmt
+    {
         if else_body.is_empty() && then_body.len() == 1 {
             if let Expression::Binary { op, left, right } = condition {
-                use crate::ir::{BinaryOp, Value, Constant};
+                use crate::ir::{BinaryOp, Constant, Value};
                 // Check if op is strict or loose equality
                 if *op == BinaryOp::StrictEq || *op == BinaryOp::Eq {
                     // Check if one side is the target and the other is `undefined`
                     let (t_side, val_side) = (left.as_ref(), right.as_ref());
-                    
+
                     let mut is_undefined_check = false;
                     let is_target = |expr: &Expression| -> bool {
                         match (expr, target) {
-                            (Expression::Value(Value::Binding(Binding::Variable(v1))), AssignTarget::Binding(Binding::Variable(v2))) => v1 == v2,
-                            (Expression::Value(Value::Binding(Binding::Register(r1))), AssignTarget::Binding(Binding::Register(r2))) => r1 == r2,
+                            (
+                                Expression::Value(Value::Binding(Binding::Variable(v1))),
+                                AssignTarget::Binding(Binding::Variable(v2)),
+                            ) => v1 == v2,
+                            (
+                                Expression::Value(Value::Binding(Binding::Register(r1))),
+                                AssignTarget::Binding(Binding::Register(r2)),
+                            ) => r1 == r2,
                             _ => false,
                         }
                     };
                     let is_undefined = |expr: &Expression| -> bool {
-                        matches!(expr, Expression::Value(Value::Constant(Constant::Undefined)))
+                        matches!(
+                            expr,
+                            Expression::Value(Value::Constant(Constant::Undefined))
+                        )
                     };
 
                     if (is_target(t_side) && is_undefined(val_side))
@@ -189,11 +211,21 @@ fn extract_default_assignment(stmt: &Statement, target: &AssignTarget) -> Option
                     }
 
                     if is_undefined_check {
-                        if let Statement::Assign { target: then_target, value } = &then_body[0] {
+                        if let Statement::Assign {
+                            target: then_target,
+                            value,
+                        } = &then_body[0]
+                        {
                             // Check if the assignment target matches the checked target
                             let does_target_match = match (then_target, target) {
-                                (AssignTarget::Binding(Binding::Variable(v1)), AssignTarget::Binding(Binding::Variable(v2))) => v1 == v2,
-                                (AssignTarget::Binding(Binding::Register(r1)), AssignTarget::Binding(Binding::Register(r2))) => r1 == r2,
+                                (
+                                    AssignTarget::Binding(Binding::Variable(v1)),
+                                    AssignTarget::Binding(Binding::Variable(v2)),
+                                ) => v1 == v2,
+                                (
+                                    AssignTarget::Binding(Binding::Register(r1)),
+                                    AssignTarget::Binding(Binding::Register(r2)),
+                                ) => r1 == r2,
                                 _ => false,
                             };
                             if does_target_match {

@@ -146,24 +146,49 @@ fn parse_common_tables(
     header: &BytecodeHeader,
     sections: &mut Vec<SectionInfo>,
 ) -> Result<CommonTables> {
-    let function_headers = track_section(reader, sections, "function_headers",
-        Some(header.function_count), |r| parse_function_headers(r, header))?;
+    let function_headers = track_section(
+        reader,
+        sections,
+        "function_headers",
+        Some(header.function_count),
+        |r| parse_function_headers(r, header),
+    )?;
 
-    let string_kinds = track_section(reader, sections, "string_kinds",
-        Some(header.string_kind_count), |r| parse_string_kinds(r, header.string_kind_count))?;
+    let string_kinds = track_section(
+        reader,
+        sections,
+        "string_kinds",
+        Some(header.string_kind_count),
+        |r| parse_string_kinds(r, header.string_kind_count),
+    )?;
 
-    let identifier_hashes = track_section(reader, sections, "identifier_hashes",
-        Some(header.identifier_count), |r| parse_u32_vec(r, header.identifier_count))?;
+    let identifier_hashes = track_section(
+        reader,
+        sections,
+        "identifier_hashes",
+        Some(header.identifier_count),
+        |r| parse_u32_vec(r, header.identifier_count),
+    )?;
 
-    let small_string_table = track_section(reader, sections, "small_string_table",
-        Some(header.string_count), |r| parse_u32_vec(r, header.string_count))?;
+    let small_string_table = track_section(
+        reader,
+        sections,
+        "small_string_table",
+        Some(header.string_count),
+        |r| parse_u32_vec(r, header.string_count),
+    )?;
 
-    let overflow_string_table = track_section(reader, sections, "overflow_string_table",
+    let overflow_string_table = track_section(
+        reader,
+        sections,
+        "overflow_string_table",
         Some(header.overflow_string_count),
-        |r| parse_overflow_string_table(r, header.overflow_string_count))?;
+        |r| parse_overflow_string_table(r, header.overflow_string_count),
+    )?;
 
-    let string_storage = track_section(reader, sections, "string_storage",
-        None, |r| Ok(r.read_bytes(header.string_storage_size as usize)?.to_vec()))?;
+    let string_storage = track_section(reader, sections, "string_storage", None, |r| {
+        Ok(r.read_bytes(header.string_storage_size as usize)?.to_vec())
+    })?;
 
     Ok(CommonTables {
         function_headers,
@@ -190,18 +215,21 @@ fn parse_legacy_buffers(
     sections: &mut Vec<SectionInfo>,
 ) -> Result<LayoutBuffers> {
     let array_buffer = if let Some(size) = header.array_buffer_size {
-        track_section(reader, sections, "array_buffer",
-            None, |r| Ok(r.read_bytes(size as usize)?.to_vec()))?
+        track_section(reader, sections, "array_buffer", None, |r| {
+            Ok(r.read_bytes(size as usize)?.to_vec())
+        })?
     } else {
         Vec::new()
     };
 
-    let obj_key_buffer = track_section(reader, sections, "obj_key_buffer",
-        None, |r| Ok(r.read_bytes(header.obj_key_buffer_size as usize)?.to_vec()))?;
+    let obj_key_buffer = track_section(reader, sections, "obj_key_buffer", None, |r| {
+        Ok(r.read_bytes(header.obj_key_buffer_size as usize)?.to_vec())
+    })?;
 
     let obj_value_buffer = if let Some(size) = header.obj_value_buffer_size {
-        track_section(reader, sections, "obj_value_buffer",
-            None, |r| Ok(r.read_bytes(size as usize)?.to_vec()))?
+        track_section(reader, sections, "obj_value_buffer", None, |r| {
+            Ok(r.read_bytes(size as usize)?.to_vec())
+        })?
     } else {
         Vec::new()
     };
@@ -210,10 +238,12 @@ fn parse_legacy_buffers(
     let mut big_int_table = Vec::new();
     let mut big_int_storage = Vec::new();
     if let (Some(count), Some(size)) = (header.big_int_count, header.big_int_storage_size) {
-        big_int_table = track_section(reader, sections, "bigint_table",
-            Some(count), |r| parse_table_entries(r, count))?;
-        big_int_storage = track_section(reader, sections, "bigint_storage",
-            None, |r| Ok(r.read_bytes(size as usize)?.to_vec()))?;
+        big_int_table = track_section(reader, sections, "bigint_table", Some(count), |r| {
+            parse_table_entries(r, count)
+        })?;
+        big_int_storage = track_section(reader, sections, "bigint_storage", None, |r| {
+            Ok(r.read_bytes(size as usize)?.to_vec())
+        })?;
     }
 
     Ok(LayoutBuffers {
@@ -234,18 +264,21 @@ fn parse_modern_buffers(
     sections: &mut Vec<SectionInfo>,
 ) -> Result<LayoutBuffers> {
     let literal_value_buffer = if let Some(size) = header.literal_value_buffer_size {
-        track_section(reader, sections, "literal_value_buffer",
-            None, |r| Ok(r.read_bytes(size as usize)?.to_vec()))?
+        track_section(reader, sections, "literal_value_buffer", None, |r| {
+            Ok(r.read_bytes(size as usize)?.to_vec())
+        })?
     } else {
         Vec::new()
     };
 
-    let obj_key_buffer = track_section(reader, sections, "obj_key_buffer",
-        None, |r| Ok(r.read_bytes(header.obj_key_buffer_size as usize)?.to_vec()))?;
+    let obj_key_buffer = track_section(reader, sections, "obj_key_buffer", None, |r| {
+        Ok(r.read_bytes(header.obj_key_buffer_size as usize)?.to_vec())
+    })?;
 
     let obj_shape_table = if let Some(count) = header.obj_shape_table_count {
-        track_section(reader, sections, "obj_shape_table",
-            Some(count), |r| parse_shape_table(r, count))?
+        track_section(reader, sections, "obj_shape_table", Some(count), |r| {
+            parse_shape_table(r, count)
+        })?
     } else {
         Vec::new()
     };
@@ -253,10 +286,12 @@ fn parse_modern_buffers(
     let mut big_int_table = Vec::new();
     let mut big_int_storage = Vec::new();
     if let (Some(count), Some(size)) = (header.big_int_count, header.big_int_storage_size) {
-        big_int_table = track_section(reader, sections, "bigint_table",
-            Some(count), |r| parse_table_entries(r, count))?;
-        big_int_storage = track_section(reader, sections, "bigint_storage",
-            None, |r| Ok(r.read_bytes(size as usize)?.to_vec()))?;
+        big_int_table = track_section(reader, sections, "bigint_table", Some(count), |r| {
+            parse_table_entries(r, count)
+        })?;
+        big_int_storage = track_section(reader, sections, "bigint_storage", None, |r| {
+            Ok(r.read_bytes(size as usize)?.to_vec())
+        })?;
     }
 
     Ok(LayoutBuffers {
@@ -280,19 +315,35 @@ fn parse_trailing_and_build(
     tables: CommonTables,
     buffers: LayoutBuffers,
 ) -> Result<BytecodeFile> {
-    let reg_exp_table = track_section(reader, &mut sections, "regexp_table",
-        Some(header.reg_exp_count), |r| parse_table_entries(r, header.reg_exp_count))?;
+    let reg_exp_table = track_section(
+        reader,
+        &mut sections,
+        "regexp_table",
+        Some(header.reg_exp_count),
+        |r| parse_table_entries(r, header.reg_exp_count),
+    )?;
 
-    let reg_exp_storage = track_section(reader, &mut sections, "regexp_storage",
-        None, |r| Ok(r.read_bytes(header.reg_exp_storage_size as usize)?.to_vec()))?;
+    let reg_exp_storage = track_section(reader, &mut sections, "regexp_storage", None, |r| {
+        Ok(r.read_bytes(header.reg_exp_storage_size as usize)?.to_vec())
+    })?;
 
-    let cjs_module_table = track_section(reader, &mut sections, "cjs_module_table",
-        Some(header.cjs_module_count), |r| parse_pair_table(r, header.cjs_module_count))?;
+    let cjs_module_table = track_section(
+        reader,
+        &mut sections,
+        "cjs_module_table",
+        Some(header.cjs_module_count),
+        |r| parse_pair_table(r, header.cjs_module_count),
+    )?;
 
     let mut function_source_table = Vec::new();
     if let Some(count) = header.function_source_count {
-        function_source_table = track_section(reader, &mut sections, "function_source_table",
-            Some(count), |r| parse_pair_table(r, count))?;
+        function_source_table = track_section(
+            reader,
+            &mut sections,
+            "function_source_table",
+            Some(count),
+            |r| parse_pair_table(r, count),
+        )?;
     }
 
     let instruction_offset = reader.position() as u32;
@@ -392,15 +443,24 @@ fn parse_exception_handlers(
         for _ in 0..count {
             let start = match reader.read_u32() {
                 Ok(v) => v,
-                Err(_) => { valid = false; break; }
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
             };
             let end = match reader.read_u32() {
                 Ok(v) => v,
-                Err(_) => { valid = false; break; }
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
             };
             let target = match reader.read_u32() {
                 Ok(v) => v,
-                Err(_) => { valid = false; break; }
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
             };
             handlers.push(ExceptionHandler { start, end, target });
         }

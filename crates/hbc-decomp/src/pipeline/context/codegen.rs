@@ -1,15 +1,18 @@
 // Per-function codegen from the precomputed pipeline context.
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use super::super::{get_function_name, get_function_params};
+use super::PipelineContext;
 use crate::file::BytecodeFile;
 use crate::ir::Statement;
 use crate::transforms::{self, Codegen, CodegenOptions};
-use super::super::{get_function_name, get_function_params};
-use super::PipelineContext;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 impl PipelineContext {
     // Resolve the module a function belongs to (directly or via parent closures).
-    pub(super) fn resolve_module_for_function(&self, function_id: u32) -> Option<&crate::analysis::MetroModule> {
+    pub(super) fn resolve_module_for_function(
+        &self,
+        function_id: u32,
+    ) -> Option<&crate::analysis::MetroModule> {
         // Direct module factory
         if let Some(&mod_id) = self.registry.function_to_module.get(&function_id) {
             return self.registry.modules.get(&mod_id);
@@ -68,7 +71,10 @@ impl PipelineContext {
     // Build import map (absolute Metro id → specifier). Starts with this factory's
     // declared deps, then every named module in the registry so `importDefault(4)`
     // / `require(4)` in a nested body still resolve when 4 is not in the dep array.
-    pub(super) fn build_import_map(&self, module: &crate::analysis::MetroModule) -> BTreeMap<u32, String> {
+    pub(super) fn build_import_map(
+        &self,
+        module: &crate::analysis::MetroModule,
+    ) -> BTreeMap<u32, String> {
         let mut imports = BTreeMap::new();
         for &dep_id in &module.dependencies {
             if let Some(name) = self.named_specifier(dep_id) {
@@ -149,12 +155,22 @@ impl PipelineContext {
         // the side-effecting call, discard the useless assignment target.
         statements = transforms::eliminate_dead_stores(statements);
         // Drop dead argument-setup copies (`let tmp19 = tmp12; ...` left over when a
-        // call was rebuilt from its source registers) and other unread pure temps.
-        statements = transforms::remove_dead_temp_bindings(statements);
+        // call was rebuilt from its source registers) and other unread pure temps,
+        // never a name a nested function still reads.
+        let none = std::collections::HashSet::new();
+        let keep = self
+            .captured_by_descendants
+            .get(&function_id)
+            .unwrap_or(&none);
+        statements = transforms::remove_dead_temp_bindings_keeping(statements, keep);
         // Fold the long `__d(factory, id, deps)` registration run (the modules it
         // wires are already rendered above) into a single marker comment.
         statements = transforms::collapse_metro_registry(statements);
         transforms::rename_reserved_words(&mut statements);
+        transforms::make_sanitized_names_distinct(&mut statements);
+        // Same collision as prepare_render_bodies: the parameter rename is
+        // what makes `kind = kind.kind` clobber the object.
+        statements = transforms::repair_switch_clobbers(statements);
 
         // Get function name
         // A name the bytecode confirmed for a proposal wins over the one the
@@ -170,7 +186,10 @@ impl PipelineContext {
                 file,
                 function_id,
                 names,
-                self.all_ir.get(&function_id).map(|s| s.as_slice()).unwrap_or(&[]),
+                self.all_ir
+                    .get(&function_id)
+                    .map(|s| s.as_slice())
+                    .unwrap_or(&[]),
             )
         } else {
             get_function_params(file, function_id)
@@ -182,7 +201,8 @@ impl PipelineContext {
 
         // Use pre-built inline bodies for nested function rendering
         let codegen_options = CodegenOptions::default();
-        let mut codegen = Codegen::new(codegen_options).with_inline_bodies(Arc::clone(&self.inline_bodies));
+        let mut codegen =
+            Codegen::new(codegen_options).with_inline_bodies(Arc::clone(&self.inline_bodies));
         if let Some(imports) = import_map {
             codegen = codegen.with_imports(imports);
         }
@@ -221,28 +241,31 @@ impl PipelineContext {
             let extra = self.extra_writes_for_function(function_id);
             transforms::insert_declarations_with_extra_writes(&mut statements, &params, &extra);
             codegen = codegen.with_nested_writes(extra);
-            codegen.generate_esm_module(
-                &statements,
-                module.module_id,
-                module.name.as_deref(),
-            )
+            codegen.generate_esm_module(&statements, module.module_id, module.name.as_deref())
         } else {
             // Insert const/let declarations into the IR before codegen.
             // Nested functions must not redeclare ancestor env slots.
             let extra = self.extra_writes_for_function(function_id);
             let outer = self.ancestor_env_slot_names(function_id);
-            transforms::insert_declarations_with_outer(
+            let own_slots = self.own_env_slot_names(function_id);
+            transforms::insert_declarations_with_slots(
                 &mut statements,
                 &params,
                 &extra,
                 &outer,
-                true,
+                &own_slots,
             );
 
             let body = codegen.generate_statements(&statements);
 
-            let is_async = self.closure_ctx.as_ref().is_some_and(|c| c.is_async(function_id));
-            let is_generator = self.closure_ctx.as_ref().is_some_and(|c| c.is_generator(function_id));
+            let is_async = self
+                .closure_ctx
+                .as_ref()
+                .is_some_and(|c| c.is_async(function_id));
+            let is_generator = self
+                .closure_ctx
+                .as_ref()
+                .is_some_and(|c| c.is_generator(function_id));
             // Async generators (Babel pattern) render as async, not function*
             let is_generator = is_generator && !is_async;
             let async_prefix = if is_async { "async " } else { "" };

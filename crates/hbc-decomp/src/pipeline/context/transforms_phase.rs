@@ -1,13 +1,13 @@
 // Transform pipeline stages (inline, async, generator collapse, folding).
-use std::collections::BTreeMap;
-use crate::analysis::ClosureContext;
-use crate::file::BytecodeFile;
-use crate::ir::Statement;
-use crate::transforms;
 use super::super::ir_gen::convert_yields_to_awaits;
 use super::async_detection;
 use super::generator_wrapper::generator_wrapper_target;
 use super::PipelineContext;
+use crate::analysis::ClosureContext;
+use crate::file::BytecodeFile;
+use crate::ir::Statement;
+use crate::transforms;
+use std::collections::BTreeMap;
 
 impl PipelineContext {
     pub(super) fn run_transform_pipeline(
@@ -15,6 +15,7 @@ impl PipelineContext {
         closure_ctx: &mut Option<crate::analysis::ClosureContext>,
         global_analysis: &mut crate::analysis::GlobalAnalysis,
         file: &BytecodeFile,
+        factories: &BTreeMap<u32, u32>,
     ) {
         // STAGE W12: Strip meaningless Hermes `this` from Call expressions
         for stmts in all_ir.values_mut() {
@@ -22,7 +23,17 @@ impl PipelineContext {
         }
 
         // STAGE W13: Inline single-use temporaries (tmp*, closure_*, rN), parallel.
+        // A name a nested function reads stays bound here whatever this body
+        // does with it.
         let t = std::time::Instant::now();
+        let empty_parents = BTreeMap::new();
+        let captured = transforms::names_used_by_descendants(
+            all_ir,
+            closure_ctx
+                .as_ref()
+                .map(|c| &c.parent_function)
+                .unwrap_or(&empty_parents),
+        );
         {
             use rayon::prelude::*;
             let keys: Vec<u32> = all_ir.keys().copied().collect();
@@ -30,9 +41,11 @@ impl PipelineContext {
                 .into_iter()
                 .filter_map(|id| all_ir.remove(&id).map(|s| (id, s)))
                 .collect();
-            entries.par_iter_mut().for_each(|(_, stmts)| {
+            let none = std::collections::HashSet::new();
+            entries.par_iter_mut().for_each(|(id, stmts)| {
                 let old = std::mem::take(stmts);
-                *stmts = transforms::inline_named_variables(old);
+                let keep = captured.get(id).unwrap_or(&none);
+                *stmts = transforms::inline_named_variables_keeping(old, keep);
             });
             for (id, stmts) in entries {
                 all_ir.insert(id, stmts);
@@ -53,13 +66,21 @@ impl PipelineContext {
                         *stmts = convert_yields_to_awaits(old);
                     }
                 }
-                log::debug!("[pipeline] async detection: {} functions converted yield→await", async_gen_ids.len());
+                log::debug!(
+                    "[pipeline] async detection: {} functions converted yield→await",
+                    async_gen_ids.len()
+                );
             }
         }
 
         // STAGE W15: Unwrap Babel async wrappers
         if let Some(ctx) = closure_ctx.as_mut() {
-            let unwrapped = async_detection::unwrap_async_wrappers(all_ir, ctx, &mut global_analysis.param_names, file);
+            let unwrapped = async_detection::unwrap_async_wrappers(
+                all_ir,
+                ctx,
+                &mut global_analysis.param_names,
+                file,
+            );
             if unwrapped > 0 {
                 log::debug!("[pipeline] async wrapper unwrap: {unwrapped} functions unwrapped");
             }
@@ -133,6 +154,20 @@ impl PipelineContext {
                     "[pipeline] post-reconstruct object-key naming: {renamed} closures, {inherited} inherited"
                 );
             }
+        }
+
+        // hermesc creates a non-escaping function declaration afresh at every
+        // call site. Give each such function one declaration in the scope the
+        // sites share, so the text of a module grows with its source and not
+        // with its call sites.
+        {
+            let empty = BTreeMap::new();
+            let parent_of = closure_ctx
+                .as_ref()
+                .map(|c| &c.parent_function)
+                .unwrap_or(&empty);
+            let hoisted = transforms::hoist_repeated_closures(all_ir, parent_of, factories);
+            log::debug!("[pipeline] hoisted {hoisted} repeated closures");
         }
     }
 
@@ -271,6 +306,9 @@ impl PipelineContext {
         all_ir: &mut BTreeMap<u32, Vec<Statement>>,
         closure_ctx: &mut ClosureContext,
     ) {
+        // Names each function's nested functions still read: never dropped as
+        // dead by the cleanups below.
+        let captured = transforms::names_used_by_descendants(all_ir, &closure_ctx.parent_function);
         // A wrapper is any function whose body merely returns a generator object
         // created via CreateGenerator (`return (function*(){...})()` or bare
         // `return function*(){...}`, after env-slot init). The wrapper itself is
@@ -374,11 +412,13 @@ impl PipelineContext {
                 // Flat body: inline `obj2 = {login}; obj1.body = obj2` then
                 // fold placeholder members into the literal, then drop the
                 // leftover state-machine temps (`c1 = tmp3`, `dependencyMap = 0`).
-                body = transforms::inline_named_variables(body);
+                let none = std::collections::HashSet::new();
+                let keep = captured.get(&fid).unwrap_or(&none);
+                body = transforms::inline_named_variables_keeping(body, keep);
                 transforms::fold_slot_index_fills(&mut body);
-                body = transforms::inline_named_variables(body);
+                body = transforms::inline_named_variables_keeping(body, keep);
                 transforms::fold_slot_index_fills(&mut body);
-                body = transforms::remove_dead_temp_bindings(body);
+                body = transforms::remove_dead_temp_bindings_keeping(body, keep);
                 body = transforms::eliminate_dead_stores(body);
                 body = drop_unread_bookkeeping(body);
                 body = Self::drop_stores_from_undefined_sources(body);
@@ -429,6 +469,34 @@ impl PipelineContext {
                 all_ir.insert(*fid, transforms::reconstruct_jsx(body));
             }
         }
+
+        // Single-use `tmp = fn()` / `tmp = x.prop` created by the passes above
+        // are still inlinable. Same rule as the earlier pass: one definition,
+        // one use. No name is invented.
+        {
+            use rayon::prelude::*;
+            let keys: Vec<u32> = all_ir.keys().copied().collect();
+            let mut entries: Vec<(u32, Vec<Statement>)> = keys
+                .into_iter()
+                .filter_map(|id| all_ir.remove(&id).map(|s| (id, s)))
+                .collect();
+            let none = std::collections::HashSet::new();
+            entries.par_iter_mut().for_each(|(id, stmts)| {
+                let old = std::mem::take(stmts);
+                let keep = captured.get(id).unwrap_or(&none);
+                *stmts = transforms::inline_named_variables_keeping(old, keep);
+            });
+            for (id, stmts) in entries {
+                all_ir.insert(id, stmts);
+            }
+        }
+
+        // After inlining, a discriminant copy can land on the scrutinee
+        // (`kind = kind.kind`) and the later `kind.voiceState` reads the string.
+        for stmts in all_ir.values_mut() {
+            let old = std::mem::take(stmts);
+            *stmts = transforms::repair_switch_clobbers(old);
+        }
     }
 
     pub(super) fn apply_post_ipa_transforms(all_ir: &mut BTreeMap<u32, Vec<Statement>>) {
@@ -452,7 +520,6 @@ impl PipelineContext {
             *stmts = transforms::simplify_arguments_copy(old);
         }
     }
-
 }
 
 // Drop leftover state-machine bookkeeping that reconstruct no longer reads
@@ -480,7 +547,8 @@ fn drop_unread_bookkeeping(stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::S
     stmts
         .into_iter()
         .filter(|stmt| match stmt {
-            Statement::Let { name, value, .. } | Statement::Assign {
+            Statement::Let { name, value, .. }
+            | Statement::Assign {
                 target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
                 value,
             } => {
@@ -501,7 +569,11 @@ fn is_bookkeeping_name(name: &str) -> bool {
     if name == "dependencyMap" || name == "_dependencyMap" {
         return true;
     }
-    if name == "tmp" || name.strip_prefix("tmp").is_some_and(|r| r.chars().all(|c| c.is_ascii_digit())) {
+    if name == "tmp"
+        || name
+            .strip_prefix("tmp")
+            .is_some_and(|r| r.chars().all(|c| c.is_ascii_digit()))
+    {
         return true;
     }
     let mut ch = name.chars();
@@ -514,7 +586,9 @@ fn is_bookkeeping_name(name: &str) -> bool {
 fn drop_duplicate_bare_requires(stmts: Vec<crate::ir::Statement>) -> Vec<crate::ir::Statement> {
     use crate::ir::{Expression, Statement};
     fn require_key(e: &Expression) -> Option<String> {
-        let Expression::Call { arguments, .. } = e else { return None };
+        let Expression::Call { arguments, .. } = e else {
+            return None;
+        };
         let args = if arguments.len() >= 2
             && matches!(
                 &arguments[0],
@@ -525,9 +599,9 @@ fn drop_duplicate_bare_requires(stmts: Vec<crate::ir::Statement>) -> Vec<crate::
             arguments.as_slice()
         };
         match args.first() {
-            Some(Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::Integer(id)))) => {
-                Some(format!("i{id}"))
-            }
+            Some(Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::Integer(
+                id,
+            )))) => Some(format!("i{id}")),
             Some(Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::String(s)))) => {
                 Some(format!("s{s}"))
             }
@@ -610,7 +684,9 @@ mod generator_wrapper_tests {
         ];
         let out = drop_stores(body);
         assert_eq!(out.len(), 2, "only the undefined read goes: {out:?}");
-        assert!(matches!(&out[0], Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), .. } if n == "closure_1"));
+        assert!(
+            matches!(&out[0], Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), .. } if n == "closure_1")
+        );
     }
 
     // The resume value of an await arrives as a parameter, which no statement

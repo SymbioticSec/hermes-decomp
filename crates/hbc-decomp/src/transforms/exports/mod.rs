@@ -1,7 +1,7 @@
 mod rename;
 
 use crate::analysis::metro::registry::FactoryRoles;
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
 use std::collections::HashMap;
 
 pub use rename::rename_param_registers;
@@ -14,7 +14,9 @@ fn resolve_param_idx(expr: &Expression, param_map: &HashMap<u32, u32>) -> Option
     match expr {
         Expression::Value(Value::Parameter(idx)) => Some(*idx),
         Expression::Value(Value::Binding(Binding::Register(r))) => param_map.get(r).copied(),
-        Expression::Value(Value::Binding(Binding::Variable(n))) => FactoryRoles::extract_param_index(n),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => {
+            FactoryRoles::extract_param_index(n)
+        }
         _ => None,
     }
 }
@@ -28,6 +30,9 @@ struct FactorySignals {
     // Parameter called with another parameter indexed as an argument
     // (`require(undefined, dependencyMap[k])`) → callee is `require`, indexed is `dependencyMap`.
     require: Option<u32>,
+    // Every parameter seen calling with an indexed parameter: `require`, but
+    // also Metro's `importDefault` and `importAll`, which take the same shape.
+    require_callers: std::collections::BTreeSet<u32>,
     deps: Option<u32>,
     // Any parameter indexed with a constant (`param[k]`) → candidate dependency map.
     indexed: Option<u32>,
@@ -52,7 +57,9 @@ fn collect_expr_signals(
 ) {
     match expr {
         // `param[k]` → candidate dependency map.
-        Expression::Member { object, property, .. } => {
+        Expression::Member {
+            object, property, ..
+        } => {
             if is_const_index(property) {
                 if let Some(idx) = resolve_param_idx(object, param_map) {
                     sig.indexed.get_or_insert(idx);
@@ -65,10 +72,14 @@ fn collect_expr_signals(
         Expression::Call { callee, arguments } | Expression::New { callee, arguments } => {
             if let Some(callee_idx) = resolve_param_idx(callee, param_map) {
                 for arg in arguments {
-                    if let Expression::Member { object, property, .. } = arg {
+                    if let Expression::Member {
+                        object, property, ..
+                    } = arg
+                    {
                         if is_const_index(property) {
                             if let Some(dep_idx) = resolve_param_idx(object, param_map) {
                                 sig.require.get_or_insert(callee_idx);
+                                sig.require_callers.insert(callee_idx);
                                 sig.deps.get_or_insert(dep_idx);
                             }
                         }
@@ -86,10 +97,16 @@ fn collect_expr_signals(
         }
         Expression::Unary { operand, .. } => collect_expr_signals(operand, param_map, sig),
         Expression::Assignment { target, value } => {
-            crate::ir::for_each_target_expression(target, &mut |e| collect_expr_signals(e, param_map, sig));
+            crate::ir::for_each_target_expression(target, &mut |e| {
+                collect_expr_signals(e, param_map, sig)
+            });
             collect_expr_signals(value, param_map, sig);
         }
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             collect_expr_signals(condition, param_map, sig);
             collect_expr_signals(then_expr, param_map, sig);
             collect_expr_signals(else_expr, param_map, sig);
@@ -100,7 +117,11 @@ fn collect_expr_signals(
 
 fn collect_stmt_signals(stmt: &Statement, param_map: &HashMap<u32, u32>, sig: &mut FactorySignals) {
     // `param.exports = ...` → `module`.
-    if let Statement::Assign { target: AssignTarget::Member { object, property }, value } = stmt {
+    if let Statement::Assign {
+        target: AssignTarget::Member { object, property },
+        value,
+    } = stmt
+    {
         if property == "exports" {
             if let Some(idx) = resolve_param_idx(object, param_map) {
                 sig.module.get_or_insert(idx);
@@ -115,7 +136,11 @@ fn collect_stmt_signals(stmt: &Statement, param_map: &HashMap<u32, u32>, sig: &m
         Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Let { value: e, .. } => {
             collect_expr_signals(e, param_map, sig)
         }
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             collect_expr_signals(condition, param_map, sig);
             for s in then_body.iter().chain(else_body) {
                 collect_stmt_signals(s, param_map, sig);
@@ -138,7 +163,11 @@ fn collect_stmt_signals(stmt: &Statement, param_map: &HashMap<u32, u32>, sig: &m
                 collect_stmt_signals(s, param_map, sig);
             }
         }
-        Statement::Switch { discriminant, cases, default } => {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
             collect_expr_signals(discriminant, param_map, sig);
             for (_, body) in cases {
                 for s in body {
@@ -151,13 +180,23 @@ fn collect_stmt_signals(stmt: &Statement, param_map: &HashMap<u32, u32>, sig: &m
                 }
             }
         }
-        Statement::ForOf { iterable: e, body, .. } | Statement::ForIn { object: e, body, .. } => {
+        Statement::ForOf {
+            iterable: e, body, ..
+        }
+        | Statement::ForIn {
+            object: e, body, ..
+        } => {
             collect_expr_signals(e, param_map, sig);
             for s in body {
                 collect_stmt_signals(s, param_map, sig);
             }
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             for s in try_body.iter().chain(catch_body).chain(finally_body) {
                 collect_stmt_signals(s, param_map, sig);
             }
@@ -182,7 +221,10 @@ fn collect_stmt_signals(stmt: &Statement, param_map: &HashMap<u32, u32>, sig: &m
 //
 // Naming is gated on at least one strong Metro-specific signal so that ordinary
 // functions with several parameters are never mistaken for factories.
-pub fn infer_commonjs_names(statements: &mut [Statement], param_count: u32) -> Option<Vec<Option<String>>> {
+pub fn infer_commonjs_names(
+    statements: &mut [Statement],
+    param_count: u32,
+) -> Option<Vec<Option<String>>> {
     let declared = param_count.saturating_sub(1);
     if declared < 3 {
         return None;
@@ -191,7 +233,11 @@ pub fn infer_commonjs_names(statements: &mut [Statement], param_count: u32) -> O
     // Map registers loaded from a parameter back to the parameter index.
     let mut param_map: HashMap<u32, u32> = HashMap::new();
     for stmt in statements.iter() {
-        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            value,
+        } = stmt
+        {
             match value {
                 Expression::Value(Value::Parameter(idx)) => {
                     param_map.insert(*r, *idx);
@@ -212,8 +258,7 @@ pub fn infer_commonjs_names(statements: &mut [Statement], param_count: u32) -> O
     }
 
     // Factory gate: require a strong, Metro-specific signal.
-    let looks_like_factory =
-        sig.module.is_some() || (sig.require.is_some() && sig.deps.is_some());
+    let looks_like_factory = sig.module.is_some() || (sig.require.is_some() && sig.deps.is_some());
     if !looks_like_factory {
         return None;
     }
@@ -229,8 +274,16 @@ pub fn infer_commonjs_names(statements: &mut [Statement], param_count: u32) -> O
             roles.exports_idx = m + 1;
         }
     }
+    // `importDefault(dep[k])` and `importAll(dep[k])` have the same shape as
+    // `require(dep[k])`, and a module whose first such call goes through
+    // `importDefault` used to hand it the `require` name, leaving the real
+    // `require` parameter unnamed and every `require(id)` through it
+    // unresolved. The positional index stands whenever it is one of the
+    // callers; only a layout where it never calls a dependency is overridden.
     if let Some(r) = sig.require {
-        roles.require_idx = r;
+        if !sig.require_callers.contains(&roles.require_idx) {
+            roles.require_idx = r;
+        }
     }
     if let Some(d) = sig.deps.or(sig.indexed) {
         // Only trust an indexed parameter as the dependency map if it is past
@@ -240,25 +293,8 @@ pub fn infer_commonjs_names(statements: &mut [Statement], param_count: u32) -> O
         }
     }
 
-    let mut names = vec![None; declared as usize];
-    let set = |names: &mut Vec<Option<String>>, idx: u32, name: &str| {
-        if (idx as usize) < names.len() {
-            names[idx as usize] = Some(name.to_string());
-        }
-    };
-    set(&mut names, roles.global_idx, "global");
-    set(&mut names, roles.require_idx, "require");
-    set(&mut names, roles.module_idx, "module");
-    set(&mut names, roles.exports_idx, "exports");
-    if let Some(idx) = roles.import_default_idx {
-        set(&mut names, idx, "importDefault");
-    }
-    if let Some(idx) = roles.import_all_idx {
-        set(&mut names, idx, "importAll");
-    }
-    if let Some(idx) = roles.deps_idx {
-        set(&mut names, idx, "dependencyMap");
-    }
+    roles.param_count = declared;
+    let names = roles.param_names();
 
     if names.iter().all(|n| n.is_none()) {
         return None;

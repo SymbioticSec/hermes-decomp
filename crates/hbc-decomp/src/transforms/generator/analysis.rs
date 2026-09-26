@@ -1,4 +1,4 @@
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement};
 
 // Information about a yield point in the generator.
 #[derive(Debug, Clone)]

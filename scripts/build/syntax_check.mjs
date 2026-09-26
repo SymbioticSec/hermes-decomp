@@ -48,8 +48,9 @@ if (dumpDir) fs.mkdirSync(dumpDir, { recursive: true });
 // An opening element plus a self closing or matching closing form. Requiring
 // both keeps a stray comparison such as `a < b` from passing for markup.
 function looksLikeJsx(source) {
-  const opens = /<[A-Za-z_$][\w$.]*[\s/>]/.test(source);
-  const closes = /\/>|<\/[A-Za-z_$][\w$.]*>/.test(source);
+  // A fragment, `<>...</>` or `< key={k}>...</>`, is JSX as well.
+  const opens = /<[A-Za-z_$][\w$.]*[\s/>]|<>|< [a-z]+=/.test(source);
+  const closes = /\/>|<\/[A-Za-z_$][\w$.]*>|<\/>/.test(source);
   return opens && closes;
 }
 

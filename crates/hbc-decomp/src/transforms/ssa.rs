@@ -1,5 +1,7 @@
 use crate::analysis::reaching::{DefSite, ReachingDefs};
-use crate::ir::{Binding, AssignTarget, Expression, MutVisitor, Statement, Terminator, Value, Visitor, CFG};
+use crate::ir::{
+    AssignTarget, Binding, Expression, MutVisitor, Statement, Terminator, Value, Visitor, CFG,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 // Transform the function to Static Single Assignment (SSA) form.
@@ -213,7 +215,10 @@ impl UnionFind {
 }
 
 // Reaching definitions on entry to a block, grouped by register.
-fn block_entry_reaching(rd: &ReachingDefs, block: crate::ir::BlockId) -> HashMap<u32, Vec<DefSite>> {
+fn block_entry_reaching(
+    rd: &ReachingDefs,
+    block: crate::ir::BlockId,
+) -> HashMap<u32, Vec<DefSite>> {
     let mut cur: HashMap<u32, Vec<DefSite>> = HashMap::new();
     if let Some(in_set) = rd.reaching_in.get(&block) {
         for d in in_set {
@@ -224,7 +229,11 @@ fn block_entry_reaching(rd: &ReachingDefs, block: crate::ir::BlockId) -> HashMap
 }
 
 // Union together all definitions that reach a single use.
-fn union_reaching(uf: &mut UnionFind, def_id: &HashMap<DefSite, usize>, defs: Option<&Vec<DefSite>>) {
+fn union_reaching(
+    uf: &mut UnionFind,
+    def_id: &HashMap<DefSite, usize>,
+    defs: Option<&Vec<DefSite>>,
+) {
     if let Some(defs) = defs {
         let ids: Vec<usize> = defs.iter().filter_map(|d| def_id.get(d).copied()).collect();
         for w in ids.windows(2) {
@@ -233,30 +242,28 @@ fn union_reaching(uf: &mut UnionFind, def_id: &HashMap<DefSite, usize>, defs: Op
     }
 }
 
-// Registers READ by a statement (value expressions + read sub-expressions of an
-// assignment target, Member object, Index object/key, but NOT the target
-// register itself, which is a definition).
+// Registers READ by a statement: every register in an expression position,
+// including the object and key of a member or index target and the operand
+// of a `delete`. The register a plain assignment writes is a definition, not
+// a read, and is left out.
 fn stmt_reads(stmt: &Statement) -> HashSet<u32> {
-    let mut regs = HashSet::new();
-    match stmt {
-        Statement::Assign { target, value } => {
-            collect_reg_reads(value, &mut regs);
-            match target {
-                AssignTarget::Member { object, .. } => collect_reg_reads(object, &mut regs),
-                AssignTarget::Index { object, key } => {
-                    collect_reg_reads(object, &mut regs);
-                    collect_reg_reads(key, &mut regs);
-                }
-                _ => {}
+    struct C(HashSet<u32>);
+    impl<'a> Visitor<'a> for C {
+        fn visit_expression(&mut self, e: &'a Expression) {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = e {
+                self.0.insert(*r);
+            }
+            self.walk_expression(e);
+        }
+        fn visit_assign_target(&mut self, target: &'a AssignTarget) {
+            if !matches!(target, AssignTarget::Binding(_)) {
+                self.walk_assign_target(target);
             }
         }
-        Statement::Let { value, .. } => collect_reg_reads(value, &mut regs),
-        Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(e) => {
-            collect_reg_reads(e, &mut regs)
-        }
-        _ => {}
     }
-    regs
+    let mut c = C(HashSet::new());
+    c.visit_statement(stmt);
+    c.0
 }
 
 fn terminator_reads(term: &Terminator) -> HashSet<u32> {
@@ -284,26 +291,10 @@ fn collect_reg_reads(expr: &Expression, out: &mut HashSet<u32>) {
 }
 
 // Rewrite register reads (NOT the assignment-target register) using `map`.
+// Same coverage as `stmt_reads`, so a read that was counted is also renamed.
 fn rewrite_reads_in_stmt(stmt: &mut Statement, map: &BTreeMap<u32, u32>) {
     let mut rw = ReadRewriter(map);
-    match stmt {
-        Statement::Assign { target, value } => {
-            rw.visit_expression(value);
-            match target {
-                AssignTarget::Member { object, .. } => rw.visit_expression(object),
-                AssignTarget::Index { object, key } => {
-                    rw.visit_expression(object);
-                    rw.visit_expression(key);
-                }
-                _ => {}
-            }
-        }
-        Statement::Let { value, .. } => rw.visit_expression(value),
-        Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(e) => {
-            rw.visit_expression(e)
-        }
-        _ => {}
-    }
+    rw.visit_statement(stmt);
 }
 
 fn rewrite_reads_in_terminator(term: &mut Terminator, map: &BTreeMap<u32, u32>) {
@@ -326,6 +317,11 @@ impl MutVisitor for ReadRewriter<'_> {
             return;
         }
         self.walk_expression(expr);
+    }
+    fn visit_assign_target(&mut self, target: &mut AssignTarget) {
+        if !matches!(target, AssignTarget::Binding(_)) {
+            self.walk_assign_target(target);
+        }
     }
 }
 

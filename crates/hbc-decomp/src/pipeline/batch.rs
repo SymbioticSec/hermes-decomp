@@ -1,13 +1,10 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
 use crate::analysis::{ClosureContext, MetroRegistry};
 use crate::error::Result;
 use crate::file::BytecodeFile;
 use crate::opcode::BytecodeFormat;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
-use super::{
-    build_function_name_index, generate_ir,
-    DecompileOptionsV2, PipelineContext,
-};
+use super::{build_function_name_index, generate_ir, DecompileOptionsV2, PipelineContext};
 
 // Selects which Metro modules to emit. An empty filter (no include criteria)
 // matches every module; excludes always apply on top. Used by the
@@ -39,9 +36,12 @@ impl ModuleFilter {
     }
 
     // Resolve to the concrete set of module IDs to emit.
-    fn resolve(&self, registry: &MetroRegistry) -> HashSet<u32> {
+    pub fn resolve(&self, registry: &MetroRegistry) -> HashSet<u32> {
         let module_name = |m: u32| -> &str {
-            registry.get_module(m).and_then(|x| x.name.as_deref()).unwrap_or("")
+            registry
+                .get_module(m)
+                .and_then(|x| x.name.as_deref())
+                .unwrap_or("")
         };
 
         let mut included: HashSet<u32> = HashSet::new();
@@ -50,7 +50,11 @@ impl ModuleFilter {
                 if self.id_ranges.iter().any(|&(lo, hi)| m >= lo && m <= hi) {
                     included.insert(m);
                 }
-                if self.name_globs.iter().any(|g| glob_match(g, module_name(m))) {
+                if self
+                    .name_globs
+                    .iter()
+                    .any(|g| glob_match(g, module_name(m)))
+                {
                     included.insert(m);
                 }
             }
@@ -61,7 +65,12 @@ impl ModuleFilter {
             included.extend(registry.modules.keys().copied());
         }
 
-        included.retain(|&m| !self.exclude_globs.iter().any(|g| glob_match(g, module_name(m))));
+        included.retain(|&m| {
+            !self
+                .exclude_globs
+                .iter()
+                .any(|g| glob_match(g, module_name(m)))
+        });
         included
     }
 }
@@ -232,8 +241,7 @@ fn render_bundle(
     let allowed: Option<HashSet<u32>> = active_filter.map(|f| f.resolve(&pipeline.registry));
 
     let mut output = String::new();
-    let mut module_functions: BTreeMap<u32, Vec<u32>> =
-        BTreeMap::new();
+    let mut module_functions: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     let mut orphans: Vec<u32> = Vec::new();
 
     let get_root = |func_id: u32| -> u32 {
@@ -295,7 +303,8 @@ fn render_bundle(
 
     // Print Modules
     for mod_id in sorted_modules {
-        let name = pipeline.registry
+        let name = pipeline
+            .registry
             .get_module(mod_id)
             .and_then(|m| m.name.as_deref())
             .unwrap_or("?");
@@ -304,7 +313,9 @@ fn render_bundle(
         if let Some(funcs) = module_functions.get_mut(&mod_id) {
             funcs.sort();
             for &func_id in funcs.iter() {
-                if !output.is_empty() { output.push('\n'); }
+                if !output.is_empty() {
+                    output.push('\n');
+                }
                 output.push_str(&pipeline.generate_function_code(file, func_id));
             }
         }
@@ -315,7 +326,9 @@ fn render_bundle(
         output.push_str("\n// === Orphan Functions ===\n");
         orphans.sort();
         for func_id in orphans {
-            if !output.is_empty() { output.push('\n'); }
+            if !output.is_empty() {
+                output.push('\n');
+            }
             output.push_str(&pipeline.generate_function_code(file, func_id));
         }
     }
@@ -417,6 +430,10 @@ mod tests {
     #[test]
     fn empty_filter_is_empty() {
         assert!(ModuleFilter::default().is_empty());
-        assert!(!ModuleFilter { from: Some(3), ..Default::default() }.is_empty());
+        assert!(!ModuleFilter {
+            from: Some(3),
+            ..Default::default()
+        }
+        .is_empty());
     }
 }

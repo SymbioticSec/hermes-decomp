@@ -32,24 +32,25 @@ impl MutVisitor for Simplifier {
                 Some(simplify_binary(*op, left, right))
             }
             Expression::Unary { op, operand } => {
-                let operand = mem::replace(&mut **operand, Expression::constant(Constant::Undefined));
+                let operand =
+                    mem::replace(&mut **operand, Expression::constant(Constant::Undefined));
                 Some(simplify_unary(*op, operand))
             }
             Expression::Conditional {
                 condition,
                 then_expr,
                 else_expr,
-            } => {
-                match &**condition {
-                    Expression::Value(Value::Constant(Constant::Bool(true))) => {
-                        Some(mem::replace(&mut **then_expr, Expression::constant(Constant::Undefined)))
-                    }
-                    Expression::Value(Value::Constant(Constant::Bool(false))) => {
-                        Some(mem::replace(&mut **else_expr, Expression::constant(Constant::Undefined)))
-                    }
-                    _ => None,
-                }
-            }
+            } => match &**condition {
+                Expression::Value(Value::Constant(Constant::Bool(true))) => Some(mem::replace(
+                    &mut **then_expr,
+                    Expression::constant(Constant::Undefined),
+                )),
+                Expression::Value(Value::Constant(Constant::Bool(false))) => Some(mem::replace(
+                    &mut **else_expr,
+                    Expression::constant(Constant::Undefined),
+                )),
+                _ => None,
+            },
             _ => None,
         };
 

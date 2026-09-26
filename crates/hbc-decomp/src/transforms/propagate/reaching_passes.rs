@@ -1,5 +1,5 @@
 use super::substitute::{substitute_stmt, substitute_terminator};
-use crate::ir::{Binding, AssignTarget, BlockId, Expression, Statement, Value, CFG};
+use crate::ir::{AssignTarget, Binding, BlockId, Expression, Statement, Value, CFG};
 use std::collections::BTreeMap;
 
 // Replace every register read whose reaching definitions are ALL `globalThis`

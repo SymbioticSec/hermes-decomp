@@ -1,10 +1,12 @@
 // Phase 3: module naming, closure resolution, export analysis, IPA.
-use std::collections::BTreeMap;
+
+mod module_table_names;
+use super::super::build_function_name_index;
+use super::PipelineContext;
 use crate::file::BytecodeFile;
 use crate::ir::{Constant, Expression, PropertyKey, Statement, Value, Visitor};
 use crate::transforms;
-use super::super::build_function_name_index;
-use super::PipelineContext;
+use std::collections::BTreeMap;
 
 impl PipelineContext {
     pub(super) fn run_naming_pipeline(
@@ -22,7 +24,11 @@ impl PipelineContext {
         let mut gt_named = std::collections::HashSet::new();
         let mut gt_paths: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
         let named_ffi = name_modules_from_file_finished_importing(
-            all_ir, registry, closure_ctx.as_ref(), &mut gt_named, &mut gt_paths,
+            all_ir,
+            registry,
+            closure_ctx.as_ref(),
+            &mut gt_named,
+            &mut gt_paths,
         );
         if named_ffi > 0 {
             log::debug!("[pipeline] module naming from fileFinishedImporting: {named_ffi} named");
@@ -33,9 +39,8 @@ impl PipelineContext {
         // the name table for library and worklet functions, so the source file, which
         // IS the module, is recoverable ground truth. Runs before propagation so the
         // names flow into imports and closure captures.
-        let named_src = name_modules_from_source_files(
-            file, registry, closure_ctx.as_ref(), &mut gt_named,
-        );
+        let named_src =
+            name_modules_from_source_files(file, registry, closure_ctx.as_ref(), &mut gt_named);
         if named_src > 0 {
             log::debug!("[pipeline] module naming from source files: {named_src} named");
         }
@@ -68,7 +73,11 @@ impl PipelineContext {
             // slots (a `require(id)` store rebuilds as Unknown -> closure_N). Re-inject
             // them so a slot holding `require(id)` is named after the module again,
             // otherwise the import binding regresses to `closure_N`.
-            crate::analysis::metro::propagate_module_names_to_closures(all_ir, registry, closure_ctx);
+            crate::analysis::metro::propagate_module_names_to_closures(
+                all_ir,
+                registry,
+                closure_ctx,
+            );
             if let Some(ctx) = closure_ctx.as_mut() {
                 ctx.enrich_function_slot_names();
                 // reanalyze already done above; only run the resolve loop now.
@@ -115,8 +124,18 @@ impl PipelineContext {
             }
             // Refresh closure slots so a `require(id)` capture picks up the new name
             // before the W9 resolve pass writes slot names into the IR.
+            let from_table =
+                module_table_names::name_unnamed_modules_from_function_table(file, registry);
+            if from_table > 0 {
+                log::debug!("[pipeline] module naming from function table: {from_table} named");
+                named_any = true;
+            }
             if named_any {
-                crate::analysis::metro::propagate_module_names_to_closures(all_ir, registry, closure_ctx);
+                crate::analysis::metro::propagate_module_names_to_closures(
+                    all_ir,
+                    registry,
+                    closure_ctx,
+                );
             }
         }
 
@@ -141,6 +160,24 @@ impl PipelineContext {
         }
         let mut global_analysis = crate::analysis::run_ipa(all_ir, registry, &func_name_index);
         log::debug!("[pipeline] IPA: {:.2?}", t.elapsed());
+
+        // A module factory is called by Metro alone, so no call site names its
+        // parameters; the layout does. Every factory takes its role names here,
+        // so a factory whose body never calls `require(dependencyMap[k])`
+        // itself (a module that only requires lazily, inside its functions)
+        // still binds `require` at the parameter, and every `require(id)` that
+        // reads it resolves to an import.
+        let mut factories_named = 0usize;
+        for (&fid, mid) in &registry.function_to_module {
+            if let Some(module) = registry.modules.get(mid) {
+                let names = module.roles.param_names();
+                if names.iter().any(Option::is_some) {
+                    global_analysis.param_names.insert(fid, names);
+                    factories_named += 1;
+                }
+            }
+        }
+        log::debug!("[pipeline] factory parameters named from roles: {factories_named}");
 
         // STAGE W9: IPA Closure Re-resolve
         let t = std::time::Instant::now();
@@ -180,7 +217,10 @@ impl PipelineContext {
             }
             count
         };
-        log::debug!("[pipeline] closure property naming: {:.2?} ({closure_renames} variables renamed)", t.elapsed());
+        log::debug!(
+            "[pipeline] closure property naming: {:.2?} ({closure_renames} variables renamed)",
+            t.elapsed()
+        );
 
         // STAGE W11: Definition-site closure naming
         let def_renames = transforms::rename_closures_from_definitions(all_ir);
@@ -193,8 +233,16 @@ impl PipelineContext {
         // renamed to `dependencyMap` / `dependencyMap2` only in W10, so this must
         // run last among the naming stages.
         let t = std::time::Instant::now();
-        crate::analysis::metro::rewrite_dependency_maps_late(all_ir, registry, closure_ctx);
-        log::debug!("[pipeline] dependencyMap rewrite (post-naming): {:.2?}", t.elapsed());
+        crate::analysis::metro::rewrite_dependency_maps_late(
+            all_ir,
+            registry,
+            closure_ctx,
+            &global_analysis.param_names,
+        );
+        log::debug!(
+            "[pipeline] dependencyMap rewrite (post-naming): {:.2?}",
+            t.elapsed()
+        );
 
         // STAGE W13: Inherit ancestor slot names for baked `closure_{level}_{slot}`
         // captures. resolve_closures froze these when the ancestor slot was still
@@ -204,7 +252,17 @@ impl PipelineContext {
         let t = std::time::Instant::now();
         if let Some(ctx) = closure_ctx.as_ref() {
             let inherited = transforms::inherit_ancestor_closure_names(all_ir, ctx);
-            log::debug!("[pipeline] ancestor closure inherit: {inherited} references renamed ({:.2?})", t.elapsed());
+            log::debug!(
+                "[pipeline] ancestor closure inherit: {inherited} references renamed ({:.2?})",
+                t.elapsed()
+            );
+            // STAGE W13c: every capture takes the name its owner binds now.
+            let t = std::time::Instant::now();
+            let synced = transforms::sync_capture_names(all_ir, ctx);
+            log::debug!(
+                "[pipeline] capture sync: {synced} references renamed ({:.2?})",
+                t.elapsed()
+            );
         }
 
         // STAGE W14 (deep mode only): converge naming to a fixed point. The closure and
@@ -229,8 +287,7 @@ impl PipelineContext {
 
             for _ in 0..MAX_DEEP_NAMING_ITERATIONS {
                 let pass = crate::analysis::run_ipa(all_ir, registry, &func_name_index);
-                let added =
-                    merge_param_names(&mut global_analysis.param_names, pass.param_names);
+                let added = merge_param_names(&mut global_analysis.param_names, pass.param_names);
 
                 // The missing feedback loop: parameter names live only in
                 // `global_analysis.param_names` and were baked into the IR at render
@@ -349,7 +406,9 @@ fn stabilize_unnamed_module_names(
             continue;
         }
         let dep_count = module.dependencies.len();
-        let Some(stmts) = all_ir.get(&module.function_id) else { continue };
+        let Some(stmts) = all_ir.get(&module.function_id) else {
+            continue;
+        };
         let hash = module_content_hash(stmts, dep_count, file);
         let new_name = format!("module_{hash:08x}");
         renames.insert(format!("module_{id}"), new_name.clone());
@@ -408,7 +467,10 @@ fn module_content_hash(stmts: &[Statement], dep_count: usize, file: &BytecodeFil
         }
     }
     let mut tokens = Vec::new();
-    let mut c = C { file, out: &mut tokens };
+    let mut c = C {
+        file,
+        out: &mut tokens,
+    };
     for s in stmts {
         c.visit_statement(s);
     }
@@ -456,8 +518,8 @@ fn merge_param_names(
         }
         for (i, name) in names.into_iter().enumerate() {
             if let Some(name) = name {
-                let replaces_placeholder = matches!(&entry[i], Some(e) if is_generic_name(e))
-                    && !is_generic_name(&name);
+                let replaces_placeholder =
+                    matches!(&entry[i], Some(e) if is_generic_name(e)) && !is_generic_name(&name);
                 if entry[i].is_none() || replaces_placeholder {
                     entry[i] = Some(name);
                     added += 1;
@@ -509,7 +571,9 @@ fn name_modules_from_file_finished_importing(
     let mut assigned = std::collections::HashSet::new();
     let mut named = 0;
     for (fid, (stem, path)) in stems {
-        let Some(mid) = enclosing_module_id(fid, registry, closure_ctx) else { continue };
+        let Some(mid) = enclosing_module_id(fid, registry, closure_ctx) else {
+            continue;
+        };
         if !assigned.insert(mid) {
             continue;
         }
@@ -563,7 +627,9 @@ fn is_file_finished_importing_callee(callee: &Expression) -> bool {
             property: PropertyKey::Ident(s) | PropertyKey::String(s),
             ..
         } => s == "fileFinishedImporting",
-        Expression::Value(Value::Binding(crate::ir::Binding::Variable(s))) => s == "fileFinishedImporting",
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(s))) => {
+            s == "fileFinishedImporting"
+        }
         _ => false,
     }
 }
@@ -628,7 +694,9 @@ fn name_modules_from_source_files(
             .and_then(|h| file.string_at(h.function_name()))
             .map(|e| e.value.clone());
         let Some(name) = raw else { continue };
-        let Some(src_file) = source_file_from_fn_name(&name) else { continue };
+        let Some(src_file) = source_file_from_fn_name(&name) else {
+            continue;
+        };
 
         if let Some(mid) = enclosing_module_id(fid, registry, closure_ctx) {
             if let Some(module) = registry.modules.get_mut(&mid) {
@@ -690,7 +758,6 @@ fn name_from_single_export(exports: &std::collections::HashMap<String, u32>) -> 
     }
 }
 
-
 #[cfg(test)]
 mod single_export_naming_tests {
     use super::name_from_single_export;
@@ -698,14 +765,25 @@ mod single_export_naming_tests {
     use std::collections::HashMap;
 
     fn exports(names: &[&str]) -> HashMap<String, u32> {
-        names.iter().enumerate().map(|(i, n)| ((*n).to_string(), i as u32)).collect()
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| ((*n).to_string(), i as u32))
+            .collect()
     }
 
     #[test]
     fn action_names_belong_to_functions() {
         for name in [
-            "getAndroidId", "getNetworkStateAsync", "setItemAsync", "isAirplaneMode",
-            "useNetworkState", "addListener", "onChange", "createClient", "toString",
+            "getAndroidId",
+            "getNetworkStateAsync",
+            "setItemAsync",
+            "isAirplaneMode",
+            "useNetworkState",
+            "addListener",
+            "onChange",
+            "createClient",
+            "toString",
         ] {
             assert!(names_an_action(name), "{name} names an action");
         }
@@ -714,8 +792,15 @@ mod single_export_naming_tests {
     #[test]
     fn thing_names_are_left_alone() {
         for name in [
-            "Dispatcher", "SecureStore", "getter", "settings", "isotope", "useful",
-            "Application", "NetworkStateType", "i18n",
+            "Dispatcher",
+            "SecureStore",
+            "getter",
+            "settings",
+            "isotope",
+            "useful",
+            "Application",
+            "NetworkStateType",
+            "i18n",
         ] {
             assert!(!names_an_action(name), "{name} names a thing");
         }
@@ -729,15 +814,16 @@ mod single_export_naming_tests {
             Some("Dispatcher".to_string())
         );
         // Still ambiguous when several thing-like exports remain.
-        assert_eq!(name_from_single_export(&exports(&["Dispatcher", "Store"])), None);
+        assert_eq!(
+            name_from_single_export(&exports(&["Dispatcher", "Store"])),
+            None
+        );
     }
 }
 
 #[cfg(test)]
 mod file_path_naming_tests {
-    use super::{
-        find_file_finished_importing_path, looks_like_source_path, stem_from_source_path,
-    };
+    use super::{find_file_finished_importing_path, looks_like_source_path, stem_from_source_path};
     use crate::ir::{Constant, Expression, PropertyKey, Statement, Value};
 
     fn ffi_stmt(path: &str) -> Statement {
@@ -745,7 +831,9 @@ mod file_path_naming_tests {
             name: "result".into(),
             value: Expression::Call {
                 callee: Box::new(Expression::Member {
-                    object: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("clear".into())))),
+                    object: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Variable("clear".into()),
+                    ))),
                     property: PropertyKey::Ident("fileFinishedImporting".into()),
                     optional: false,
                 }),
@@ -782,16 +870,16 @@ mod file_path_naming_tests {
 
     #[test]
     fn finds_file_finished_importing_string() {
-        let stmts = vec![ffi_stmt(
-            "../app_common/js/packages/logger/Logger.tsx",
-        )];
+        let stmts = vec![ffi_stmt("../app_common/js/packages/logger/Logger.tsx")];
         assert_eq!(
             find_file_finished_importing_path(&stmts).as_deref(),
             Some("../app_common/js/packages/logger/Logger.tsx")
         );
         let assign = Statement::Assign {
             target: crate::ir::AssignTarget::Member {
-                object: Expression::Value(Value::Binding(crate::ir::Binding::Variable("exports".into()))),
+                object: Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                    "exports".into(),
+                ))),
                 property: "fileFinishedImporting".into(),
             },
             value: Expression::Function {

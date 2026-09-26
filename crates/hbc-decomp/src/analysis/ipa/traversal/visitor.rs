@@ -51,7 +51,11 @@ pub(super) fn run_on(
         }
         Statement::ForOf { iterable, .. } => visitor.visit_expression(iterable),
         Statement::ForIn { object, .. } => visitor.visit_expression(object),
-        Statement::Switch { discriminant, cases, .. } => {
+        Statement::Switch {
+            discriminant,
+            cases,
+            ..
+        } => {
             visitor.visit_expression(discriminant);
             for (label, _) in cases {
                 visitor.visit_expression(label);
@@ -70,8 +74,12 @@ pub(super) fn run_on(
 fn param_forwarded_by_arg(arg: &Expression, defs: DefLookup<'_>) -> Option<u32> {
     match arg {
         Expression::Value(Value::Parameter(idx)) => Some(*idx),
-        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => param_index_of(name, defs),
-        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => param_index_of(&format!("r{r}"), defs),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
+            param_index_of(name, defs)
+        }
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
+            param_index_of(&format!("r{r}"), defs)
+        }
         _ => None,
     }
 }
@@ -126,7 +134,8 @@ impl<'a> crate::ir::Visitor<'a> for IpaVisitor<'a> {
 
         match expr {
             Expression::Call { callee, arguments } => {
-                let callee_id = resolve_callee(callee, self.defs, self.metro_registry, self.func_name_index);
+                let callee_id =
+                    resolve_callee(callee, self.defs, self.metro_registry, self.func_name_index);
 
                 // Trace how each call site resolves. An UNRESOLVED method call is
                 // the usual reason a parameter keeps its `argN` name: the call site
@@ -172,10 +181,18 @@ impl<'a> crate::ir::Visitor<'a> for IpaVisitor<'a> {
 
                         // Derive the naming hint, following local temporaries to
                         // their source so an intermediate register does not erase it.
-                        arg_names.push(crate::analysis::ipa::arg_hints::hint_from_arg(arg, self.value_defs));
+                        arg_names.push(crate::analysis::ipa::arg_hints::hint_from_arg(
+                            arg,
+                            self.value_defs,
+                        ));
 
                         if let Some(src_idx) = resolved_param {
-                            self.param_links.push(ParamLink { src_func: self.caller_id, src_param: src_idx, dst_func: id, dst_param: arg_idx as u32 });
+                            self.param_links.push(ParamLink {
+                                src_func: self.caller_id,
+                                src_param: src_idx,
+                                dst_func: id,
+                                dst_param: arg_idx as u32,
+                            });
                         }
                     }
 
@@ -192,7 +209,11 @@ impl<'a> crate::ir::Visitor<'a> for IpaVisitor<'a> {
                 // resolve, yet their callback argument is still a nameable user
                 // function. Only the method name and the callback argument are
                 // needed here.
-                if let Expression::Member { property: PropertyKey::Ident(method), .. } = callee.as_ref() {
+                if let Expression::Member {
+                    property: PropertyKey::Ident(method),
+                    ..
+                } = callee.as_ref()
+                {
                     if let Some(hints) = callback_param_hints(method) {
                         // These are all method calls, so index into the
                         // this-stripped user arguments (slot 0 of the raw
@@ -263,11 +284,20 @@ impl IpaVisitor<'_> {
                         arg_names.push(None);
                     }
                 }
-                Expression::Member { property: PropertyKey::String(prop), .. }
-                | Expression::Member { property: PropertyKey::Ident(prop), .. } => {
+                Expression::Member {
+                    property: PropertyKey::String(prop),
+                    ..
+                }
+                | Expression::Member {
+                    property: PropertyKey::Ident(prop),
+                    ..
+                } => {
                     arg_names.push(Some(prop.clone()));
                 }
-                Expression::Call { callee: inner_callee, .. } => {
+                Expression::Call {
+                    callee: inner_callee,
+                    ..
+                } => {
                     if let Some(name) = extract_name_from_callee(inner_callee) {
                         arg_names.push(Some(name));
                     } else if let Some(name) = extract_object_name_from_method_call(inner_callee) {
@@ -283,7 +313,12 @@ impl IpaVisitor<'_> {
             }
 
             if let Some(src_idx) = resolved_param {
-                self.param_links.push(ParamLink { src_func: self.caller_id, src_param: src_idx, dst_func: id, dst_param: arg_idx as u32 });
+                self.param_links.push(ParamLink {
+                    src_func: self.caller_id,
+                    src_param: src_idx,
+                    dst_func: id,
+                    dst_param: arg_idx as u32,
+                });
             }
         }
 

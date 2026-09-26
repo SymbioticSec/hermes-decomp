@@ -6,9 +6,10 @@ use crate::opcode::{BytecodeFormat, OperandType, OperandValue};
 
 // Encode a single instruction to its on-disk bytes (opcode + operands).
 pub fn encode_instruction(format: &BytecodeFormat, insn: &Instruction) -> Result<Vec<u8>> {
-    let def = format.definitions.get(insn.opcode as usize).ok_or_else(|| {
-        Error::Write(format!("unknown opcode {} for encode", insn.opcode))
-    })?;
+    let def = format
+        .definitions
+        .get(insn.opcode as usize)
+        .ok_or_else(|| Error::Write(format!("unknown opcode {} for encode", insn.opcode)))?;
     if insn.operands.len() != def.operand_types.len() {
         return Err(Error::Write(format!(
             "opcode {} ({}): expected {} operands, got {}",
@@ -61,11 +62,7 @@ fn write_operand(out: &mut Vec<u8>, ty: OperandType, value: &OperandValue) -> Re
                 OperandValue::U16(v) => *v,
                 OperandValue::U8(v) => *v as u16,
                 OperandValue::U32(v) if *v <= u16::MAX as u32 => *v as u16,
-                other => {
-                    return Err(Error::Write(format!(
-                        "cannot encode {other:?} as UInt16"
-                    )))
-                }
+                other => return Err(Error::Write(format!("cannot encode {other:?} as UInt16"))),
             };
             out.extend_from_slice(&v.to_le_bytes());
         }
@@ -87,9 +84,7 @@ fn write_operand(out: &mut Vec<u8>, ty: OperandType, value: &OperandValue) -> Re
                 OperandValue::I8(v) => *v,
                 OperandValue::I32(v) if *v >= i8::MIN as i32 && *v <= i8::MAX as i32 => *v as i8,
                 OperandValue::U8(v) => *v as i8,
-                other => {
-                    return Err(Error::Write(format!("cannot encode {other:?} as Addr8")))
-                }
+                other => return Err(Error::Write(format!("cannot encode {other:?} as Addr8"))),
             };
             out.push(v as u8);
         }
@@ -111,9 +106,7 @@ fn write_operand(out: &mut Vec<u8>, ty: OperandType, value: &OperandValue) -> Re
         OperandType::Double => {
             let v = match value {
                 OperandValue::F64(v) => *v,
-                other => {
-                    return Err(Error::Write(format!("cannot encode {other:?} as Double")))
-                }
+                other => return Err(Error::Write(format!("cannot encode {other:?} as Double"))),
             };
             out.extend_from_slice(&v.to_le_bytes());
         }
@@ -149,8 +142,8 @@ mod tests {
                 .decode_function_instructions(&format, id)
                 .expect("decode");
             let encoded = encode_function_body(&format, &decoded).expect("encode");
-            let start = (file.function_headers[id as usize].offset() - file.instruction_offset)
-                as usize;
+            let start =
+                (file.function_headers[id as usize].offset() - file.instruction_offset) as usize;
             let size = file.function_headers[id as usize].bytecode_size_in_bytes() as usize;
             let original = &file.instructions[start..start + size];
             assert_eq!(
@@ -176,8 +169,8 @@ mod tests {
                 Err(_) => continue, // overflowed/exception-heavy bodies may need care
             };
             let encoded = encode_function_body(&format, &decoded).expect("encode");
-            let start = (file.function_headers[id as usize].offset() - file.instruction_offset)
-                as usize;
+            let start =
+                (file.function_headers[id as usize].offset() - file.instruction_offset) as usize;
             let size = file.function_headers[id as usize].bytecode_size_in_bytes() as usize;
             let original = &file.instructions[start..start + size];
             assert_eq!(

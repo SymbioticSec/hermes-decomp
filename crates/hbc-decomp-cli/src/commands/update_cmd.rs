@@ -194,7 +194,10 @@ fn replace_running_binary(binary: &[u8]) -> Res<()> {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let mut staged_path = std::env::temp_dir();
-    staged_path.push(format!("hermes-decomp-update-{}-{nonce}", std::process::id()));
+    staged_path.push(format!(
+        "hermes-decomp-update-{}-{nonce}",
+        std::process::id()
+    ));
 
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -235,8 +238,13 @@ pub fn check() -> Res<UpdateInfo> {
 }
 
 pub fn install(version: Option<&str>) -> Res<()> {
-    let suffix = platform_suffix()
-        .ok_or_else(|| format!("no prebuilt binary for {}-{}", std::env::consts::OS, std::env::consts::ARCH))?;
+    let suffix = platform_suffix().ok_or_else(|| {
+        format!(
+            "no prebuilt binary for {}-{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    })?;
 
     let tag = version.map(|v| {
         if v.starts_with('v') {

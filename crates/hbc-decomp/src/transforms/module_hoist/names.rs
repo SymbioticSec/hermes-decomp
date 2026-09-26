@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ir::{Binding, AssignTarget, Expression, Statement};
+use crate::ir::{AssignTarget, Binding, Expression, Statement};
 
 use super::detect::loader_call;
 use super::kinds::{HoistKey, LoaderKind, RESERVED_BINDINGS};
@@ -74,8 +74,31 @@ pub(super) fn is_reused_binding(
     false
 }
 
-// Collect names bound by let/const/assign in a body (including nested blocks).
+// Collect names bound by let/const/assign in a body (including nested blocks),
+// and the names of function expressions and classes the body holds: the ESM
+// renderer turns `module.exports = function Type` into `export default
+// function Type`, a module-level binding, so a loader binding named after the
+// module `Type` it requires bound the name twice.
 pub(super) fn collect_existing_binding_names(stmts: &[Statement], out: &mut HashSet<String>) {
+    use crate::ir::Visitor;
+    struct Named<'a>(&'a mut HashSet<String>);
+    impl<'a, 'b> Visitor<'b> for Named<'a> {
+        fn visit_expression(&mut self, e: &'b Expression) {
+            if let Expression::Function { name: Some(n), .. } = e {
+                self.0.insert(n.clone());
+            }
+            self.walk_expression(e);
+        }
+        fn visit_binding_def(&mut self, name: &'b str) {
+            self.0.insert(name.to_string());
+        }
+    }
+    {
+        let mut n = Named(out);
+        for s in stmts {
+            n.visit_statement(s);
+        }
+    }
     for s in stmts {
         match s {
             Statement::Let { name, .. } => {
@@ -101,10 +124,7 @@ pub(super) fn collect_existing_binding_names(stmts: &[Statement], out: &mut Hash
                 collect_existing_binding_names(body, out);
             }
             Statement::For {
-                init,
-                body,
-                update,
-                ..
+                init, body, update, ..
             } => {
                 if let Some(i) = init {
                     collect_existing_binding_names(std::slice::from_ref(i.as_ref()), out);
@@ -131,9 +151,7 @@ pub(super) fn collect_existing_binding_names(stmts: &[Statement], out: &mut Hash
                 collect_existing_binding_names(catch_body, out);
                 collect_existing_binding_names(finally_body, out);
             }
-            Statement::Switch {
-                cases, default, ..
-            } => {
+            Statement::Switch { cases, default, .. } => {
                 for (_, body) in cases {
                     collect_existing_binding_names(body, out);
                 }

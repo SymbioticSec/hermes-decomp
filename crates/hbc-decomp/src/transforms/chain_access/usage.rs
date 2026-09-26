@@ -1,4 +1,4 @@
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value, Visitor};
 use std::collections::BTreeMap;
 
 pub fn is_chain_candidate(expr: &Expression) -> bool {

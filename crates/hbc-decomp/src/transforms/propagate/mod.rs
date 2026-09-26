@@ -1,4 +1,6 @@
-use crate::ir::{Binding, AssignTarget, BlockId, Constant, Expression, PropertyKey, Statement, Value, CFG};
+use crate::ir::{
+    AssignTarget, Binding, BlockId, Constant, Expression, PropertyKey, Statement, Value, CFG,
+};
 use std::collections::BTreeMap;
 
 mod reaching_passes;
@@ -73,7 +75,11 @@ fn global_invariant_copies(cfg: &CFG) -> BTreeMap<u32, Expression> {
     let mut values: BTreeMap<u32, Expression> = BTreeMap::new();
     for block in cfg.blocks() {
         for stmt in &block.statements {
-            if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
+            if let Statement::Assign {
+                target: AssignTarget::Binding(Binding::Register(r)),
+                value,
+            } = stmt
+            {
                 *def_count.entry(*r).or_insert(0) += 1;
                 values.insert(*r, value.clone());
             }
@@ -101,9 +107,9 @@ fn resolve_invariant_register(
         return None;
     }
     match values.get(&r)? {
-        v @ Expression::Value(
-            Value::Parameter(_) | Value::Global | Value::Constant(_),
-        ) => Some(v.clone()),
+        v @ Expression::Value(Value::Parameter(_) | Value::Global | Value::Constant(_)) => {
+            Some(v.clone())
+        }
         Expression::Value(Value::Binding(Binding::Register(b))) => {
             resolve_invariant_register(*b, values, def_count, depth + 1)
         }
@@ -185,7 +191,9 @@ fn is_propagatable(expr: &Expression) -> bool {
         // becomes the catch parameter, so the catch body ends up referring to a
         // free `__exception` (renamed inconsistently from the `catch (e)` param).
         // Keep it pinned to its register.
-        Expression::Value(Value::Binding(Binding::Variable(name))) if name == "__exception" => false,
+        Expression::Value(Value::Binding(Binding::Variable(name))) if name == "__exception" => {
+            false
+        }
         Expression::Value(_) => true,
         // Allow propagation of simple member access on known safe objects
         // e.g., `Object = globalThis.Object` → inline `globalThis.Object`

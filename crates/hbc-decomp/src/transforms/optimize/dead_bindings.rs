@@ -13,10 +13,21 @@
 
 use std::collections::HashMap;
 
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value, Visitor};
 
 pub fn remove_dead_temp_bindings(stmts: Vec<Statement>) -> Vec<Statement> {
+    remove_dead_temp_bindings_keeping(stmts, &std::collections::HashSet::new())
+}
+
+// `keep`: names a nested function reads, which count as read here.
+pub fn remove_dead_temp_bindings_keeping(
+    stmts: Vec<Statement>,
+    keep: &std::collections::HashSet<String>,
+) -> Vec<Statement> {
     let mut reads: HashMap<String, u32> = HashMap::new();
+    for name in keep {
+        reads.insert(name.clone(), 1);
+    }
     {
         let mut counter = ReadCounter { reads: &mut reads };
         for s in &stmts {
@@ -27,6 +38,9 @@ pub fn remove_dead_temp_bindings(stmts: Vec<Statement>) -> Vec<Statement> {
     // A removed copy can make a name that fed it unread too, but re-counting once
     // is enough for the shallow copy chains Hermes emits; deeper chains are rare.
     let mut reads2: HashMap<String, u32> = HashMap::new();
+    for name in keep {
+        reads2.insert(name.clone(), 1);
+    }
     {
         let mut counter = ReadCounter { reads: &mut reads2 };
         for s in &out {
@@ -44,9 +58,10 @@ fn strip(stmts: Vec<Statement>, reads: &HashMap<String, u32>) -> Vec<Statement> 
         let stmt = recurse(stmt, reads);
         let drop = match &stmt {
             Statement::Let { name, value, .. } => is_dead_binding(name, value, reads),
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
-                is_dead_binding(name, value, reads)
-            }
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable(name)),
+                value,
+            } => is_dead_binding(name, value, reads),
             _ => false,
         };
         if !drop {
@@ -76,7 +91,9 @@ fn is_trivial_value(e: &Expression) -> bool {
         | Expression::Value(Value::Binding(Binding::Register(_)))
         | Expression::Value(Value::Parameter(_))
         | Expression::Value(Value::This) => true,
-        Expression::Value(Value::Constant(c)) => !matches!(c, Constant::String(_) | Constant::BigInt(_)),
+        Expression::Value(Value::Constant(c)) => {
+            !matches!(c, Constant::String(_) | Constant::BigInt(_))
+        }
         Expression::Member { object, .. } => is_trivial_value(object),
         _ => false,
     }
@@ -84,31 +101,74 @@ fn is_trivial_value(e: &Expression) -> bool {
 
 fn recurse(stmt: Statement, reads: &HashMap<String, u32>) -> Statement {
     match stmt {
-        Statement::If { condition, then_body, else_body } => Statement::If {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::If {
             condition,
             then_body: strip(then_body, reads),
             else_body: strip(else_body, reads),
         },
-        Statement::While { condition, body } => Statement::While { condition, body: strip(body, reads) },
-        Statement::DoWhile { body, condition } => Statement::DoWhile { body: strip(body, reads), condition },
-        Statement::For { init, condition, update, body } => Statement::For {
+        Statement::While { condition, body } => Statement::While {
+            condition,
+            body: strip(body, reads),
+        },
+        Statement::DoWhile { body, condition } => Statement::DoWhile {
+            body: strip(body, reads),
+            condition,
+        },
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
             init,
             condition,
             update,
             body: strip(body, reads),
         },
-        Statement::ForIn { variable, object, body } => Statement::ForIn { variable, object, body: strip(body, reads) },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf { variable, iterable, body: strip(body, reads) },
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => Statement::ForIn {
+            variable,
+            object,
+            body: strip(body, reads),
+        },
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => Statement::ForOf {
+            variable,
+            iterable,
+            body: strip(body, reads),
+        },
         Statement::Block(inner) => Statement::Block(strip(inner, reads)),
-        Statement::TryCatch { try_body, catch_body, finally_body, catch_param } => Statement::TryCatch {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            catch_param,
+        } => Statement::TryCatch {
             try_body: strip(try_body, reads),
             catch_body: strip(catch_body, reads),
             finally_body: strip(finally_body, reads),
             catch_param,
         },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+        Statement::Switch {
             discriminant,
-            cases: cases.into_iter().map(|(c, body)| (c, strip(body, reads))).collect(),
+            cases,
+            default,
+        } => Statement::Switch {
+            discriminant,
+            cases: cases
+                .into_iter()
+                .map(|(c, body)| (c, strip(body, reads)))
+                .collect(),
             default: default.map(|d| strip(d, reads)),
         },
         other => other,
@@ -165,7 +225,11 @@ mod tests {
     fn drops_unread_pure_temp_copy() {
         // `let tmp19 = tmp12; f(tmp12);` -> tmp19 is never read, drop it.
         let stmts = vec![
-            Statement::Let { name: "tmp19".into(), value: var("tmp12"), kind: VarKind::Let },
+            Statement::Let {
+                name: "tmp19".into(),
+                value: var("tmp12"),
+                kind: VarKind::Let,
+            },
             Statement::Expr(Expression::Call {
                 callee: Box::new(var("f")),
                 arguments: vec![var("tmp12")],
@@ -179,8 +243,15 @@ mod tests {
     #[test]
     fn keeps_read_temp() {
         let stmts = vec![
-            Statement::Let { name: "tmp19".into(), value: var("tmp12"), kind: VarKind::Let },
-            Statement::Expr(Expression::Call { callee: Box::new(var("f")), arguments: vec![var("tmp19")] }),
+            Statement::Let {
+                name: "tmp19".into(),
+                value: var("tmp12"),
+                kind: VarKind::Let,
+            },
+            Statement::Expr(Expression::Call {
+                callee: Box::new(var("f")),
+                arguments: vec![var("tmp19")],
+            }),
         ];
         let out = remove_dead_temp_bindings(stmts);
         assert_eq!(out.len(), 2);
@@ -191,7 +262,10 @@ mod tests {
         // `let tmp1 = f();` unread but the call must run.
         let stmts = vec![Statement::Let {
             name: "tmp1".into(),
-            value: Expression::Call { callee: Box::new(var("f")), arguments: vec![] },
+            value: Expression::Call {
+                callee: Box::new(var("f")),
+                arguments: vec![],
+            },
             kind: VarKind::Let,
         }];
         let out = remove_dead_temp_bindings(stmts);
@@ -201,7 +275,11 @@ mod tests {
     #[test]
     fn keeps_named_binding() {
         // A meaningful name is kept even if unread.
-        let stmts = vec![Statement::Let { name: "email".into(), value: var("tmp1"), kind: VarKind::Const }];
+        let stmts = vec![Statement::Let {
+            name: "email".into(),
+            value: var("tmp1"),
+            kind: VarKind::Const,
+        }];
         let out = remove_dead_temp_bindings(stmts);
         assert_eq!(out.len(), 1);
     }

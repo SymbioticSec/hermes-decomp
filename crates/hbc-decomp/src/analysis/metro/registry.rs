@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 // Parameter role assignments for a Metro factory function.
 //
@@ -38,6 +38,31 @@ pub struct FactoryRoles {
 }
 
 impl FactoryRoles {
+    // The parameter names these roles assign, by declared index: what a
+    // factory's signature reads once every role is placed.
+    pub fn param_names(&self) -> Vec<Option<String>> {
+        let mut names = vec![None; self.param_count as usize];
+        let mut set = |idx: u32, name: &str| {
+            if let Some(slot) = names.get_mut(idx as usize) {
+                *slot = Some(name.to_string());
+            }
+        };
+        set(self.global_idx, "global");
+        set(self.require_idx, "require");
+        set(self.module_idx, "module");
+        set(self.exports_idx, "exports");
+        if let Some(idx) = self.import_default_idx {
+            set(idx, "importDefault");
+        }
+        if let Some(idx) = self.import_all_idx {
+            set(idx, "importAll");
+        }
+        if let Some(idx) = self.deps_idx {
+            set(idx, "dependencyMap");
+        }
+        names
+    }
+
     // Standard classic Metro factory: (global, require, module, exports)
     pub fn standard() -> Self {
         Self {
@@ -228,6 +253,11 @@ pub struct MetroModule {
     pub exports: HashMap<String, u32>,
     // Factory parameter roles (inferred from parameter count)
     pub roles: FactoryRoles,
+    // The name is the function name of the module's default export
+    // (`module.exports = function _slicedToArray`). Several modules carrying
+    // one such name are copies of one helper, and each keeps it.
+    #[serde(default)]
+    pub name_from_default_export: bool,
 }
 
 // Registry of all Metro modules in a bundle.
@@ -290,7 +320,10 @@ mod tests {
     #[test]
     fn classic_4_param_layout() {
         let r = FactoryRoles::from_param_count(4);
-        assert_eq!((r.global_idx, r.require_idx, r.module_idx, r.exports_idx), (0, 1, 2, 3));
+        assert_eq!(
+            (r.global_idx, r.require_idx, r.module_idx, r.exports_idx),
+            (0, 1, 2, 3)
+        );
         assert_eq!(r.import_default_idx, None);
         assert_eq!(r.import_all_idx, None);
         assert_eq!(r.deps_idx, None);

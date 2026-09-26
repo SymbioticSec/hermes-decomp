@@ -120,27 +120,43 @@ pub trait Visitor<'a> {
                     self.visit_statement(s);
                 }
             }
-            Statement::ForIn { variable, object, body } => {
+            Statement::ForIn {
+                variable,
+                object,
+                body,
+            } => {
                 self.visit_binding_def(variable);
                 self.visit_expression(object);
                 for s in body {
                     self.visit_statement(s);
                 }
             }
-            Statement::ForOf { variable, iterable, body } => {
+            Statement::ForOf {
+                variable,
+                iterable,
+                body,
+            } => {
                 self.visit_binding_def(variable);
                 self.visit_expression(iterable);
                 for s in body {
                     self.visit_statement(s);
                 }
             }
-            // The names a class introduces are reported, its body is not walked.
-            // Descending into `super_class` was tried and renamed `extends
-            // _default` to `extends r10023` on the reference bundle: the passes
-            // that rewrite expressions were written on the assumption that a class
-            // body is out of reach, and several of them are wrong inside one.
-            Statement::Class { name, methods, .. } => {
+            // The names a class introduces are reported and its `extends`
+            // expression is walked; the method bodies are not. The extends
+            // expression is an ordinary read of the enclosing scope: left out
+            // of reach, the base class's definition counted as dead and 281
+            // derived classes extended a name nothing defined.
+            Statement::Class {
+                name,
+                super_class,
+                methods,
+                ..
+            } => {
                 self.visit_binding_def(name);
+                if let Some(sc) = super_class {
+                    self.visit_expression(sc);
+                }
                 for method in methods {
                     for param in &method.params {
                         self.visit_binding_def(param);
@@ -387,20 +403,36 @@ pub trait MutVisitor {
                 self.visit_statement_list(catch_body);
                 self.visit_statement_list(finally_body);
             }
-            Statement::ForIn { variable, object, body } => {
+            Statement::ForIn {
+                variable,
+                object,
+                body,
+            } => {
                 self.visit_binding_def(variable);
                 self.visit_expression(object);
                 self.visit_statement_list(body);
             }
-            Statement::ForOf { variable, iterable, body } => {
+            Statement::ForOf {
+                variable,
+                iterable,
+                body,
+            } => {
                 self.visit_binding_def(variable);
                 self.visit_expression(iterable);
                 self.visit_statement_list(body);
             }
-            // See the read only walker: the names are reported, the body is not
-            // walked.
-            Statement::Class { name, methods, .. } => {
+            // See the read only walker: the names are reported and the extends
+            // expression is walked, the body is not.
+            Statement::Class {
+                name,
+                super_class,
+                methods,
+                ..
+            } => {
                 self.visit_binding_def(name);
+                if let Some(sc) = super_class {
+                    self.visit_expression(sc);
+                }
                 for method in methods.iter_mut() {
                     for param in method.params.iter_mut() {
                         self.visit_binding_def(param);
@@ -711,10 +743,11 @@ mod binding_def_tests {
     }
 
     // A class body is deliberately out of reach: several passes that rewrite
-    // expressions are wrong inside one, and walking it renamed `extends _default`
-    // to `extends r10023` on the reference bundle.
+    // expressions are wrong inside one. The extends expression is a read of
+    // the enclosing scope and is walked, so the base class's definition counts
+    // as used.
     #[test]
-    fn a_class_body_is_not_walked() {
+    fn a_class_body_is_not_walked_but_its_extends_is() {
         struct Count(usize);
         impl<'a> Visitor<'a> for Count {
             fn visit_expression(&mut self, e: &'a Expression) {
@@ -729,6 +762,6 @@ mod binding_def_tests {
             constructor: None,
             methods: vec![],
         });
-        assert_eq!(c.0, 0, "the super class expression stays out of reach");
+        assert_eq!(c.0, 1, "only the super class expression is visited");
     }
 }

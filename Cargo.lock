@@ -922,7 +922,6 @@ name = "hbc-decomp"
 version = "0.2.4"
 dependencies = [
  "colored",
- "env_logger",
  "log",
  "rayon",
  "regex",
@@ -947,6 +946,7 @@ dependencies = [
  "regex",
  "self-replace",
  "semver",
+ "serde",
  "serde_json",
  "sha2",
  "similar",

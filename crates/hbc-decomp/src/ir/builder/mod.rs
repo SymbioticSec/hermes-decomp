@@ -13,6 +13,7 @@ mod opcodes_obj;
 mod opcodes_prop;
 mod opcodes_switch;
 
+pub use env_state::NESTED_ENV_LEVEL_BASE;
 pub use ir_builder::{IRBuilder, IRBuilderOptions};
 pub use opcodes_obj::EXTENDS_MARKER;
 
@@ -110,7 +111,9 @@ mod tests {
 
         let stmt = Statement::let_stmt("x", Expression::constant(Constant::Integer(1)));
         builder.emit(stmt);
-        builder.emit_return(Some(Expression::Value(Value::Binding(crate::ir::Binding::Register(0)))));
+        builder.emit_return(Some(Expression::Value(Value::Binding(
+            crate::ir::Binding::Register(0),
+        ))));
 
         let cfg = builder.finish();
         assert_eq!(cfg.block_count(), 1);

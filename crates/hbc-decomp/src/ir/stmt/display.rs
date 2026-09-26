@@ -1,6 +1,6 @@
 use super::{AssignTarget, Statement, Terminator};
-use std::fmt;
 use crate::ir::Binding;
+use std::fmt;
 
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -155,7 +155,7 @@ impl fmt::Display for AssignTarget {
                 write!(f, "{s}")
             }
             AssignTarget::Index { object, key } => write!(f, "{object}[{key}]"),
-            AssignTarget::Binding(Binding::ClosureVar{ level, slot }) => {
+            AssignTarget::Binding(Binding::ClosureVar { level, slot }) => {
                 write!(f, "{}", crate::ir::Value::closure_var_name(*level, *slot))
             }
             AssignTarget::DestructuringArray(targets) => {

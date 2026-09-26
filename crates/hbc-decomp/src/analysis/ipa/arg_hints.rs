@@ -37,7 +37,9 @@ fn hint_inner(
             }
             resolve(name, value_defs, depth)
         }
-        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => resolve(&format!("r{r}"), value_defs, depth),
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
+            resolve(&format!("r{r}"), value_defs, depth)
+        }
         Expression::Value(Value::Constant(Constant::String(s))) => {
             if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 Some(s.clone())
@@ -45,7 +47,9 @@ fn hint_inner(
                 None
             }
         }
-        Expression::Member { object, property, .. } => {
+        Expression::Member {
+            object, property, ..
+        } => {
             // `obj.prop` passed directly names the parameter after the property.
             if let PropertyKey::String(p) | PropertyKey::Ident(p) = property {
                 if !is_generic_name(p) {
@@ -82,9 +86,17 @@ fn object_hint(
     depth: u8,
 ) -> Option<String> {
     match object {
-        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) if !is_generic_name(name) => Some(name.clone()),
-        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => resolve(name, value_defs, depth),
-        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => resolve(&format!("r{r}"), value_defs, depth),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name)))
+            if !is_generic_name(name) =>
+        {
+            Some(name.clone())
+        }
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
+            resolve(name, value_defs, depth)
+        }
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
+            resolve(&format!("r{r}"), value_defs, depth)
+        }
         _ => None,
     }
 }
@@ -147,6 +159,12 @@ mod tests {
     #[test]
     fn generic_without_definition_yields_none() {
         let defs = HashMap::new();
-        assert_eq!(hint_from_arg(&Expression::Value(Value::Binding(crate::ir::Binding::Register(9))), &defs), None);
+        assert_eq!(
+            hint_from_arg(
+                &Expression::Value(Value::Binding(crate::ir::Binding::Register(9))),
+                &defs
+            ),
+            None
+        );
     }
 }

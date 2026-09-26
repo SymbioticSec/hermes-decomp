@@ -2,26 +2,24 @@
 // Built once (expensive), then used to generate code for individual functions cheaply.
 
 mod async_detection;
-mod codegen;
 mod closures;
+mod codegen;
+mod generator_wrapper;
 mod ir_build;
 mod naming;
 mod rendering;
-mod generator_wrapper;
 mod transforms_phase;
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
 use crate::analysis::ClosureContext;
 use crate::error::Result;
 use crate::file::BytecodeFile;
 use crate::ir::Statement;
 use crate::opcode::BytecodeFormat;
 use crate::transforms;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use super::{
-    build_closure_context_from_file, get_function_params, DecompileOptionsV2,
-};
+use super::{build_closure_context_from_file, get_function_params, DecompileOptionsV2};
 
 // Pre-computed pipeline context that holds all intermediate analysis results.
 // Built once (expensive), then used to generate code for individual functions cheaply.
@@ -41,6 +39,9 @@ pub struct PipelineContext {
     // (top-down, O(n)). Read by both the bulk render path and the single-function
     // path so neither rebuilds the whole map per function.
     pub(super) ancestor_env_slots: BTreeMap<u32, std::collections::HashSet<String>>,
+    // Names each function's nested functions read or write, computed once:
+    // recomputing it per rendered module rescanned every function per module.
+    pub(super) captured_by_descendants: BTreeMap<u32, std::collections::HashSet<String>>,
     // Recovered Reanimated worklet sources (function name → original source),
     // extracted from `__initData.code` string constants in the bundle.
     pub(super) worklet_sources: BTreeMap<String, String>,
@@ -57,7 +58,11 @@ impl PipelineContext {
     }
 
     // Run the full analysis pipeline with user-provided options.
-    pub fn build_with_options(file: &BytecodeFile, format: &BytecodeFormat, user_options: &DecompileOptionsV2) -> Result<Self> {
+    pub fn build_with_options(
+        file: &BytecodeFile,
+        format: &BytecodeFormat,
+        user_options: &DecompileOptionsV2,
+    ) -> Result<Self> {
         crate::configure_thread_pool();
 
         let total_start = std::time::Instant::now();
@@ -105,20 +110,32 @@ impl PipelineContext {
         // STAGE W5-W11: Name resolution (module names, closures, exports, IPA)
         let phase = super::progress::Phase::start("naming / IPA / closures");
         let mut global_analysis = Self::run_naming_pipeline(
-            &mut all_ir, &mut registry, &mut closure_ctx, file, options.deep, options.stable,
+            &mut all_ir,
+            &mut registry,
+            &mut closure_ctx,
+            file,
+            options.deep,
+            options.stable,
         );
         phase.finish();
 
         // STAGE W12-W16: Transform pipeline (inlining, async detection, post-IPA)
         let phase = super::progress::Phase::start("transforms (inline / async / cleanup)");
         Self::run_transform_pipeline(
-            &mut all_ir, &mut closure_ctx, &mut global_analysis, file,
+            &mut all_ir,
+            &mut closure_ctx,
+            &mut global_analysis,
+            file,
+            &registry.function_to_module,
         );
         phase.finish();
 
         // Recover original worklet sources from embedded `__initData.code` strings.
         let worklet_sources = transforms::collect_worklet_sources(&all_ir);
-        log::debug!("[pipeline] recovered {} worklet sources", worklet_sources.len());
+        log::debug!(
+            "[pipeline] recovered {} worklet sources",
+            worklet_sources.len()
+        );
 
         // Invert the closure child → parent map once (parent → children), so the
         // per-function extra-writes walk does not rebuild it 100k+ times.
@@ -167,20 +184,30 @@ impl PipelineContext {
             inline_bodies: Arc::new(BTreeMap::new()),
             child_functions,
             ancestor_env_slots: BTreeMap::new(),
+            captured_by_descendants: BTreeMap::new(),
             worklet_sources,
             cascade_names,
         };
         // Precompute the ancestor env-slot names once (top-down, O(n)); both the
         // bulk render path and the per-function path read this instead of rebuilding.
         ctx.ancestor_env_slots = ctx.precompute_ancestor_env_slot_names();
+        ctx.captured_by_descendants = ctx.compute_captured_by_descendants();
 
         let phase = super::progress::Phase::start("inline body rendering");
         let t = std::time::Instant::now();
         ctx.build_all_inline_bodies(file);
-        log::debug!("[pipeline] inline body rendering: {:.2?} ({} of {} functions)", t.elapsed(), ctx.inline_bodies.len(), file.header.function_count);
+        log::debug!(
+            "[pipeline] inline body rendering: {:.2?} ({} of {} functions)",
+            t.elapsed(),
+            ctx.inline_bodies.len(),
+            file.header.function_count
+        );
         phase.finish_with(format!("{} bodies", ctx.inline_bodies.len()));
 
-        log::debug!("[pipeline] exception handlers: {} functions with try/catch", file.exception_handlers.len());
+        log::debug!(
+            "[pipeline] exception handlers: {} functions with try/catch",
+            file.exception_handlers.len()
+        );
         log::debug!("[pipeline] TOTAL: {:.2?}", total_start.elapsed());
         super::progress::status(format!(
             "analysis complete in {:.1}s",

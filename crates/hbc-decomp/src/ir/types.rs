@@ -159,13 +159,16 @@ mod binding_tests {
 
     #[test]
     fn a_value_that_reads_a_location_yields_its_binding() {
-        assert_eq!(Value::Binding(Binding::Register(5)).as_binding(), Some(Binding::Register(5)));
+        assert_eq!(
+            Value::Binding(Binding::Register(5)).as_binding(),
+            Some(Binding::Register(5))
+        );
         assert_eq!(
             Value::Binding(Binding::Variable("env".into())).as_binding(),
             Some(Binding::Variable("env".into()))
         );
         assert_eq!(
-            Value::Binding(Binding::ClosureVar{ level: 1, slot: 2 }).as_binding(),
+            Value::Binding(Binding::ClosureVar { level: 1, slot: 2 }).as_binding(),
             Some(Binding::ClosureVar { level: 1, slot: 2 })
         );
     }

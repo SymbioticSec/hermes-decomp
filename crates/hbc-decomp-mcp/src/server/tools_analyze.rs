@@ -6,9 +6,10 @@ use rmcp::{tool, tool_router, ErrorData as McpError};
 
 use hbc_decomp::opcode::BytecodeFormat;
 use hbc_decomp::{
-    BytecodeFile, ClosureInfo, DecompileOptionsV2, DebugInfo, IRBuilder, IRBuilderOptions,
+    BytecodeFile, ClosureInfo, DebugInfo, DecompileOptionsV2, IRBuilder, IRBuilderOptions,
 };
 
+use super::bounds::{parse_globs, parse_id_ranges, truncate_at_line};
 use super::params::*;
 use super::{HermesService, LoadedFile};
 
@@ -21,12 +22,17 @@ impl HermesService {
         &self,
         Parameters(params): Parameters<LoadFileParams>,
     ) -> Result<CallToolResult, McpError> {
-        let bytes = std::fs::read(&params.path)
-            .map_err(|e| McpError::internal_error(format!("Failed to read file: {e}"), None))?;
-        let file = BytecodeFile::parse_auto(&bytes)
-            .map_err(|e| McpError::internal_error(format!("Failed to parse HBC: {e}"), None))?;
-        let (format, _) = BytecodeFormat::for_version_or_latest(file.header.version)
-            .map_err(|e| McpError::internal_error(format!("Unsupported version: {e}"), None))?;
+        // Parsing does not go through with_file, so it gets its own large stack.
+        let path = params.path.clone();
+        let (bytes, file, format) = hbc_decomp::run_with_large_stack(move || {
+            let bytes = std::fs::read(&path)
+                .map_err(|e| McpError::internal_error(format!("Failed to read file: {e}"), None))?;
+            let file = BytecodeFile::parse_auto(&bytes)
+                .map_err(|e| McpError::internal_error(format!("Failed to parse HBC: {e}"), None))?;
+            let (format, _) = BytecodeFormat::for_version_or_latest(file.header.version)
+                .map_err(|e| McpError::internal_error(format!("Unsupported version: {e}"), None))?;
+            Ok::<_, McpError>((bytes, file, format))
+        })?;
 
         let info = format!(
             "Loaded: {}\nVersion: {}\nFunctions: {}\nStrings: {}",
@@ -83,9 +89,8 @@ impl HermesService {
                 cascade: None,
             };
             let code = if params.resolve_closures {
-                let closure_ctx =
-                    hbc_decomp::build_closure_context(&loaded.file, &loaded.format)
-                        .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+                let closure_ctx = hbc_decomp::build_closure_context(&loaded.file, &loaded.format)
+                    .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
                 hbc_decomp::decompile_function_v2_with_context(
                     &loaded.file,
                     &loaded.format,
@@ -123,24 +128,50 @@ impl HermesService {
     }
 
     #[tool(
-        description = "Decompile all functions with full pipeline (IPA, closures, ESM). Groups output by Metro module. May take several seconds for large bundles."
+        description = "Decompile the bundle with the full pipeline (IPA, closures, ESM), grouped by Metro module. Filtered and bounded: select modules with modules (id ranges), module_name / exclude_module_name (globs) or from_module + module_depth (dependency subtree), and cap the output with max_chars (default 2000000). Output above the cap is cut at a line boundary and a second block reports truncated, total_chars and kept_chars. Without a filter, orphan functions are included."
     )]
     fn decompile_all(
         &self,
         Parameters(params): Parameters<DecompileAllParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.with_file(|loaded| {
+        self.with_file_mut(|loaded| {
+            // Warm the in-memory context (and its on-disk cache) so the filtered
+            // render below is served from the cache instead of re-analyzing.
+            loaded.ensure_pipeline(params.deep)?;
             let opts = DecompileOptionsV2 {
                 deep: params.deep,
                 ..DecompileOptionsV2::optimized()
             };
-            let code = hbc_decomp::decompile_all_v2_with_closures(
+            let filter = hbc_decomp::ModuleFilter {
+                id_ranges: parse_id_ranges(params.modules.as_deref()),
+                name_globs: parse_globs(params.module_name.as_deref()),
+                exclude_globs: parse_globs(params.exclude_module_name.as_deref()),
+                from: params.from_module,
+                depth: params.module_depth,
+            };
+            let cache_path = hbc_decomp::default_cache_path(std::path::Path::new(&loaded.path));
+            let code = hbc_decomp::decompile_filtered_v2_cached(
                 &loaded.file,
                 &loaded.format,
                 &opts,
+                Some(&filter),
+                &loaded.bytes,
+                &cache_path,
             )
             .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
-            Ok(CallToolResult::success(vec![ContentBlock::text(code)]))
+
+            let bounded = truncate_at_line(code, params.max_chars);
+            let summary = serde_json::json!({
+                "truncated": bounded.truncated,
+                "total_chars": bounded.total_chars,
+                "kept_chars": bounded.kept_chars,
+                "max_chars": params.max_chars,
+                "filtered": !filter.is_empty(),
+            });
+            Ok(CallToolResult::success(vec![
+                ContentBlock::text(bounded.text),
+                ContentBlock::text(summary.to_string()),
+            ]))
         })
     }
 
@@ -267,7 +298,9 @@ impl HermesService {
             loaded.ensure_pipeline(false)?;
             let registry = &loaded.pipeline_ctx.as_ref().unwrap().registry;
             let tree = registry.get_dependency_tree(params.module_id, params.depth);
-            Ok(CallToolResult::success(vec![ContentBlock::text(tree.format(0))]))
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                tree.format(0),
+            )]))
         })
     }
 
@@ -305,10 +338,7 @@ impl HermesService {
                     }
                 }
                 "all" => {
-                    output.push_str(&format!(
-                        "=== {} strings ===\n",
-                        file.header.string_count
-                    ));
+                    output.push_str(&format!("=== {} strings ===\n", file.header.string_count));
                     for i in 0..file.header.string_count {
                         if let Some(s) = file.string_at(i) {
                             output.push_str(&format!("{}: {}\n", i, s.value));
@@ -517,7 +547,8 @@ impl HermesService {
             }
 
             if output.is_empty() {
-                output.push_str("Debug info section exists but contains no data for this function.");
+                output
+                    .push_str("Debug info section exists but contains no data for this function.");
             }
 
             Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
@@ -570,10 +601,7 @@ impl HermesService {
                 .modules
                 .get(&params.module_id)
                 .ok_or_else(|| {
-                    McpError::invalid_params(
-                        format!("Module {} not found", params.module_id),
-                        None,
-                    )
+                    McpError::invalid_params(format!("Module {} not found", params.module_id), None)
                 })?;
             let function_id = module.function_id;
             let code = pipeline.generate_function_code(&loaded.file, function_id);
@@ -596,10 +624,7 @@ impl HermesService {
                 .modules
                 .get(&params.module_id)
                 .ok_or_else(|| {
-                    McpError::invalid_params(
-                        format!("Module {} not found", params.module_id),
-                        None,
-                    )
+                    McpError::invalid_params(format!("Module {} not found", params.module_id), None)
                 })?;
 
             let name_str = module

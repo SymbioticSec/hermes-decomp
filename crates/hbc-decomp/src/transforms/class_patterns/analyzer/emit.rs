@@ -1,6 +1,6 @@
-use crate::ir::{Statement, Expression, ClassMethod, MethodKind, PropertyKey, Value};
-use crate::transforms::class_patterns::builder::ClassBuilder;
 use super::ClassAnalyzer;
+use crate::ir::{ClassMethod, Expression, MethodKind, PropertyKey, Statement, Value};
+use crate::transforms::class_patterns::builder::ClassBuilder;
 
 // Recognize a Hermes-synthesized *default* constructor body, which the source
 // did not write and which should not be emitted (the class then has no explicit
@@ -22,7 +22,9 @@ fn is_synthesized_default_ctor(body: &Option<Vec<Statement>>) -> bool {
 
 // `Object.create(new.target.prototype)`, the synthesized base constructor.
 fn is_object_create_new_target(expr: &Expression) -> bool {
-    let Expression::Call { callee, arguments } = expr else { return false };
+    let Expression::Call { callee, arguments } = expr else {
+        return false;
+    };
     let is_create = matches!(callee.as_ref(),
         Expression::Member { property: PropertyKey::Ident(p) | PropertyKey::String(p), .. } if p == "create");
     if !is_create {
@@ -54,20 +56,6 @@ fn function_name(expr: &Expression) -> Option<String> {
     None
 }
 
-// Visitor that flags any use of `super` (Value::Super) in an IR subtree.
-struct SuperFinder {
-    found: bool,
-}
-
-impl<'a> crate::ir::Visitor<'a> for SuperFinder {
-    fn visit_expression(&mut self, expr: &'a Expression) {
-        if matches!(expr, Expression::Value(Value::Super)) {
-            self.found = true;
-        }
-        self.walk_expression(expr);
-    }
-}
-
 // A real source class name, not a register placeholder like "r10000".
 pub(super) fn is_real_class_name(name: &str) -> bool {
     if name.is_empty() {
@@ -85,10 +73,13 @@ impl<'a> ClassAnalyzer<'a> {
         // The class display name comes from the constructor *function* name (e.g.
         // `r10000 = function Animal() {}`), not the register the closure lands in.
         let display = function_name(&value);
-        let builder = self.classes.entry(name.to_string()).or_insert_with(|| ClassBuilder {
-            name: name.to_string(),
-            ..Default::default()
-        });
+        let builder = self
+            .classes
+            .entry(name.to_string())
+            .or_insert_with(|| ClassBuilder {
+                name: name.to_string(),
+                ..Default::default()
+            });
         if let Some(display) = display {
             if is_real_class_name(&display) {
                 builder.name = display;
@@ -100,13 +91,24 @@ impl<'a> ClassAnalyzer<'a> {
         self.consume(name, idx);
     }
 
-    pub(super) fn add_method(&mut self, class_name: &str, method_name: String, value: Expression, is_static: bool, kind: MethodKind, idx: usize) {
+    pub(super) fn add_method(
+        &mut self,
+        class_name: &str,
+        method_name: String,
+        value: Expression,
+        is_static: bool,
+        kind: MethodKind,
+        idx: usize,
+    ) {
         let body = self.fetch_body(&value);
         let params = self.fetch_params(&value);
-        let builder = self.classes.entry(class_name.to_string()).or_insert_with(|| ClassBuilder {
-            name: class_name.to_string(),
-            ..Default::default()
-        });
+        let builder = self
+            .classes
+            .entry(class_name.to_string())
+            .or_insert_with(|| ClassBuilder {
+                name: class_name.to_string(),
+                ..Default::default()
+            });
         builder.methods.push(ClassMethod {
             key: method_name,
             value,
@@ -136,20 +138,18 @@ impl<'a> ClassAnalyzer<'a> {
 
     // True if the function backing `value` uses the ES6 `super` keyword. Such a
     // method must be emitted *inside* a class body (super is invalid elsewhere).
-    pub(super) fn body_uses_super(&self, value: &Expression) -> bool {
-        let Some(body) = self.fetch_body(value) else { return false };
-        let mut finder = SuperFinder { found: false };
-        for s in &body {
-            crate::ir::Visitor::visit_statement(&mut finder, s);
-        }
-        finder.found
-    }
-
     pub(super) fn fetch_body(&self, expr: &Expression) -> Option<Vec<Statement>> {
         if let Expression::Function { id, .. } = expr {
-            let mut body = crate::generate_ir(self.file, self.format, id.0, self.options, self.closure_ctx, true)
-                .map_err(|e| log::debug!("[class_patterns] IR gen failed for func {}: {e}", id.0))
-                .ok()?;
+            let mut body = crate::generate_ir(
+                self.file,
+                self.format,
+                id.0,
+                self.options,
+                self.closure_ctx,
+                true,
+            )
+            .map_err(|e| log::debug!("[class_patterns] IR gen failed for func {}: {e}", id.0))
+            .ok()?;
             // Method/constructor bodies emitted here bypass the whole-program
             // `strip_hermes_this` pass (it does not recurse into Statement::Class),
             // so apply it locally, otherwise super calls render as
@@ -193,7 +193,11 @@ impl<'a> ClassAnalyzer<'a> {
 
     pub(super) fn transform_recursive(&mut self, stmt: Statement) -> Statement {
         match stmt {
-            Statement::If { condition, then_body, else_body } => Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => Statement::If {
                 condition,
                 then_body: self.analyze(then_body),
                 else_body: self.analyze(else_body),
@@ -202,24 +206,42 @@ impl<'a> ClassAnalyzer<'a> {
                 condition,
                 body: self.analyze(body),
             },
-            Statement::For { init, condition, update, body } => Statement::For {
+            Statement::For {
+                init,
+                condition,
+                update,
+                body,
+            } => Statement::For {
                 init,
                 condition,
                 update,
                 body: self.analyze(body),
             },
-            Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+            Statement::ForOf {
+                variable,
+                iterable,
+                body,
+            } => Statement::ForOf {
                 variable,
                 iterable,
                 body: self.analyze(body),
             },
-            Statement::ForIn { variable, object, body } => Statement::ForIn {
+            Statement::ForIn {
+                variable,
+                object,
+                body,
+            } => Statement::ForIn {
                 variable,
                 object,
                 body: self.analyze(body),
             },
             Statement::Block(inner) => Statement::Block(self.analyze(inner)),
-            Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
+            Statement::TryCatch {
+                try_body,
+                catch_param,
+                catch_body,
+                finally_body,
+            } => Statement::TryCatch {
                 try_body: self.analyze(try_body),
                 catch_param,
                 catch_body: self.analyze(catch_body),
@@ -248,7 +270,9 @@ mod tests {
         // return Object.create(new.target.prototype);
         let body = Some(vec![Statement::Return(Some(Expression::Call {
             callee: Box::new(member(
-                Expression::Value(Value::Binding(crate::ir::Binding::Variable("Object".into()))),
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                    "Object".into(),
+                ))),
                 "create",
             )),
             arguments: vec![member(Expression::Value(Value::NewTarget), "prototype")],
@@ -261,7 +285,9 @@ mod tests {
         // return HermesBuiltin.applyArguments(...);
         let body = Some(vec![Statement::Return(Some(Expression::Call {
             callee: Box::new(member(
-                Expression::Value(Value::Binding(crate::ir::Binding::Variable("HermesBuiltin".into()))),
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(
+                    "HermesBuiltin".into(),
+                ))),
                 "applyArguments",
             )),
             arguments: vec![Expression::Value(Value::NewTarget)],

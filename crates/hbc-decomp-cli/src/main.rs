@@ -24,7 +24,13 @@ fn init_logging(spec: Option<&str>) {
     // Compact, target-tagged format so `--log modname=trace` output is easy to grep.
     builder.format(|buf, record| {
         use std::io::Write;
-        writeln!(buf, "[{:<5} {}] {}", record.level(), record.target(), record.args())
+        writeln!(
+            buf,
+            "[{:<5} {}] {}",
+            record.level(),
+            record.target(),
+            record.args()
+        )
     });
     // Already-initialized is fine (e.g. tests); ignore the error.
     let _ = builder.try_init();
@@ -41,12 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     commands::update_cmd::auto_check_on_startup();
 
     match cli.command {
-        Command::Info {
-            input,
-            layout,
-            function_layout,
-        } => {
-            let file = load_file(&input, layout, function_layout)?;
+        Command::Info { input, format } => {
+            let file = load_file(&input, &format)?;
             commands::debug_cmd::print_info(&file);
         }
         Command::Versions => {
@@ -61,14 +63,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Tui {
             input,
             input2,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
             diff_code,
         } => {
-            tui::debug_log(&format!("[TUI] Loading primary bundle: {}", input.display()));
+            tui::debug_log(&format!(
+                "[TUI] Loading primary bundle: {}",
+                input.display()
+            ));
             let primary_load_start = Instant::now();
-            let file = load_file(&input, layout, function_layout)?;
+            let file = load_file(&input, &format_args)?;
             tui::debug_log(&format!(
                 "[TUI] Loaded primary bundle in {:.2?} (functions: {})",
                 primary_load_start.elapsed(),
@@ -76,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ));
 
             let primary_format_start = Instant::now();
-            let format = load_format(&file, format_version)?;
+            let format = load_format(&file, format_args.format_version)?;
             tui::debug_log(&format!(
                 "[TUI] Resolved primary format in {:.2?}",
                 primary_format_start.elapsed()
@@ -84,9 +87,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let path = input.display().to_string();
 
             let diff_target = if let Some(path2) = input2 {
-                tui::debug_log(&format!("[TUI] Loading secondary bundle: {}", path2.display()));
+                tui::debug_log(&format!(
+                    "[TUI] Loading secondary bundle: {}",
+                    path2.display()
+                ));
                 let secondary_load_start = Instant::now();
-                let file2 = load_file(&path2, layout, function_layout)?;
+                let file2 = load_file(&path2, &format_args)?;
                 tui::debug_log(&format!(
                     "[TUI] Loaded secondary bundle in {:.2?} (functions: {})",
                     secondary_load_start.elapsed(),
@@ -94,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ));
 
                 let secondary_format_start = Instant::now();
-                let format2 = load_format(&file2, format_version)?;
+                let format2 = load_format(&file2, format_args.format_version)?;
                 tui::debug_log(&format!(
                     "[TUI] Resolved secondary format in {:.2?}",
                     secondary_format_start.elapsed()
@@ -110,16 +116,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             input,
             function,
             output,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
             show_offsets,
             no_labels,
             no_strings,
             info,
         } => {
-            let file = load_file(&input, layout, function_layout)?;
-            let format = load_format(&file, format_version)?;
+            let file = load_file(&input, &format_args)?;
+            let format = load_format(&file, format_args.format_version)?;
             let options = DisasmOptions {
                 show_offsets,
                 show_labels: !no_labels,
@@ -137,7 +141,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(banner) = hbc_decomp::function_info_banner(&file, id) {
                         out.push_str(&format!("; {banner}\n"));
                     }
-                    out.push_str(&hbc_decomp::disassemble_function(&file, &format, id, &options)?);
+                    out.push_str(&hbc_decomp::disassemble_function(
+                        &file, &format, id, &options,
+                    )?);
                     out.push('\n');
                 }
                 out
@@ -152,9 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             input,
             function,
             output,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
             show_offsets,
             no_strings,
             no_propagate,
@@ -183,13 +187,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let decomp_start = std::time::Instant::now();
             if want_progress {
-                eprintln!(
-                    "hermes-decomp: decompiling {} …",
-                    input.display()
-                );
+                eprintln!("hermes-decomp: decompiling {} …", input.display());
             }
 
-            let (file, file_bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
+            let (file, file_bytes) = helpers::load_file_with_bytes(&input, &format_args)?;
             if want_progress {
                 let mb = file_bytes.len() as f64 / (1024.0 * 1024.0);
                 eprintln!(
@@ -198,7 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             let cache_path = hbc_decomp::default_cache_path(&input);
-            let format = load_format(&file, format_version)?;
+            let format = load_format(&file, format_args.format_version)?;
             let options = DecompileOptionsV2 {
                 resolve_strings: !no_strings,
                 include_offsets: show_offsets || assembly,
@@ -215,74 +216,121 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let no_cache = no_cache || cascade.is_some();
 
             if check_dead_code {
-                let analysis = hbc_decomp::analyze_module(&file, &format)?;
-                println!("Dead Code Analysis:");
-                println!("-------------------");
-                if analysis.dead_code.is_empty() {
-                    println!("No unreachable functions detected.");
+                commands::decompile_cmd::print_dead_code_report(&file, &format)?;
+                return Ok(());
+            }
+
+            let filter = hbc_decomp::ModuleFilter {
+                id_ranges: parse_id_ranges(modules.as_deref()),
+                name_globs: parse_globs(module_name.as_deref()),
+                exclude_globs: parse_globs(exclude_module_name.as_deref()),
+                from: from_module,
+                depth: module_depth,
+            };
+
+            if json {
+                // The same pipeline (and cache) as the JavaScript path, so the IR
+                // carries the IPA, closure and module naming the text output gets.
+                let ctx = if no_cache {
+                    hbc_decomp::PipelineContext::build_with_options(&file, &format, &options)?
                 } else {
-                    let mut dead: Vec<u32> = analysis.dead_code.into_iter().collect();
-                    dead.sort();
-                    println!("Found {} unreachable functions:", dead.len());
-                    for id in dead {
-                        let name = file.string_at(file.function_headers[id as usize].function_name())
-                            .map(|e| e.value.as_str()).unwrap_or("");
-                        println!("  Function {id} ({name})");
+                    hbc_decomp::PipelineContext::build_cached(
+                        &file,
+                        &format,
+                        &options,
+                        &file_bytes,
+                        &cache_path,
+                    )?
+                };
+                let selected =
+                    commands::decompile_cmd::select_json_functions(&ctx, function, &filter)?;
+                match &output {
+                    Some(path) => {
+                        let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
+                        commands::decompile_cmd::write_ir_json(&mut w, &file, &ctx, &selected)?;
+                        eprintln!("Wrote {} ({} functions)", path.display(), selected.len());
                     }
+                    None => {
+                        let mut w = std::io::BufWriter::new(std::io::stdout().lock());
+                        commands::decompile_cmd::write_ir_json(&mut w, &file, &ctx, &selected)?;
+                    }
+                }
+                if want_progress {
+                    eprintln!(
+                        "hermes-decomp: finished in {:.1}s",
+                        decomp_start.elapsed().as_secs_f64()
+                    );
                 }
                 return Ok(());
             }
 
-            let content = if json {
-                 if let Some(function_id) = function {
-                     commands::decompile_cmd::expand_json(&file, &format, function_id, &options)?
-                 } else {
-                     let mut results = Vec::new();
-                     let decomp = hbc_decomp::Decompiler::from_parts(file.clone(), format.clone());
-                     for i in 0..file.header.function_count {
-                         if let Ok(ir) = decomp.decompile_to_ir(i, &options) {
-                             results.push(serde_json::json!({
-                                 "functionId": i,
-                                 "ir": ir
-                             }));
-                         }
-                     }
-                     serde_json::to_string_pretty(&results)?
-                 }
-            } else if expand {
+            let content = if expand {
                 if let Some(function_id) = function {
-                    commands::decompile_cmd::decompile_with_expansion(&file, &format, function_id, &options, expand_depth)?
+                    commands::decompile_cmd::decompile_with_expansion(
+                        &file,
+                        &format,
+                        function_id,
+                        &options,
+                        expand_depth,
+                    )?
                 } else if no_cache {
                     hbc_decomp::decompile_all_v2_with_closures(&file, &format, &options)?
                 } else {
-                    hbc_decomp::decompile_all_v2_with_closures_cached(&file, &format, &options, &file_bytes, &cache_path)?
+                    hbc_decomp::decompile_all_v2_with_closures_cached(
+                        &file,
+                        &format,
+                        &options,
+                        &file_bytes,
+                        &cache_path,
+                    )?
                 }
             } else if let Some(function_id) = function {
                 if resolve_closures {
                     let ctx = hbc_decomp::build_closure_context(&file, &format)?;
-                    hbc_decomp::decompile_function_v2_with_context(&file, &format, function_id, &options, Some(&ctx))?
+                    hbc_decomp::decompile_function_v2_with_context(
+                        &file,
+                        &format,
+                        function_id,
+                        &options,
+                        Some(&ctx),
+                    )?
                 } else {
                     hbc_decomp::decompile_function_v2(&file, &format, function_id, &options)?
                 }
             } else {
-                let filter = hbc_decomp::ModuleFilter {
-                    id_ranges: parse_id_ranges(modules.as_deref()),
-                    name_globs: parse_globs(module_name.as_deref()),
-                    exclude_globs: parse_globs(exclude_module_name.as_deref()),
-                    from: from_module,
-                    depth: module_depth,
-                };
                 match (filter.is_empty(), no_cache) {
-                    (true, true) => hbc_decomp::decompile_all_v2_with_closures(&file, &format, &options)?,
-                    (true, false) => hbc_decomp::decompile_all_v2_with_closures_cached(&file, &format, &options, &file_bytes, &cache_path)?,
-                    (false, true) => hbc_decomp::decompile_filtered_v2(&file, &format, &options, Some(&filter))?,
-                    (false, false) => hbc_decomp::decompile_filtered_v2_cached(&file, &format, &options, Some(&filter), &file_bytes, &cache_path)?,
+                    (true, true) => {
+                        hbc_decomp::decompile_all_v2_with_closures(&file, &format, &options)?
+                    }
+                    (true, false) => hbc_decomp::decompile_all_v2_with_closures_cached(
+                        &file,
+                        &format,
+                        &options,
+                        &file_bytes,
+                        &cache_path,
+                    )?,
+                    (false, true) => {
+                        hbc_decomp::decompile_filtered_v2(&file, &format, &options, Some(&filter))?
+                    }
+                    (false, false) => hbc_decomp::decompile_filtered_v2_cached(
+                        &file,
+                        &format,
+                        &options,
+                        Some(&filter),
+                        &file_bytes,
+                        &cache_path,
+                    )?,
                 }
             };
 
             let content = if assembly {
                 let file_path = input.display().to_string();
-                commands::decompile_cmd::format_assembly_output(&content, &file, &file_path, file_bytes.len())
+                commands::decompile_cmd::format_assembly_output(
+                    &content,
+                    &file,
+                    &file_path,
+                    file_bytes.len(),
+                )
             } else {
                 content
             };
@@ -306,170 +354,132 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Closures {
             input,
             function,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
+            json,
         } => {
-            let file = load_file(&input, layout, function_layout)?;
-            let format = load_format(&file, format_version)?;
-            commands::decompile_cmd::print_closure_info(&file, &format, function)?;
+            let file = load_file(&input, &format_args)?;
+            let format = load_format(&file, format_args.format_version)?;
+            commands::decompile_cmd::print_closure_info(&file, &format, function, json)?;
         }
         Command::Deps {
             input,
             module,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
             depth,
+            json,
         } => {
-            let (file, bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
-            let format = load_format(&file, format_version)?;
+            let (file, bytes) = helpers::load_file_with_bytes(&input, &format_args)?;
+            let format = load_format(&file, format_args.format_version)?;
             let cache_path = hbc_decomp::default_cache_path(&input);
-            commands::extract_cmd::print_module_deps(&file, &format, &bytes, &cache_path, module, depth)?;
+            commands::extract_cmd::print_module_deps(
+                &file,
+                &format,
+                &bytes,
+                &cache_path,
+                module,
+                depth,
+                json,
+            )?;
         }
         Command::Modules {
             input,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
             limit,
+            json,
         } => {
-            let (file, bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
-            let format = load_format(&file, format_version)?;
+            let (file, bytes) = helpers::load_file_with_bytes(&input, &format_args)?;
+            let format = load_format(&file, format_args.format_version)?;
             let cache_path = hbc_decomp::default_cache_path(&input);
-            commands::extract_cmd::print_modules(&file, &format, &bytes, &cache_path, limit)?;
+            commands::extract_cmd::print_modules(&file, &format, &bytes, &cache_path, limit, json)?;
         }
         Command::Debug {
             input,
-            layout,
-            function_layout,
+            format,
             scopes,
             callees,
             vars,
         } => {
-            let (file, bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
+            let (file, bytes) = helpers::load_file_with_bytes(&input, &format)?;
             commands::debug_cmd::print_debug_info(&file, &bytes, scopes, callees, vars)?;
         }
         Command::Extract {
             input,
             output,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
             no_strings,
         } => {
-            let (file, bytes) = helpers::load_file_with_bytes(&input, layout, function_layout)?;
-            let format = load_format(&file, format_version)?;
+            let (file, bytes) = helpers::load_file_with_bytes(&input, &format_args)?;
+            let format = load_format(&file, format_args.format_version)?;
             let cache_path = hbc_decomp::default_cache_path(&input);
-            commands::extract_cmd::run_extract(&file, &format, &output, &bytes, &cache_path, !no_strings)?;
+            commands::extract_cmd::run_extract(
+                &file,
+                &format,
+                &output,
+                &bytes,
+                &cache_path,
+                !no_strings,
+            )?;
         }
         Command::Graphviz {
             input,
             function,
             output,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
             open,
         } => {
-            let file = load_file(&input, layout, function_layout)?;
-            let format = load_format(&file, format_version)?;
-
-            let builder_options = hbc_decomp::IRBuilderOptions {
-                resolve_strings: true,
-                include_offsets: true,
-                absolute_offsets: false,
-            };
-            let mut builder = hbc_decomp::IRBuilder::new(&file, &format, builder_options);
-            let mut cfg = builder.build_function(function)?;
-
-            hbc_decomp::propagate(&mut cfg, &hbc_decomp::PropagationConfig::default());
-
-            let name = file
-                .string_at(file.function_headers[function as usize].function_name())
-                .map(|e| e.value.as_str())
-                .unwrap_or("");
-            let label = if name.is_empty() { format!("f{function}") } else { name.to_string() };
-
-            let dot_content = hbc_decomp::ir::generate_dot(&cfg, &label);
-
-            if let Some(path) = output {
-                std::fs::write(&path, &dot_content)?;
-                if open {
-                    std::process::Command::new("open").arg(&path).status()?;
-                }
-            } else {
-                println!("{dot_content}");
-            }
+            let file = load_file(&input, &format_args)?;
+            let format = load_format(&file, format_args.format_version)?;
+            commands::graphviz_cmd::run_graphviz(&file, &format, function, output, open)?;
         }
         Command::Xref {
             input,
             query,
             kind,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
+            json,
         } => {
-            let file = load_file(&input, layout, function_layout)?;
-            let format = load_format(&file, format_version)?;
-
-            let results = match kind {
-                cli_args::XrefKind::String => {
-                    hbc_decomp::analysis::find_string_xrefs(&file, &format, &query)
-                }
-                cli_args::XrefKind::Function => {
-                    let fid = query.parse::<u32>().map_err(|_| "Invalid function ID")?;
-                    hbc_decomp::analysis::find_function_refs(&file, &format, fid)
-                }
-            };
-
-            println!("Found {} cross-references for '{}':", results.len(), query);
-            for xref in results {
-                let name = file
-                    .string_at(file.function_headers[xref.function_id as usize].function_name())
-                    .map(|e| e.value.as_str())
-                    .unwrap_or("<anonymous>");
-
-                println!(
-                    "  Function {} ({}) at offset {:04x}: {}", 
-                    xref.function_id, 
-                    name, 
-                    xref.offset,
-                    xref.opcode
-                );
-            }
+            let file = load_file(&input, &format_args)?;
+            let format = load_format(&file, format_args.format_version)?;
+            commands::xref_cmd::run_xref(&file, &format, &query, kind, json)?;
         }
         Command::BinDiff {
             input1,
             input2,
-            layout,
-            function_layout,
-            format_version,
+            format,
             diff_code,
+            json,
         } => {
-            commands::bindiff_cmd::run_bindiff(&input1, &input2, layout, function_layout, format_version, diff_code)?;
+            commands::bindiff_cmd::run_bindiff(&input1, &input2, &format, diff_code, json)?;
         }
         Command::Dump {
             input,
             kind,
             json,
-            layout,
-            function_layout,
+            format,
         } => {
-            let file = load_file(&input, layout, function_layout)?;
+            let file = load_file(&input, &format)?;
             commands::dump_cmd::run_dump(&file, kind, json);
         }
         Command::Cascade { action } => {
             use cli_args::CascadeAction;
             let (input, format_version) = match &action {
-                CascadeAction::Extract { input, format_version, .. }
-                | CascadeAction::Verify { input, format_version, .. } => (input.clone(), *format_version),
+                CascadeAction::Extract {
+                    input,
+                    format_version,
+                    ..
+                }
+                | CascadeAction::Verify {
+                    input,
+                    format_version,
+                    ..
+                } => (input.clone(), *format_version),
             };
-            let (file, bytes) = helpers::load_file_with_bytes(
-                &input,
-                cli_args::LayoutArg::Auto,
-                cli_args::FunctionLayoutArg::Auto,
-            )?;
+            let format_args = cli_args::FormatArgs {
+                format_version,
+                layout: cli_args::LayoutArg::Auto,
+                function_layout: cli_args::FunctionLayoutArg::Auto,
+            };
+            let (file, bytes) = helpers::load_file_with_bytes(&input, &format_args)?;
             let format = load_format(&file, format_version)?;
             let cache_path = hbc_decomp::default_cache_path(&input);
             match action {
@@ -494,13 +504,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             function,
             dot,
             depth,
-            format_version,
-            layout,
-            function_layout,
+            format: format_args,
+            json,
         } => {
-            let file = load_file(&input, layout, function_layout)?;
-            let format = load_format(&file, format_version)?;
-            commands::callgraph_cmd::run_callgraph(&file, &format, function, depth, dot)?;
+            let file = load_file(&input, &format_args)?;
+            let format = load_format(&file, format_args.format_version)?;
+            commands::callgraph_cmd::run_callgraph(&file, &format, function, depth, dot, json)?;
         }
         Command::Update {
             check,
@@ -511,67 +520,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Secrets {
             input,
-            layout,
-            function_layout,
+            format,
             json,
             show_full,
         } => {
-            commands::write_cmd::run_secrets(&input, layout, function_layout, json, show_full)?;
+            commands::write_cmd::run_secrets(&input, &format, json, show_full)?;
         }
         Command::FridaHooks {
             input,
             module,
             export,
             output,
-            format_version,
-            layout,
-            function_layout,
+            format,
         } => {
-            commands::write_cmd::run_frida_hooks(
-                &input,
-                layout,
-                function_layout,
-                format_version,
-                module,
-                export,
-                output,
-            )?;
+            commands::write_cmd::run_frida_hooks(&input, &format, module, export, output)?;
         }
         Command::EmitHasm {
             input,
             function,
             output,
-            format_version,
-            layout,
-            function_layout,
+            format,
         } => {
-            commands::write_cmd::run_emit_hasm(
-                &input,
-                function,
-                output,
-                layout,
-                function_layout,
-                format_version,
-            )?;
+            commands::write_cmd::run_emit_hasm(&input, function, output, &format)?;
         }
         Command::Asm {
             input,
             hasm,
             function,
             output,
-            format_version,
-            layout,
-            function_layout,
+            format,
         } => {
-            commands::write_cmd::run_asm(
-                &input,
-                &hasm,
-                function,
-                &output,
-                layout,
-                function_layout,
-                format_version,
-            )?;
+            commands::write_cmd::run_asm(&input, &hasm, function, &output, &format)?;
         }
         Command::PatchString {
             input,
@@ -579,58 +558,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             id,
             old,
             new,
-            format_version,
-            layout,
-            function_layout,
+            format,
         } => {
-            commands::write_cmd::run_patch_string(
-                &input,
-                &output,
-                id,
-                old,
-                new,
-                layout,
-                function_layout,
-                format_version,
-            )?;
+            commands::write_cmd::run_patch_string(&input, &output, id, old, new, &format)?;
         }
         Command::PatchFunction {
             input,
             output,
             function,
             hasm,
-            format_version,
-            layout,
-            function_layout,
+            format,
         } => {
-            commands::write_cmd::run_patch_function(
-                &input,
-                &output,
-                function,
-                &hasm,
-                layout,
-                function_layout,
-                format_version,
-            )?;
+            commands::write_cmd::run_patch_function(&input, &output, function, &hasm, &format)?;
         }
         Command::InjectStub {
             input,
             output,
             function,
             kind,
-            format_version,
-            layout,
-            function_layout,
+            format,
         } => {
-            commands::write_cmd::run_inject_stub(
-                &input,
-                &output,
-                function,
-                &kind,
-                layout,
-                function_layout,
-                format_version,
-            )?;
+            commands::write_cmd::run_inject_stub(&input, &output, function, &kind, &format)?;
         }
         Command::Create {
             version,

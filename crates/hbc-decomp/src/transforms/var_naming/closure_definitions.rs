@@ -5,7 +5,7 @@ use super::closure_usage::{
 };
 use crate::analysis::metro::FactoryRoles;
 use crate::analysis::{ClosureContext, ClosureSlotValue};
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, Visitor};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value, Visitor};
 use std::collections::BTreeMap;
 
 // Cross-function closure naming: aggregates usage of `closure_N` across sibling functions
@@ -50,12 +50,21 @@ pub fn rename_closure_variables_cross_function(
         usage_items.sort_by(|a, b| a.0.cmp(&b.0));
         for (closure_name, info) in usage_items {
             if let Some((level, slot)) = parse_closure_capture(&closure_name) {
-                // Single-number `closure_N` is a parent-env capture (W10 convention).
-                // Two-number `closure_{level}_{slot}` walks `level` hops (1 = parent).
-                let pid = if level == 0 {
-                    parent_id
+                // Single-number `closure_N` is an ancestor capture whose slot
+                // had no name when it was baked; the bake recorded its exact
+                // (level, slot), and that owner is the key. The direct parent is
+                // only a fallback for a name with no record: a class method's
+                // direct parent is the class scope, and keying on it split the
+                // owner (`dependencyMap3`) from its readers (`closure_105`).
+                // Two-number `closure_{level}_{slot}` walks `level` hops.
+                // Keying single-number names on the recorded owner instead was
+                // measured worse (127 349 to 130 029 undeclared names on the
+                // reference bundle): the direct parent stays the key here, and
+                // the record serves the late inherit pass only.
+                let (pid, slot) = if level == 0 {
+                    (parent_id, slot)
                 } else {
-                    closure_ctx.ancestor_at(func_id, level)
+                    (closure_ctx.slot_owner(func_id, level), slot)
                 };
 
                 if let Some(pid) = pid {
@@ -97,7 +106,9 @@ pub fn rename_closure_variables_cross_function(
         let info = &slot_usage[key];
         let (parent_id, slot) = *key;
         // Try to get a name hint from ClosureContext (what value was stored in this slot)
-        let slot_hint = closure_ctx.function_closures.get(&parent_id)
+        let slot_hint = closure_ctx
+            .function_closures
+            .get(&parent_id)
             .and_then(|ci| ci.slots.get(&slot))
             .map(|sv| match sv {
                 ClosureSlotValue::Variable(v) => v.as_str(),
@@ -146,13 +157,9 @@ pub fn rename_closure_variables_cross_function(
             .entry(owner_var)
             .or_insert_with(|| new_name.clone());
         if object_key_slots.contains(&(*parent_id, *slot)) {
-            if let Some(idx) = param_index_stored_in_slot(
-                *parent_id,
-                *slot,
-                closure_ctx,
-                all_ir,
-                param_names,
-            ) {
+            if let Some(idx) =
+                param_index_stored_in_slot(*parent_id, *slot, closure_ctx, all_ir, param_names)
+            {
                 fill_param_name(param_names, *parent_id, idx, new_name);
             }
         }
@@ -273,7 +280,9 @@ fn param_index_from_slot_store_stmt(
                 {
                     true
                 }
-                AssignTarget::Binding(Binding::ClosureVar{ level: 0, slot: s }) if *s == slot => true,
+                AssignTarget::Binding(Binding::ClosureVar { level: 0, slot: s }) if *s == slot => {
+                    true
+                }
                 _ => false,
             };
             if writes_slot {
@@ -288,10 +297,12 @@ fn param_index_from_slot_store_stmt(
         {
             param_index_of_expr(value, param_names)
         }
-        Statement::If { then_body, else_body, .. } => {
-            param_index_from_slot_store(then_body, slot, slot_var, param_names)
-                .or_else(|| param_index_from_slot_store(else_body, slot, slot_var, param_names))
-        }
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => param_index_from_slot_store(then_body, slot, slot_var, param_names)
+            .or_else(|| param_index_from_slot_store(else_body, slot, slot_var, param_names)),
         Statement::While { body, .. }
         | Statement::DoWhile { body, .. }
         | Statement::For { body, .. }
@@ -409,7 +420,9 @@ fn apply_object_key_literals(
     let mut direct_params: Vec<(u32, u32, String)> = Vec::new();
 
     for fid in &fids {
-        let Some(stmts) = all_ir.get(fid) else { continue };
+        let Some(stmts) = all_ir.get(fid) else {
+            continue;
+        };
         let mut hits = ObjectKeyHits::default();
         for s in stmts {
             hits.visit_statement(s);
@@ -454,13 +467,9 @@ fn apply_object_key_literals(
     let mut per_func: BTreeMap<u32, BTreeMap<String, String>> = BTreeMap::new();
     for ((owner, slot), key) in &slot_keys {
         let Some(key) = key else { continue };
-        if let Some(idx) = param_index_stored_in_slot(
-            *owner,
-            *slot,
-            closure_ctx,
-            all_ir,
-            param_names,
-        ) {
+        if let Some(idx) =
+            param_index_stored_in_slot(*owner, *slot, closure_ctx, all_ir, param_names)
+        {
             fill_param_name(param_names, *owner, idx, key);
         }
         let owner_var = format!("closure_{slot}");
@@ -579,7 +588,7 @@ fn resolve_var_to_slot(
         let owner = if level == 0 {
             closure_ctx.parent_function.get(&func_id).copied()
         } else {
-            closure_ctx.ancestor_at(func_id, level)
+            closure_ctx.slot_owner(func_id, level)
         };
         return owner.map(|o| (o, slot));
     }
@@ -636,13 +645,21 @@ pub fn rename_closure_variables(stmts: &mut [Statement]) -> usize {
 }
 
 // Collect all non-closure variable names already in use in the statement tree.
-pub(super) fn collect_existing_names(stmts: &[Statement], names: &mut std::collections::HashSet<String>) {
+pub(super) fn collect_existing_names(
+    stmts: &[Statement],
+    names: &mut std::collections::HashSet<String>,
+) {
     for stmt in stmts {
         collect_names_in_stmt(stmt, names);
     }
 }
 
 fn collect_names_in_stmt(stmt: &Statement, names: &mut std::collections::HashSet<String>) {
+    // A class binds its name like a `let` does; a capture named after
+    // `NativeModules.ExternalPip` next to `class ExternalPip` does not parse.
+    if let Statement::Class { name, .. } = stmt {
+        names.insert(name.clone());
+    }
     match stmt {
         Statement::Assign { target, value } => {
             if let AssignTarget::Binding(Binding::Variable(v)) = target {
@@ -661,48 +678,104 @@ fn collect_names_in_stmt(stmt: &Statement, names: &mut std::collections::HashSet
         Statement::Expr(e) | Statement::Return(Some(e)) | Statement::Throw(e) => {
             collect_names_in_expr(e, names);
         }
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             collect_names_in_expr(condition, names);
-            for s in then_body { collect_names_in_stmt(s, names); }
-            for s in else_body { collect_names_in_stmt(s, names); }
+            for s in then_body {
+                collect_names_in_stmt(s, names);
+            }
+            for s in else_body {
+                collect_names_in_stmt(s, names);
+            }
         }
         Statement::While { condition, body } | Statement::DoWhile { body, condition } => {
             collect_names_in_expr(condition, names);
-            for s in body { collect_names_in_stmt(s, names); }
+            for s in body {
+                collect_names_in_stmt(s, names);
+            }
         }
-        Statement::For { init, condition, update, body } => {
-            if let Some(s) = init { collect_names_in_stmt(s, names); }
-            if let Some(e) = condition { collect_names_in_expr(e, names); }
-            if let Some(s) = update { collect_names_in_stmt(s, names); }
-            for s in body { collect_names_in_stmt(s, names); }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(s) = init {
+                collect_names_in_stmt(s, names);
+            }
+            if let Some(e) = condition {
+                collect_names_in_expr(e, names);
+            }
+            if let Some(s) = update {
+                collect_names_in_stmt(s, names);
+            }
+            for s in body {
+                collect_names_in_stmt(s, names);
+            }
         }
-        Statement::ForOf { variable, iterable, body } => {
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => {
             names.insert(variable.clone());
             collect_names_in_expr(iterable, names);
-            for s in body { collect_names_in_stmt(s, names); }
+            for s in body {
+                collect_names_in_stmt(s, names);
+            }
         }
-        Statement::ForIn { variable, object, body } => {
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => {
             names.insert(variable.clone());
             collect_names_in_expr(object, names);
-            for s in body { collect_names_in_stmt(s, names); }
+            for s in body {
+                collect_names_in_stmt(s, names);
+            }
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
-            for s in try_body { collect_names_in_stmt(s, names); }
-            for s in catch_body { collect_names_in_stmt(s, names); }
-            for s in finally_body { collect_names_in_stmt(s, names); }
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            for s in try_body {
+                collect_names_in_stmt(s, names);
+            }
+            for s in catch_body {
+                collect_names_in_stmt(s, names);
+            }
+            for s in finally_body {
+                collect_names_in_stmt(s, names);
+            }
         }
-        Statement::Switch { discriminant, cases, default } => {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
             collect_names_in_expr(discriminant, names);
             for (e, stmts) in cases {
                 collect_names_in_expr(e, names);
-                for s in stmts { collect_names_in_stmt(s, names); }
+                for s in stmts {
+                    collect_names_in_stmt(s, names);
+                }
             }
             if let Some(stmts) = default {
-                for s in stmts { collect_names_in_stmt(s, names); }
+                for s in stmts {
+                    collect_names_in_stmt(s, names);
+                }
             }
         }
         Statement::Block(stmts) => {
-            for s in stmts { collect_names_in_stmt(s, names); }
+            for s in stmts {
+                collect_names_in_stmt(s, names);
+            }
         }
         _ => {}
     }
@@ -717,7 +790,9 @@ fn collect_names_in_expr(expr: &Expression, names: &mut std::collections::HashSe
         }
         Expression::Call { callee, arguments } => {
             collect_names_in_expr(callee, names);
-            for a in arguments { collect_names_in_expr(a, names); }
+            for a in arguments {
+                collect_names_in_expr(a, names);
+            }
         }
         Expression::Member { object, .. } => {
             collect_names_in_expr(object, names);
@@ -801,19 +876,30 @@ mod tests {
         );
         all_ir.insert(
             2,
-            vec![Statement::Return(Some(object_with("login", var("closure_1_0"))))],
+            vec![Statement::Return(Some(object_with(
+                "login",
+                var("closure_1_0"),
+            )))],
         );
 
         let mut param_names = BTreeMap::new();
-        let renamed = rename_closure_variables_cross_function(&mut all_ir, &mut ctx, &mut param_names);
+        let renamed =
+            rename_closure_variables_cross_function(&mut all_ir, &mut ctx, &mut param_names);
         assert!(renamed > 0, "child capture should be renamed");
         assert_eq!(
-            param_names.get(&1).and_then(|v| v.first()).cloned().flatten(),
+            param_names
+                .get(&1)
+                .and_then(|v| v.first())
+                .cloned()
+                .flatten(),
             Some("login".to_string())
         );
 
         let child = format!("{:?}", all_ir.get(&2).unwrap());
-        assert!(child.contains("login"), "child body should use login, got {child}");
+        assert!(
+            child.contains("login"),
+            "child body should use login, got {child}"
+        );
         assert!(
             !child.contains("closure_1_0"),
             "child should not keep the diagnostic capture name, got {child}"
@@ -845,7 +931,11 @@ mod tests {
         param_names.insert(1, vec![Some("closure_1_6".into())]);
         rename_closure_variables_cross_function(&mut all_ir, &mut ctx, &mut param_names);
         assert_eq!(
-            param_names.get(&1).and_then(|v| v.first()).cloned().flatten(),
+            param_names
+                .get(&1)
+                .and_then(|v| v.first())
+                .cloned()
+                .flatten(),
             Some("login".to_string()),
             "object-key ground truth must replace a leaked closure_* param name"
         );
@@ -875,7 +965,11 @@ mod tests {
         let mut param_names = BTreeMap::new();
         rename_closure_variables_cross_function(&mut all_ir, &mut ctx, &mut param_names);
         assert_eq!(
-            param_names.get(&1).and_then(|v| v.first()).cloned().flatten(),
+            param_names
+                .get(&1)
+                .and_then(|v| v.first())
+                .cloned()
+                .flatten(),
             Some("login".to_string())
         );
     }
@@ -906,7 +1000,11 @@ mod tests {
         let mut param_names = BTreeMap::new();
         rename_closure_variables_cross_function(&mut all_ir, &mut ctx, &mut param_names);
         assert_eq!(
-            param_names.get(&1).and_then(|v| v.first()).cloned().flatten(),
+            param_names
+                .get(&1)
+                .and_then(|v| v.first())
+                .cloned()
+                .flatten(),
             Some("login".to_string())
         );
         let child = format!("{:?}", all_ir.get(&2).unwrap());
@@ -928,14 +1026,19 @@ mod tests {
         all_ir.insert(1, vec![]);
         all_ir.insert(
             2,
-            vec![Statement::Return(Some(object_with("login", var("closure_1_1"))))],
+            vec![Statement::Return(Some(object_with(
+                "login",
+                var("closure_1_1"),
+            )))],
         );
 
         let mut param_names = BTreeMap::new();
         rename_closure_variables_cross_function(&mut all_ir, &mut ctx, &mut param_names);
         assert!(
             !param_names.contains_key(&1)
-                || param_names[&1].iter().all(|n| n.as_deref() != Some("login")),
+                || param_names[&1]
+                    .iter()
+                    .all(|n| n.as_deref() != Some("login")),
             "must not steal the require slot name from an object key"
         );
         let child = format!("{:?}", all_ir.get(&2).unwrap());
@@ -945,4 +1048,3 @@ mod tests {
         );
     }
 }
-

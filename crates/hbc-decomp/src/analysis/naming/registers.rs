@@ -1,4 +1,4 @@
-use crate::ir::{Binding, AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Constant, Expression, PropertyKey, Statement, Value};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, Default)]
@@ -87,7 +87,12 @@ fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
         Statement::Let { value, .. } => {
             analyze_expr(value, info);
         }
-        Statement::For { init, condition, update, body } => {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
             if let Some(i) = init {
                 analyze_stmt(i, info);
             }
@@ -119,7 +124,11 @@ fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
                 analyze_stmt(s, info);
             }
         }
-        Statement::Switch { discriminant, cases, default } => {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
             analyze_expr(discriminant, info);
             for (val, body) in cases {
                 analyze_expr(val, info);
@@ -133,7 +142,12 @@ fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
                 }
             }
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             for s in try_body {
                 analyze_stmt(s, info);
             }
@@ -163,7 +177,9 @@ fn analyze_target(target: &AssignTarget, info: &mut BTreeMap<u32, RegisterInfo>)
                     entry.destructuring_key = Some(key.clone());
                 }
                 analyze_target(t, info);
-                if let Some(d) = def { analyze_expr(d, info); }
+                if let Some(d) = def {
+                    analyze_expr(d, info);
+                }
             }
         }
         AssignTarget::DestructuringObjectRest { properties, rest } => {
@@ -173,20 +189,26 @@ fn analyze_target(target: &AssignTarget, info: &mut BTreeMap<u32, RegisterInfo>)
                     entry.destructuring_key = Some(key.clone());
                 }
                 analyze_target(t, info);
-                if let Some(d) = def { analyze_expr(d, info); }
+                if let Some(d) = def {
+                    analyze_expr(d, info);
+                }
             }
             analyze_target(rest, info);
         }
         AssignTarget::DestructuringArray(elements) => {
             for elem in elements.iter().flatten() {
                 analyze_target(&elem.0, info);
-                if let Some(d) = &elem.1 { analyze_expr(d, info); }
+                if let Some(d) = &elem.1 {
+                    analyze_expr(d, info);
+                }
             }
         }
         AssignTarget::DestructuringArrayRest { elements, rest } => {
             for elem in elements.iter().flatten() {
                 analyze_target(&elem.0, info);
-                if let Some(d) = &elem.1 { analyze_expr(d, info); }
+                if let Some(d) = &elem.1 {
+                    analyze_expr(d, info);
+                }
             }
             analyze_target(rest, info);
         }

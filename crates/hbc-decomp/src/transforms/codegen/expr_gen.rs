@@ -1,12 +1,34 @@
-use super::{Codegen, indent_multiline};
+use super::{indent_multiline, Codegen};
+
+// Deepest expression nesting the renderer follows before eliding the rest.
+// Each level costs a few frames of `generate_expr`; the 64 MB worker stack
+// holds this comfortably, the 8 MB main thread does not hold much more.
+const MAX_EXPR_DEPTH: usize = 4096;
 
 impl Codegen {
     // Generate code for an expression. Handles all types recursively so that
     // inline function bodies and import comments are applied at any nesting depth.
     pub(super) fn generate_expr(&self, expr: &crate::ir::Expression) -> String {
-        use crate::ir::{Expression, Value, Constant};
+        let depth = self.expr_depth.get();
+        if depth >= MAX_EXPR_DEPTH {
+            return "/* expression nested too deep to render */ undefined".to_string();
+        }
+        self.expr_depth.set(depth + 1);
+        let out = self.generate_expr_at_depth(expr);
+        self.expr_depth.set(depth);
+        out
+    }
+
+    fn generate_expr_at_depth(&self, expr: &crate::ir::Expression) -> String {
+        use crate::ir::{Constant, Expression, Value};
 
         match expr {
+            // A recovered name can be a reserved word (`return`, `function`);
+            // the sanitiser gives it a leading underscore everywhere it is
+            // printed, declarations included, so the references stay consistent.
+            Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
+                crate::util::sanitize_identifier(name)
+            }
             Expression::Value(v) => format!("{v}"),
             Expression::Binary { op, left, right } => {
                 let prec = op.precedence();
@@ -24,7 +46,12 @@ impl Codegen {
             Expression::Unary { op, operand } => {
                 // Optimize !comparison → negated comparison (e.g., !(x < y) → x >= y)
                 if matches!(op, crate::ir::UnaryOp::Not) {
-                    if let Expression::Binary { op: bin_op, left, right } = operand.as_ref() {
+                    if let Expression::Binary {
+                        op: bin_op,
+                        left,
+                        right,
+                    } = operand.as_ref()
+                    {
                         let negated = match bin_op {
                             crate::ir::BinaryOp::Eq => Some(crate::ir::BinaryOp::Neq),
                             crate::ir::BinaryOp::Neq => Some(crate::ir::BinaryOp::Eq),
@@ -46,15 +73,45 @@ impl Codegen {
                         return format!("{op}({})", self.generate_expr(operand));
                     }
                 }
+                // `void 0` is the compiler's spelling of `undefined`.
+                if matches!(op, crate::ir::UnaryOp::Void) {
+                    if matches!(
+                        operand.as_ref(),
+                        Expression::Value(Value::Constant(Constant::Integer(0)))
+                            | Expression::Value(Value::Constant(Constant::Undefined))
+                    ) {
+                        return "undefined".to_string();
+                    }
+                }
                 // For unary applied to non-binary expressions, check if parens needed
                 match operand.as_ref() {
                     Expression::Conditional { .. } | Expression::Assignment { .. } => {
                         format!("{op}({})", self.generate_expr(operand))
                     }
-                    _ => format!("{op}{}", self.generate_expr(operand)),
+                    // `+(+x)` and `-(-x)` must not print as `++x` / `--x`,
+                    // and `++` on a unary result needs the grouping anyway.
+                    Expression::Unary { .. } => {
+                        format!("{op}({})", self.generate_expr(operand))
+                    }
+                    _ => {
+                        let inner = self.generate_expr(operand);
+                        let op_text = op.to_string();
+                        let sign = |c: char| c == '+' || c == '-';
+                        // Whatever the node, two signs side by side would
+                        // read as an increment.
+                        if op_text.ends_with(sign) && inner.starts_with(sign) {
+                            format!("{op}({inner})")
+                        } else {
+                            format!("{op}{inner}")
+                        }
+                    }
                 }
             }
-            Expression::Conditional { condition, then_expr, else_expr } => {
+            Expression::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
                 // Ternary precedence is low; parenthesize nested ternaries on the
                 // consequent, and arrows/functions/assignments in either branch
                 // (`a ? (x) => x : y` is a SyntaxError without parens).
@@ -66,18 +123,30 @@ impl Codegen {
                     self.generate_expr_with_parens(else_expr, TERNARY_PREC)
                 )
             }
-            Expression::Member { object, property, optional } => {
+            Expression::Member {
+                object,
+                property,
+                optional,
+            } => {
                 // Simplify _interopDefault(X).default → X, _interopRequireDefault(X).default → X
                 // The interop wrapper + .default access cancel out
                 if !*optional {
                     if let crate::ir::PropertyKey::Ident(prop) = property {
                         if prop == "default" {
-                            if let Expression::Call { callee: interop_callee, arguments: interop_args } = object.as_ref() {
+                            if let Expression::Call {
+                                callee: interop_callee,
+                                arguments: interop_args,
+                            } = object.as_ref()
+                            {
                                 if interop_args.len() == 1 {
                                     let is_interop = match interop_callee.as_ref() {
-                                        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => {
-                                            n.contains("interop") || n == "_interopDefault"
-                                                || n == "_interopRequireDefault" || n == "_interopNamespace"
+                                        Expression::Value(Value::Binding(
+                                            crate::ir::Binding::Variable(n),
+                                        )) => {
+                                            n.contains("interop")
+                                                || n == "_interopDefault"
+                                                || n == "_interopRequireDefault"
+                                                || n == "_interopNamespace"
                                         }
                                         _ => false,
                                     };
@@ -92,23 +161,55 @@ impl Codegen {
                 // Simplify globalThis.X → X for well-known built-in globals
                 if !*optional {
                     if let crate::ir::PropertyKey::Ident(name) = property {
-                        let is_global = match &**object {
-                            Expression::Value(Value::Global) => true,
-                            Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis" => true,
-                            _ => false,
-                        };
+                        let is_global =
+                            match &**object {
+                                Expression::Value(Value::Global) => true,
+                                Expression::Value(Value::Binding(
+                                    crate::ir::Binding::Variable(v),
+                                )) if v == "globalThis" => true,
+                                _ => false,
+                            };
                         if is_global && crate::ir::expr::display::is_builtin_global(name) {
                             return name.clone();
                         }
                     }
                 }
                 let obj = self.generate_expr(object);
+                // `function () {}.prototype` does not parse; the function
+                // (or class) expression needs its parentheses as an object.
+                // `0.toString()` reads the dot as a decimal point; a number
+                // needs parentheses as an object too.
+                let numeric = matches!(
+                    object.as_ref(),
+                    Expression::Value(Value::Constant(Constant::Integer(_)))
+                        | Expression::Value(Value::Constant(Constant::Number(_)))
+                );
+                // `(a && b).c` reads `b.c` without the parentheses.
+                let compound = matches!(
+                    object.as_ref(),
+                    Expression::Binary { .. }
+                        | Expression::Conditional { .. }
+                        | Expression::Assignment { .. }
+                        | Expression::Unary { .. }
+                );
+                let obj = if numeric
+                    || compound
+                    || matches!(object.as_ref(), Expression::Function { .. })
+                    || obj.starts_with("function")
+                    || obj.starts_with("class ")
+                    || obj.starts_with("async function")
+                {
+                    format!("({obj})")
+                } else {
+                    obj
+                };
                 let opt = if *optional { "?" } else { "" };
                 // Post-render simplification: if the object rendered to "globalThis"
                 // (e.g. from nested Member like scope.globalThis), also simplify builtins
                 if opt.is_empty() {
                     if let crate::ir::PropertyKey::Ident(name) = property {
-                        if obj == "globalThis" && crate::ir::expr::display::is_builtin_global(name) {
+                        if obj == "globalThis" && crate::ir::expr::display::is_builtin_global(name)
+                        {
                             return name.clone();
                         }
                     }
@@ -128,7 +229,12 @@ impl Codegen {
                 // Hermes args can be either:
                 //   3 args: [X (method this), this_value, arguments_array]
                 //   2 args: [this_value, arguments_array]
-                if let Expression::Member { object, property: crate::ir::PropertyKey::Ident(method), .. } = callee.as_ref() {
+                if let Expression::Member {
+                    object,
+                    property: crate::ir::PropertyKey::Ident(method),
+                    ..
+                } = callee.as_ref()
+                {
                     if method == "apply" && arguments.len() >= 2 {
                         let args_obj = &arguments[arguments.len() - 1];
                         let args_str = self.generate_expr(args_obj);
@@ -151,7 +257,10 @@ impl Codegen {
                 if callee_str == "require" {
                     if let Some(map) = &self.import_map {
                         let id_arg = if arguments.len() >= 2 {
-                            if matches!(&arguments[0], Expression::Value(Value::Constant(Constant::Undefined))) {
+                            if matches!(
+                                &arguments[0],
+                                Expression::Value(Value::Constant(Constant::Undefined))
+                            ) {
                                 arguments.get(1)
                             } else {
                                 arguments.first()
@@ -159,7 +268,9 @@ impl Codegen {
                         } else {
                             arguments.first()
                         };
-                        if let Some(Expression::Value(Value::Constant(Constant::Integer(id)))) = id_arg {
+                        if let Some(Expression::Value(Value::Constant(Constant::Integer(id)))) =
+                            id_arg
+                        {
                             if let Some(name) = map.get(&(*id as u32)) {
                                 comment = format!(" /* {name} */");
                             }
@@ -177,9 +288,8 @@ impl Codegen {
                     let is_call = callee_str.ends_with(".call");
                     // .call(thisArg, arg1, arg2, ...) → thisArg + arg1 + arg2 + ...
                     // direct(arg1, arg2, ...) → arg1 + arg2 + ...
-                    let parts: Vec<String> = arguments.iter()
-                        .map(|a| self.generate_expr(a))
-                        .collect();
+                    let parts: Vec<String> =
+                        arguments.iter().map(|a| self.generate_expr(a)).collect();
                     if parts.is_empty() {
                         return "\"\"".to_string();
                     }
@@ -219,7 +329,10 @@ impl Codegen {
 
                         // For .call(), skip first arg (thisArg)
                         let real_args: Vec<String> = if is_dot_call && arguments.len() > 1 {
-                            arguments[1..].iter().map(|a| self.generate_expr(a)).collect()
+                            arguments[1..]
+                                .iter()
+                                .map(|a| self.generate_expr(a))
+                                .collect()
                         } else if is_dot_call {
                             vec![]
                         } else {
@@ -244,17 +357,27 @@ impl Codegen {
                 self.format_call(&callee_str, Some(callee.as_ref()), arguments, &comment)
             }
             Expression::New { callee, arguments } => {
-                format!("new {}({})", self.generate_expr(callee), self.join_exprs(arguments))
+                format!(
+                    "new {}({})",
+                    self.generate_expr(callee),
+                    self.join_exprs(arguments)
+                )
             }
             Expression::Array { elements } => {
-                let elems: Vec<String> = elements.iter()
-                    .map(|e| e.as_ref().map(|x| self.generate_expr(x)).unwrap_or_default())
+                let elems: Vec<String> = elements
+                    .iter()
+                    .map(|e| {
+                        e.as_ref()
+                            .map(|x| self.generate_expr(x))
+                            .unwrap_or_default()
+                    })
                     .collect();
                 let has_multiline = elems.iter().any(|e| e.contains('\n'));
                 if has_multiline {
                     let indent = self.current_indent();
                     let inner_indent = format!("{indent}  ");
-                    let items = elems.iter()
+                    let items = elems
+                        .iter()
                         .map(|e| indent_multiline(e, &inner_indent))
                         .collect::<Vec<_>>()
                         .join(",\n");
@@ -267,12 +390,14 @@ impl Codegen {
                 if properties.is_empty() {
                     "{}".to_string()
                 } else {
-                    let props: Vec<String> = properties.iter().map(|p| self.format_property(p)).collect();
+                    let props: Vec<String> =
+                        properties.iter().map(|p| self.format_property(p)).collect();
                     let has_multiline = props.iter().any(|p| p.contains('\n'));
                     if has_multiline {
                         let indent = self.current_indent();
                         let inner_indent = format!("{indent}  ");
-                        let items = props.iter()
+                        let items = props
+                            .iter()
                             .map(|p| indent_multiline(p, &inner_indent))
                             .collect::<Vec<_>>()
                             .join(",\n");
@@ -282,7 +407,13 @@ impl Codegen {
                     }
                 }
             }
-            Expression::Function { id, name, is_arrow, is_async, is_generator } => {
+            Expression::Function {
+                id,
+                name,
+                is_arrow,
+                is_async,
+                is_generator,
+            } => {
                 if let Some(rendered) = self.inline_bodies.get(&id.0) {
                     // Re-indent based on current context: first line stays, rest get current indent
                     if self.indent_level > 0 {
@@ -307,11 +438,14 @@ impl Codegen {
                     let async_prefix = if *is_async { "async " } else { "" };
                     // Async generators (Babel pattern) render as async, not function*
                     let gen_star = if *is_generator && !*is_async { "*" } else { "" };
+                    let hole = super::body_hole(id.0);
                     match (is_arrow, name) {
-                        (true, Some(n)) => format!("{async_prefix}function {n}() {{ ... }}"),
-                        (true, None) => format!("{async_prefix}() => {{ ... }}"),
-                        (false, Some(n)) => format!("{async_prefix}function{gen_star} {n}() {{ ... }}"),
-                        (false, None) => format!("/* F{} */ {}function{}() {{ ... }}", id.0, async_prefix, gen_star),
+                        (true, Some(n)) => format!("{async_prefix}function {n}() {hole}"),
+                        (true, None) => format!("{async_prefix}() => {hole}"),
+                        (false, Some(n)) => {
+                            format!("{async_prefix}function{gen_star} {n}() {hole}")
+                        }
+                        (false, None) => format!("{async_prefix}function{gen_star}() {hole}"),
                     }
                 }
             }
@@ -326,7 +460,10 @@ impl Codegen {
                 )
             }
             Expression::Spread(inner) => format!("...{}", self.generate_expr(inner)),
-            Expression::TemplateLiteral { quasis, expressions } => {
+            Expression::TemplateLiteral {
+                quasis,
+                expressions,
+            } => {
                 let mut out = String::from("`");
                 for (i, quasi) in quasis.iter().enumerate() {
                     // Escape raw backticks / ${ / backslashes so nested template
@@ -348,7 +485,11 @@ impl Codegen {
                 }
             }
             Expression::Await(value) => format!("await {}", self.generate_expr(value)),
-            Expression::JSXElement { tag, attributes, children } => {
+            Expression::JSXElement {
+                tag,
+                attributes,
+                children,
+            } => {
                 use crate::ir::{Constant, Value};
                 let mut attrs = Vec::new();
                 for (key, val) in attributes {
@@ -358,7 +499,10 @@ impl Codegen {
                     } else if let Expression::Value(Value::Constant(Constant::String(s))) = val {
                         // String value → `name="..."` (idiomatic JSX, not `={"..."}`).
                         attrs.push(format!("{key}={s:?}"));
-                    } else if matches!(val, Expression::Value(Value::Constant(Constant::Bool(true)))) {
+                    } else if matches!(
+                        val,
+                        Expression::Value(Value::Constant(Constant::Bool(true)))
+                    ) {
                         // `name={true}` → shorthand bare `name`.
                         attrs.push(key.clone());
                     } else {
@@ -371,7 +515,11 @@ impl Codegen {
                 } else {
                     (tag.clone(), tag.clone())
                 };
-                let attr_str = if attrs.is_empty() { String::new() } else { format!(" {}", attrs.join(" ")) };
+                let attr_str = if attrs.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", attrs.join(" "))
+                };
                 if children.is_empty() {
                     if tag.is_empty() {
                         return "<></>".to_string();
@@ -390,11 +538,17 @@ impl Codegen {
                     format!("<{open}{attr_str}>{}</{close}>", child_str.join(""))
                 }
             }
-            Expression::Unknown { opcode, operands } => format!("/* {} {} */", opcode, operands.join(", ")),
+            Expression::Unknown { opcode, operands } => {
+                format!("/* {} {} */", opcode, operands.join(", "))
+            }
         }
     }
 
-    pub(super) fn generate_expr_with_parens(&self, expr: &crate::ir::Expression, parent_prec: u8) -> String {
+    pub(super) fn generate_expr_with_parens(
+        &self,
+        expr: &crate::ir::Expression,
+        parent_prec: u8,
+    ) -> String {
         // Precedence (higher binds tighter). Forms with no rank are atomic (Value,
         // Member, Call, …) and never need parens as operands of binary ops.
         //
@@ -405,17 +559,27 @@ impl Codegen {
             crate::ir::Expression::Binary { op, .. } => op.precedence() < parent_prec,
             crate::ir::Expression::Conditional { .. } => parent_prec > 2,
             crate::ir::Expression::Assignment { .. } => parent_prec > 1,
-            crate::ir::Expression::Yield { .. } | crate::ir::Expression::Await(_) => parent_prec > 2,
+            crate::ir::Expression::Yield { .. } | crate::ir::Expression::Await(_) => {
+                parent_prec > 2
+            }
             crate::ir::Expression::Function { .. } => parent_prec > 0,
             crate::ir::Expression::Unary { .. } => parent_prec > 15,
             _ => false,
         };
         let s = self.generate_expr(expr);
-        if needs_parens { format!("({s})") } else { s }
+        if needs_parens {
+            format!("({s})")
+        } else {
+            s
+        }
     }
 
     pub(super) fn join_exprs(&self, exprs: &[crate::ir::Expression]) -> String {
-        exprs.iter().map(|e| self.generate_expr(e)).collect::<Vec<_>>().join(", ")
+        exprs
+            .iter()
+            .map(|e| self.generate_expr(e))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 

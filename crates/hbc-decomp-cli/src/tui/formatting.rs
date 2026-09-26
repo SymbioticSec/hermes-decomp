@@ -267,7 +267,11 @@ pub fn highlight_code(code: &str) -> Vec<Line<'static>> {
                 if c == string_char {
                     // Count trailing backslashes before this quote (excluding the quote itself)
                     let before_quote = &current_word[..current_word.len() - 1];
-                    let num_backslashes = before_quote.chars().rev().take_while(|&ch| ch == '\\').count();
+                    let num_backslashes = before_quote
+                        .chars()
+                        .rev()
+                        .take_while(|&ch| ch == '\\')
+                        .count();
                     // Quote is escaped only if preceded by an odd number of backslashes
                     if num_backslashes % 2 == 0 {
                         spans.push(Span::styled(

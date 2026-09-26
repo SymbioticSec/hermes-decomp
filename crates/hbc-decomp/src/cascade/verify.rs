@@ -39,7 +39,8 @@ pub fn verify(
     }
     if artifact.bundle != *fingerprint {
         for proposal in &artifact.proposals {
-            out.rejected.push((proposal.clone(), Rejection::WrongBundle));
+            out.rejected
+                .push((proposal.clone(), Rejection::WrongBundle));
         }
         return out;
     }
@@ -47,7 +48,8 @@ pub fn verify(
     for proposal in &artifact.proposals {
         match check(proposal, all_ir, table) {
             Ok(()) => {
-                out.names.insert(proposal.function_id, proposal.name.clone());
+                out.names
+                    .insert(proposal.function_id, proposal.name.clone());
             }
             Err(reason) => out.rejected.push((proposal.clone(), reason)),
         }
@@ -151,7 +153,10 @@ fn confirm_string_decoder(body: &[Statement], table: &HashSet<&str>) -> Result<(
             observed: "an empty table",
         });
     }
-    let missing = strings.iter().filter(|s| !table.contains(s.as_str())).count();
+    let missing = strings
+        .iter()
+        .filter(|s| !table.contains(s.as_str()))
+        .count();
     if missing > 0 {
         return Err(Rejection::StringsAbsentFromTable {
             missing,
@@ -171,7 +176,10 @@ pub(super) fn decoded_strings(body: &[Statement]) -> Option<Vec<String>> {
         _ => None,
     })?;
 
-    let Expression::Member { object, property, .. } = returned else {
+    let Expression::Member {
+        object, property, ..
+    } = returned
+    else {
         return None;
     };
     // An indexed read. A fixed property name is a field access, not a decoder.

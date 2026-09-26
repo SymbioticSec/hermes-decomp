@@ -61,15 +61,16 @@ pub fn collect_info(caller_id: u32, stmts: &[Statement], ctx: &mut CollectContex
     // asked. Hermes reuses one register for unrelated values all the time, so a
     // single map for the whole body answers with whichever definition a tree walk
     // happened to visit last, and every call site but one gets a wrong answer.
-    let extract = |stmt: &Statement, fact: &Defs<Definition>| -> Option<(String, Option<Definition>)> {
-        let (key, value) = match stmt {
-            Statement::Let { name, value, .. } => (name.clone(), value),
-            Statement::Assign { target, value } => (target_to_key(target)?, value),
-            _ => return None,
+    let extract =
+        |stmt: &Statement, fact: &Defs<Definition>| -> Option<(String, Option<Definition>)> {
+            let (key, value) = match stmt {
+                Statement::Let { name, value, .. } => (name.clone(), value),
+                Statement::Assign { target, value } => (target_to_key(target)?, value),
+                _ => return None,
+            };
+            let lookup = |name: &str| fact.get(name).cloned();
+            Some((key, summarise_value(value, &lookup)))
         };
-        let lookup = |name: &str| fact.get(name).cloned();
-        Some((key, summarise_value(value, &lookup)))
-    };
     let analysis = ReachingDefinitions::new(&extract);
 
     // A function declaration is reachable before the statement that defines it, so
@@ -155,15 +156,16 @@ fn add_definitions_the_tree_walk_cannot_reach(
 ) {
     use crate::analysis::dataflow::reaching_bindings::{Defs, Reach, ReachingDefinitions};
 
-    let extract = |stmt: &Statement, fact: &Defs<Definition>| -> Option<(String, Option<Definition>)> {
-        let (key, value) = match stmt {
-            Statement::Let { name, value, .. } => (name.clone(), value),
-            Statement::Assign { target, value } => (target_to_key(target)?, value),
-            _ => return None,
+    let extract =
+        |stmt: &Statement, fact: &Defs<Definition>| -> Option<(String, Option<Definition>)> {
+            let (key, value) = match stmt {
+                Statement::Let { name, value, .. } => (name.clone(), value),
+                Statement::Assign { target, value } => (target_to_key(target)?, value),
+                _ => return None,
+            };
+            let lookup = |name: &str| fact.get(name).cloned();
+            Some((key, summarise_value(value, &lookup)))
         };
-        let lookup = |name: &str| fact.get(name).cloned();
-        Some((key, summarise_value(value, &lookup)))
-    };
     let analysis = ReachingDefinitions::new(&extract);
     let reached = crate::analysis::dataflow::solve(&analysis, stmts, Defs::new());
 
@@ -276,7 +278,10 @@ pub(super) fn summarise_value(
         return Some(Definition::Global);
     }
 
-    if let Expression::Member { object, property, .. } = value {
+    if let Expression::Member {
+        object, property, ..
+    } = value
+    {
         let prop_name = match property {
             PropertyKey::String(p) | PropertyKey::Ident(p) => Some(p.as_str()),
             _ => None,
@@ -364,15 +369,22 @@ fn callee_trace_name(callee: &Expression) -> String {
         Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => format!("{n}()"),
         Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => format!("r{r}()"),
         Expression::Function { id, .. } => format!("fn{}()", id.0),
-        Expression::Member { object, property, .. } => {
+        Expression::Member {
+            object, property, ..
+        } => {
             let prop = match property {
                 PropertyKey::String(s) | PropertyKey::Ident(s) => s.clone(),
                 PropertyKey::Index(i) => format!("[{i}]"),
                 PropertyKey::Computed(_) => "[computed]".to_string(),
             };
             match object.as_ref() {
-                Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => format!("{n}.{prop}()"),
-                Expression::Member { property: PropertyKey::String(b) | PropertyKey::Ident(b), .. } => {
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) => {
+                    format!("{n}.{prop}()")
+                }
+                Expression::Member {
+                    property: PropertyKey::String(b) | PropertyKey::Ident(b),
+                    ..
+                } => {
                     format!("{b}.{prop}()")
                 }
                 _ => format!("?.{prop}()"),
@@ -389,9 +401,11 @@ fn callback_param_hints(method: &str) -> Option<Vec<Option<String>>> {
         "map" | "filter" | "find" | "some" | "every" | "forEach" | "findIndex" | "flatMap" => {
             Some(vec![Some("item".to_string()), Some("index".to_string())])
         }
-        "reduce" | "reduceRight" => {
-            Some(vec![Some("acc".to_string()), Some("item".to_string()), Some("index".to_string())])
-        }
+        "reduce" | "reduceRight" => Some(vec![
+            Some("acc".to_string()),
+            Some("item".to_string()),
+            Some("index".to_string()),
+        ]),
         "sort" => Some(vec![Some("a".to_string()), Some("b".to_string())]),
         "then" => Some(vec![Some("result".to_string())]),
         "catch" => Some(vec![Some("error".to_string())]),

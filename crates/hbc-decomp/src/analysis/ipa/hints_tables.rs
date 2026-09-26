@@ -2,9 +2,9 @@
 // E.g. if a parameter has `.push()` called on it, it's likely an array.
 pub(super) fn param_name_from_method(method: &str) -> Option<&'static str> {
     match method {
-        "push" | "pop" | "shift" | "unshift" | "splice" | "slice" | "map" | "filter"
-        | "reduce" | "find" | "findIndex" | "some" | "every" | "forEach" | "flat" | "flatMap"
-        | "sort" | "reverse" | "includes" | "indexOf" | "lastIndexOf" | "fill" | "copyWithin"
+        "push" | "pop" | "shift" | "unshift" | "splice" | "slice" | "map" | "filter" | "reduce"
+        | "find" | "findIndex" | "some" | "every" | "forEach" | "flat" | "flatMap" | "sort"
+        | "reverse" | "includes" | "indexOf" | "lastIndexOf" | "fill" | "copyWithin"
         | "entries" | "keys" | "values" | "at" | "concat" => Some("arr"),
         "split" | "trim" | "trimStart" | "trimEnd" | "toLowerCase" | "toUpperCase" | "charAt"
         | "charCodeAt" | "codePointAt" | "substring" | "substr" | "startsWith" | "endsWith"
@@ -21,9 +21,16 @@ pub(super) fn param_name_from_method(method: &str) -> Option<&'static str> {
 pub(super) fn is_generic_property(prop: &str) -> bool {
     matches!(
         prop,
-        "length" | "prototype" | "constructor" | "toString" | "valueOf"
-            | "hasOwnProperty" | "isPrototypeOf" | "propertyIsEnumerable"
-            | "__proto__" | "default"
+        "length"
+            | "prototype"
+            | "constructor"
+            | "toString"
+            | "valueOf"
+            | "hasOwnProperty"
+            | "isPrototypeOf"
+            | "propertyIsEnumerable"
+            | "__proto__"
+            | "default"
     )
 }
 

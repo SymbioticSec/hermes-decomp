@@ -11,8 +11,12 @@ use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
 // concatenation) takes real operands, NOT a `this` receiver. Its first argument
 // must never be stripped.
 fn is_hermes_internal_concat(callee: &Expression) -> bool {
-    if let Expression::Member { object, property, .. } = callee {
-        let is_concat = matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "concat");
+    if let Expression::Member {
+        object, property, ..
+    } = callee
+    {
+        let is_concat =
+            matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "concat");
         if is_concat {
             return mentions_hermes_internal(object);
         }
@@ -23,7 +27,10 @@ fn is_hermes_internal_concat(callee: &Expression) -> bool {
 // `Object.create`, `<...>.Object.create` or `Object.create`, regardless of how
 // the global `Object` is rendered (bare variable, member on globalThis, etc.).
 fn is_object_create(callee: &Expression) -> bool {
-    if let Expression::Member { object, property, .. } = callee {
+    if let Expression::Member {
+        object, property, ..
+    } = callee
+    {
         let is_create =
             matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "create");
         if is_create {
@@ -42,7 +49,9 @@ fn is_object_create(callee: &Expression) -> bool {
 fn mentions_hermes_internal(e: &Expression) -> bool {
     match e {
         Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) => v == "HermesInternal",
-        Expression::Member { object, property, .. } => {
+        Expression::Member {
+            object, property, ..
+        } => {
             matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "HermesInternal")
                 || mentions_hermes_internal(object)
         }
@@ -70,7 +79,11 @@ fn strip_this_in_stmt(stmt: &mut Statement) {
         Statement::Let { value, .. } => strip_this_in_expr(value),
         Statement::Expr(e) => strip_this_in_expr(e),
         Statement::Return(Some(e)) | Statement::Throw(e) => strip_this_in_expr(e),
-        Statement::If { condition, then_body, else_body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
             strip_this_in_expr(condition);
             strip_hermes_this(then_body);
             strip_hermes_this(else_body);
@@ -79,10 +92,21 @@ fn strip_this_in_stmt(stmt: &mut Statement) {
             strip_this_in_expr(condition);
             strip_hermes_this(body);
         }
-        Statement::For { init, condition, update, body } => {
-            if let Some(s) = init { strip_this_in_stmt(s); }
-            if let Some(e) = condition { strip_this_in_expr(e); }
-            if let Some(s) = update { strip_this_in_stmt(s); }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            if let Some(s) = init {
+                strip_this_in_stmt(s);
+            }
+            if let Some(e) = condition {
+                strip_this_in_expr(e);
+            }
+            if let Some(s) = update {
+                strip_this_in_stmt(s);
+            }
             strip_hermes_this(body);
         }
         Statement::ForIn { object, body, .. } => {
@@ -94,18 +118,29 @@ fn strip_this_in_stmt(stmt: &mut Statement) {
             strip_hermes_this(body);
         }
         Statement::Block(inner) => strip_hermes_this(inner),
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             strip_hermes_this(try_body);
             strip_hermes_this(catch_body);
             strip_hermes_this(finally_body);
         }
-        Statement::Switch { discriminant, cases, default } => {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
             strip_this_in_expr(discriminant);
             for (e, body) in cases.iter_mut() {
                 strip_this_in_expr(e);
                 strip_hermes_this(body);
             }
-            if let Some(d) = default { strip_hermes_this(d); }
+            if let Some(d) = default {
+                strip_hermes_this(d);
+            }
         }
         _ => {}
     }
@@ -153,7 +188,10 @@ fn strip_this_in_expr(expr: &mut Expression) {
                 return;
             }
             let first = &arguments[0];
-            let should_strip = if let Expression::Member { object, property, .. } = callee.as_ref() {
+            let should_strip = if let Expression::Member {
+                object, property, ..
+            } = callee.as_ref()
+            {
                 if matches!(property, PropertyKey::Ident(p) if p == "call") {
                     // Explicit .call() from source: strip the function self-reference (first arg),
                     // keeping the user-supplied receiver as the new first arg.
@@ -184,19 +222,29 @@ fn strip_this_in_expr(expr: &mut Expression) {
         Expression::Unary { operand, .. } => strip_this_in_expr(operand),
         Expression::New { callee, arguments } => {
             strip_this_in_expr(callee);
-            for a in arguments.iter_mut() { strip_this_in_expr(a); }
+            for a in arguments.iter_mut() {
+                strip_this_in_expr(a);
+            }
         }
         Expression::Member { object, .. } => strip_this_in_expr(object),
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             strip_this_in_expr(condition);
             strip_this_in_expr(then_expr);
             strip_this_in_expr(else_expr);
         }
         Expression::Array { elements } => {
-            for e in elements.iter_mut().flatten() { strip_this_in_expr(e); }
+            for e in elements.iter_mut().flatten() {
+                strip_this_in_expr(e);
+            }
         }
         Expression::Object { properties } => {
-            for p in properties.iter_mut() { strip_this_in_expr(&mut p.value); }
+            for p in properties.iter_mut() {
+                strip_this_in_expr(&mut p.value);
+            }
         }
         Expression::Assignment { target, value } => {
             crate::ir::for_each_target_expression_mut(target, &mut strip_this_in_expr);
@@ -204,7 +252,9 @@ fn strip_this_in_expr(expr: &mut Expression) {
         }
         Expression::Spread(inner) => strip_this_in_expr(inner),
         Expression::TemplateLiteral { expressions, .. } => {
-            for e in expressions.iter_mut() { strip_this_in_expr(e); }
+            for e in expressions.iter_mut() {
+                strip_this_in_expr(e);
+            }
         }
         Expression::Yield { value, .. } => strip_this_in_expr(value),
         Expression::Await(inner) => strip_this_in_expr(inner),

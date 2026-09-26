@@ -1,4 +1,4 @@
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, VarKind};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value, VarKind};
 
 // Fold the guarded do-while shape Hermes emits for `for`/`while` loops back into a
 // natural `for`/`while`.
@@ -28,26 +28,74 @@ pub fn fold_guarded_loops(stmts: Vec<Statement>) -> Vec<Statement> {
 
 fn fold_in_stmt(stmt: Statement) -> Statement {
     match stmt {
-        Statement::While { condition, body } => Statement::While { condition, body: fold_guarded_loops(body) },
-        Statement::DoWhile { body, condition } => Statement::DoWhile { body: fold_guarded_loops(body), condition },
-        Statement::For { init, condition, update, body } => Statement::For { init, condition, update, body: fold_guarded_loops(body) },
-        Statement::ForIn { variable, object, body } => Statement::ForIn { variable, object, body: fold_guarded_loops(body) },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf { variable, iterable, body: fold_guarded_loops(body) },
-        Statement::If { condition, then_body, else_body } => Statement::If {
+        Statement::While { condition, body } => Statement::While {
+            condition,
+            body: fold_guarded_loops(body),
+        },
+        Statement::DoWhile { body, condition } => Statement::DoWhile {
+            body: fold_guarded_loops(body),
+            condition,
+        },
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
+            init,
+            condition,
+            update,
+            body: fold_guarded_loops(body),
+        },
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => Statement::ForIn {
+            variable,
+            object,
+            body: fold_guarded_loops(body),
+        },
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => Statement::ForOf {
+            variable,
+            iterable,
+            body: fold_guarded_loops(body),
+        },
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::If {
             condition,
             then_body: fold_guarded_loops(then_body),
             else_body: fold_guarded_loops(else_body),
         },
         Statement::Block(inner) => Statement::Block(fold_guarded_loops(inner)),
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
             try_body: fold_guarded_loops(try_body),
             catch_param,
             catch_body: fold_guarded_loops(catch_body),
             finally_body: fold_guarded_loops(finally_body),
         },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+        Statement::Switch {
             discriminant,
-            cases: cases.into_iter().map(|(e, b)| (e, fold_guarded_loops(b))).collect(),
+            cases,
+            default,
+        } => Statement::Switch {
+            discriminant,
+            cases: cases
+                .into_iter()
+                .map(|(e, b)| (e, fold_guarded_loops(b)))
+                .collect(),
             default: default.map(fold_guarded_loops),
         },
         other => other,
@@ -62,7 +110,9 @@ fn fold_sequence(stmts: Vec<Statement>) -> Vec<Statement> {
         if i + 1 < stmts.len() {
             if let Some((var, init_val)) = loop_var_init(&stmts[i]) {
                 let rest = &stmts[i + 2..];
-                if let Some(for_stmt) = try_fold_for(&stmts[i], &var, &init_val, &stmts[i + 1], rest) {
+                if let Some(for_stmt) =
+                    try_fold_for(&stmts[i], &var, &init_val, &stmts[i + 1], rest)
+                {
                     out.push(for_stmt);
                     i += 2;
                     continue;
@@ -85,9 +135,10 @@ fn fold_sequence(stmts: Vec<Statement>) -> Vec<Statement> {
 fn loop_var_init(stmt: &Statement) -> Option<(String, Expression)> {
     match stmt {
         Statement::Let { name, value, .. } => Some((name.clone(), value.clone())),
-        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), value } => {
-            Some((name.clone(), value.clone()))
-        }
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(name)),
+            value,
+        } => Some((name.clone(), value.clone())),
         _ => None,
     }
 }
@@ -100,13 +151,21 @@ fn try_fold_for(
     rest: &[Statement],
 ) -> Option<Statement> {
     let (guard, dowhile) = as_guarded_dowhile(guard_if)?;
-    let Statement::DoWhile { body, condition: cond } = dowhile else {
+    let Statement::DoWhile {
+        body,
+        condition: cond,
+    } = dowhile
+    else {
         return None;
     };
 
     // Body must end with an update to the loop variable (`v = v <op> …`).
     let last = body.last()?;
-    let Statement::Assign { target: AssignTarget::Binding(Binding::Variable(upd_name)), value: upd_val } = last else {
+    let Statement::Assign {
+        target: AssignTarget::Binding(Binding::Variable(upd_name)),
+        value: upd_val,
+    } = last
+    else {
         return None;
     };
     if upd_name != var || !expr_mentions_var(upd_val, var) {
@@ -153,7 +212,11 @@ fn try_fold_for(
 // (and no trailing update to fold into a `for`) becomes `while (T) { BODY }`.
 fn try_fold_while(stmt: &Statement) -> Option<Statement> {
     let (guard, dowhile) = as_guarded_dowhile(stmt)?;
-    let Statement::DoWhile { body, condition: cond } = dowhile else {
+    let Statement::DoWhile {
+        body,
+        condition: cond,
+    } = dowhile
+    else {
         return None;
     };
     if cond != guard {
@@ -167,20 +230,29 @@ fn try_fold_while(stmt: &Statement) -> Option<Statement> {
 
 // Match `if (GUARD) { <single do-while> }` with an empty else, returning (GUARD, do-while).
 fn as_guarded_dowhile(stmt: &Statement) -> Option<(&Expression, &Statement)> {
-    let Statement::If { condition, then_body, else_body } = stmt else {
+    let Statement::If {
+        condition,
+        then_body,
+        else_body,
+    } = stmt
+    else {
         return None;
     };
     if !else_body.is_empty() {
         return None;
     }
     // Ignore leftover label comments (`// label0:`) from loop reconstruction.
-    let mut body = then_body.iter().filter(|s| !matches!(s, Statement::Comment(_)));
+    let mut body = then_body
+        .iter()
+        .filter(|s| !matches!(s, Statement::Comment(_)));
     let first = body.next()?;
     if body.next().is_some() {
         return None; // more than just the do-while
     }
     match first {
-        Statement::DoWhile { body: dw_body, .. } if !has_labeled_jump(dw_body) => Some((condition, first)),
+        Statement::DoWhile { body: dw_body, .. } if !has_labeled_jump(dw_body) => {
+            Some((condition, first))
+        }
         _ => None,
     }
 }
@@ -190,17 +262,26 @@ fn as_guarded_dowhile(stmt: &Statement) -> Option<(&Expression, &Statement)> {
 fn has_labeled_jump(stmts: &[Statement]) -> bool {
     stmts.iter().any(|s| match s {
         Statement::Break(Some(_)) | Statement::Continue(Some(_)) => true,
-        Statement::If { then_body, else_body, .. } => {
-            has_labeled_jump(then_body) || has_labeled_jump(else_body)
-        }
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => has_labeled_jump(then_body) || has_labeled_jump(else_body),
         Statement::While { body, .. }
         | Statement::DoWhile { body, .. }
         | Statement::For { body, .. }
         | Statement::ForIn { body, .. }
         | Statement::ForOf { body, .. }
         | Statement::Block(body) => has_labeled_jump(body),
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
-            has_labeled_jump(try_body) || has_labeled_jump(catch_body) || has_labeled_jump(finally_body)
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            has_labeled_jump(try_body)
+                || has_labeled_jump(catch_body)
+                || has_labeled_jump(finally_body)
         }
         Statement::Switch { cases, default, .. } => {
             cases.iter().any(|(_, b)| has_labeled_jump(b))
@@ -222,7 +303,11 @@ fn substitute_var(expr: Expression, var: &str, repl: &Expression) -> Expression 
             op,
             operand: Box::new(substitute_var(*operand, var, repl)),
         },
-        Expression::Member { object, property, optional } => Expression::Member {
+        Expression::Member {
+            object,
+            property,
+            optional,
+        } => Expression::Member {
             object: Box::new(substitute_var(*object, var, repl)),
             property,
             optional,
@@ -242,7 +327,11 @@ fn expr_mentions_var(expr: &Expression, var: &str) -> bool {
         Expression::Call { callee, arguments } | Expression::New { callee, arguments } => {
             expr_mentions_var(callee, var) || arguments.iter().any(|a| expr_mentions_var(a, var))
         }
-        Expression::Conditional { condition, then_expr, else_expr } => {
+        Expression::Conditional {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
             expr_mentions_var(condition, var)
                 || expr_mentions_var(then_expr, var)
                 || expr_mentions_var(else_expr, var)
@@ -250,8 +339,12 @@ fn expr_mentions_var(expr: &Expression, var: &str) -> bool {
         Expression::Assignment { target, value } => {
             assign_target_mentions(target, var) || expr_mentions_var(value, var)
         }
-        Expression::Array { elements } => elements.iter().flatten().any(|e| expr_mentions_var(e, var)),
-        Expression::Object { properties } => properties.iter().any(|p| expr_mentions_var(&p.value, var)),
+        Expression::Array { elements } => {
+            elements.iter().flatten().any(|e| expr_mentions_var(e, var))
+        }
+        Expression::Object { properties } => {
+            properties.iter().any(|p| expr_mentions_var(&p.value, var))
+        }
         Expression::Spread(inner) => expr_mentions_var(inner, var),
         Expression::TemplateLiteral { expressions, .. } => {
             expressions.iter().any(|e| expr_mentions_var(e, var))
@@ -268,18 +361,43 @@ fn stmt_mentions_var(stmt: &Statement, var: &str) -> bool {
         Statement::Expr(x) | Statement::Return(Some(x)) | Statement::Throw(x) => e(x),
         Statement::Let { value, .. } => e(value),
         Statement::Assign { target, value } => assign_target_mentions(target, var) || e(value),
-        Statement::If { condition, then_body, else_body } => e(condition) || b(then_body) || b(else_body),
-        Statement::While { condition, body } | Statement::DoWhile { body, condition } => e(condition) || b(body),
-        Statement::For { init, condition, update, body } => {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => e(condition) || b(then_body) || b(else_body),
+        Statement::While { condition, body } | Statement::DoWhile { body, condition } => {
+            e(condition) || b(body)
+        }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
             init.as_deref().is_some_and(|s| stmt_mentions_var(s, var))
                 || condition.as_ref().is_some_and(e)
                 || update.as_deref().is_some_and(|s| stmt_mentions_var(s, var))
                 || b(body)
         }
-        Statement::ForIn { object: x, body, .. } | Statement::ForOf { iterable: x, body, .. } => e(x) || b(body),
+        Statement::ForIn {
+            object: x, body, ..
+        }
+        | Statement::ForOf {
+            iterable: x, body, ..
+        } => e(x) || b(body),
         Statement::Block(inner) => b(inner),
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => b(try_body) || b(catch_body) || b(finally_body),
-        Statement::Switch { discriminant, cases, default } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => b(try_body) || b(catch_body) || b(finally_body),
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
             e(discriminant)
                 || cases.iter().any(|(v, body)| e(v) || b(body))
                 || default.as_deref().is_some_and(b)
@@ -292,7 +410,9 @@ fn assign_target_mentions(t: &AssignTarget, var: &str) -> bool {
     match t {
         AssignTarget::Binding(Binding::Variable(n)) => n == var,
         AssignTarget::Member { object, .. } => expr_mentions_var(object, var),
-        AssignTarget::Index { object, key } => expr_mentions_var(object, var) || expr_mentions_var(key, var),
+        AssignTarget::Index { object, key } => {
+            expr_mentions_var(object, var) || expr_mentions_var(key, var)
+        }
         _ => false,
     }
 }
@@ -306,24 +426,45 @@ mod tests {
         Expression::Value(Value::Binding(Binding::Variable(n.to_string())))
     }
     fn lt(l: Expression, r: Expression) -> Expression {
-        Expression::Binary { op: BinaryOp::Lt, left: Box::new(l), right: Box::new(r) }
+        Expression::Binary {
+            op: BinaryOp::Lt,
+            left: Box::new(l),
+            right: Box::new(r),
+        }
     }
     fn int(v: i32) -> Expression {
         Expression::constant(Constant::Integer(v))
     }
     fn let_(name: &str, v: Expression) -> Statement {
-        Statement::Let { name: name.to_string(), value: v, kind: VarKind::Let }
+        Statement::Let {
+            name: name.to_string(),
+            value: v,
+            kind: VarKind::Let,
+        }
     }
     fn assign(name: &str, v: Expression) -> Statement {
-        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name.to_string())), value: v }
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(name.to_string())),
+            value: v,
+        }
     }
     fn inc(name: &str) -> Statement {
-        assign(name, Expression::Binary { op: BinaryOp::Add, left: Box::new(var(name)), right: Box::new(int(1)) })
+        assign(
+            name,
+            Expression::Binary {
+                op: BinaryOp::Add,
+                left: Box::new(var(name)),
+                right: Box::new(int(1)),
+            },
+        )
     }
     fn guarded(guard: Expression, dw_body: Vec<Statement>, cond: Expression) -> Statement {
         Statement::If {
             condition: guard,
-            then_body: vec![Statement::DoWhile { body: dw_body, condition: cond }],
+            then_body: vec![Statement::DoWhile {
+                body: dw_body,
+                condition: cond,
+            }],
             else_body: vec![],
         }
     }
@@ -334,14 +475,29 @@ mod tests {
         //   -> for (let i = 0; i < n; i = i + 1) { work }
         let input = vec![
             let_("i", int(0)),
-            guarded(lt(int(0), var("n")), vec![Statement::Expr(var("work")), inc("i")], lt(var("i"), var("n"))),
+            guarded(
+                lt(int(0), var("n")),
+                vec![Statement::Expr(var("work")), inc("i")],
+                lt(var("i"), var("n")),
+            ),
         ];
         let out = fold_guarded_loops(input);
         assert_eq!(out.len(), 1);
         match &out[0] {
-            Statement::For { init, condition, update, body } => {
+            Statement::For {
+                init,
+                condition,
+                update,
+                body,
+            } => {
                 assert!(matches!(init.as_deref(), Some(Statement::Let { .. })));
-                assert!(matches!(condition, Some(Expression::Binary { op: BinaryOp::Lt, .. })));
+                assert!(matches!(
+                    condition,
+                    Some(Expression::Binary {
+                        op: BinaryOp::Lt,
+                        ..
+                    })
+                ));
                 assert!(matches!(update.as_deref(), Some(Statement::Assign { .. })));
                 assert_eq!(body.len(), 1); // the increment was pulled into the header
             }
@@ -354,7 +510,11 @@ mod tests {
         // guard `1 < n` is NOT `(i < n)[i:=0]` == `0 < n` -> keep do-while.
         let input = vec![
             let_("i", int(0)),
-            guarded(lt(int(1), var("n")), vec![Statement::Expr(var("work")), inc("i")], lt(var("i"), var("n"))),
+            guarded(
+                lt(int(1), var("n")),
+                vec![Statement::Expr(var("work")), inc("i")],
+                lt(var("i"), var("n")),
+            ),
         ];
         let out = fold_guarded_loops(input);
         assert_eq!(out.len(), 2);
@@ -367,7 +527,11 @@ mod tests {
         // change scope, so it must not fold to a `for`.
         let input = vec![
             let_("i", int(0)),
-            guarded(lt(int(0), var("n")), vec![Statement::Expr(var("work")), inc("i")], lt(var("i"), var("n"))),
+            guarded(
+                lt(int(0), var("n")),
+                vec![Statement::Expr(var("work")), inc("i")],
+                lt(var("i"), var("n")),
+            ),
             Statement::Expr(var("i")),
         ];
         let out = fold_guarded_loops(input);

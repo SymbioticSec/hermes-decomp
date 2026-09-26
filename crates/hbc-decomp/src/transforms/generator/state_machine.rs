@@ -1,4 +1,4 @@
-use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, Statement, Value};
+use crate::ir::{AssignTarget, BinaryOp, Binding, Constant, Expression, Statement, Value};
 
 // Detect and simplify generator state machine patterns.
 //
@@ -87,12 +87,13 @@ fn looks_like_state_machine(stmt: &Statement) -> bool {
             right,
         } = condition
         {
-            if matches!(left.as_ref(), Expression::Value(Value::Binding(Binding::Register(_))))
-                && matches!(
-                    right.as_ref(),
-                    Expression::Value(Value::Constant(Constant::Integer(_)))
-                )
-            {
+            if matches!(
+                left.as_ref(),
+                Expression::Value(Value::Binding(Binding::Register(_)))
+            ) && matches!(
+                right.as_ref(),
+                Expression::Value(Value::Constant(Constant::Integer(_)))
+            ) {
                 depth += 1;
             }
         }

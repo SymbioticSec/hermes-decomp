@@ -7,7 +7,10 @@
 //
 // Refactored to use Visitor pattern.
 
-use crate::ir::{Binding, is_simple_value, stmt_uses_register, AssignTarget, Constant, Expression, MutVisitor, Statement, Value, Visitor};
+use crate::ir::{
+    is_simple_value, stmt_uses_register, AssignTarget, Binding, Constant, Expression, MutVisitor,
+    Statement, Value, Visitor,
+};
 use std::collections::{BTreeMap, HashSet};
 
 // Apply advanced cleanup transformations.
@@ -57,7 +60,11 @@ fn remove_dead_undefined_clears(stmts: Vec<Statement>) -> Vec<Statement> {
 
 fn recurse_undefined_clears(stmt: Statement) -> Statement {
     match stmt {
-        Statement::If { condition, then_body, else_body } => Statement::If {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::If {
             condition,
             then_body: remove_dead_undefined_clears(then_body),
             else_body: remove_dead_undefined_clears(else_body),
@@ -70,32 +77,52 @@ fn recurse_undefined_clears(stmt: Statement) -> Statement {
             body: remove_dead_undefined_clears(body),
             condition,
         },
-        Statement::For { init, condition, update, body } => Statement::For {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
             init,
             condition,
             update,
             body: remove_dead_undefined_clears(body),
         },
-        Statement::ForIn { variable, object, body } => Statement::ForIn {
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => Statement::ForIn {
             variable,
             object,
             body: remove_dead_undefined_clears(body),
         },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => Statement::ForOf {
             variable,
             iterable,
             body: remove_dead_undefined_clears(body),
         },
         Statement::Block(inner) => Statement::Block(remove_dead_undefined_clears(inner)),
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => {
-            Statement::TryCatch {
-                try_body: remove_dead_undefined_clears(try_body),
-                catch_param,
-                catch_body: remove_dead_undefined_clears(catch_body),
-                finally_body: remove_dead_undefined_clears(finally_body),
-            }
-        }
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
+            try_body: remove_dead_undefined_clears(try_body),
+            catch_param,
+            catch_body: remove_dead_undefined_clears(catch_body),
+            finally_body: remove_dead_undefined_clears(finally_body),
+        },
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => Statement::Switch {
             discriminant,
             cases: cases
                 .into_iter()
@@ -150,7 +177,9 @@ fn inline_single_use(stmts: &mut Vec<Statement>) {
     // inlining one of its definitions into a use elsewhere is unsound.
     let mut def_count: BTreeMap<u32, usize> = BTreeMap::new();
     {
-        let mut dc = DefCounter { counts: &mut def_count };
+        let mut dc = DefCounter {
+            counts: &mut def_count,
+        };
         for stmt in stmts.iter() {
             dc.visit_statement(stmt);
         }
@@ -320,7 +349,8 @@ fn source_regs_single_def(value: &Expression, def_count: &BTreeMap<u32, usize>) 
     let mut regs: HashSet<u32> = HashSet::new();
     let mut collector = UseCollector { used: &mut regs };
     collector.visit_expression(value);
-    regs.iter().all(|r| def_count.get(r).copied().unwrap_or(0) <= 1)
+    regs.iter()
+        .all(|r| def_count.get(r).copied().unwrap_or(0) <= 1)
 }
 
 fn expr_uses_target(expr: &Expression, target: &AssignTarget) -> bool {
@@ -344,12 +374,14 @@ impl<'a> Visitor<'a> for TargetUseChecker<'a> {
         }
 
         match (expr, self.target) {
-            (Expression::Value(Value::Binding(Binding::Register(r1))), AssignTarget::Binding(Binding::Register(r2))) if r1 == r2 => {
-                self.found = true
-            }
-            (Expression::Value(Value::Binding(Binding::Variable(v1))), AssignTarget::Binding(Binding::Variable(v2))) if v1 == v2 => {
-                self.found = true
-            }
+            (
+                Expression::Value(Value::Binding(Binding::Register(r1))),
+                AssignTarget::Binding(Binding::Register(r2)),
+            ) if r1 == r2 => self.found = true,
+            (
+                Expression::Value(Value::Binding(Binding::Variable(v1))),
+                AssignTarget::Binding(Binding::Variable(v2)),
+            ) if v1 == v2 => self.found = true,
             _ => self.walk_expression(expr),
         }
     }

@@ -19,8 +19,8 @@
 // and emit `[TARGET0, TARGET1, , ...] = SRC`. Conservative: any deviation leaves
 // the statements untouched.
 
-use crate::ir::{Binding, 
-    map_nested_bodies, AssignTarget, Expression, PropertyKey, Statement, Value,
+use crate::ir::{
+    map_nested_bodies, AssignTarget, Binding, Expression, PropertyKey, Statement, Value,
 };
 
 // One destructuring element: a binding target (+ optional default), or a hole.
@@ -59,15 +59,24 @@ pub fn reconstruct_v98_array_destructuring(stmts: Vec<Statement>) -> Vec<Stateme
 // `iter = SRC[Symbol.iterator]()` → (iter l-value as expression, SRC).
 fn iterator_anchor(stmt: &Statement) -> Option<(Expression, Expression)> {
     let (target, value) = match stmt {
-        Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } => {
-            (Expression::Value(Value::Binding(Binding::Register(*r))), value)
-        }
-        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), value } => {
-            (Expression::Value(Value::Binding(Binding::Variable(n.clone()))), value)
-        }
-        Statement::Let { name, value, .. } => {
-            (Expression::Value(Value::Binding(Binding::Variable(name.clone()))), value)
-        }
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            value,
+        } => (
+            Expression::Value(Value::Binding(Binding::Register(*r))),
+            value,
+        ),
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(n)),
+            value,
+        } => (
+            Expression::Value(Value::Binding(Binding::Variable(n.clone()))),
+            value,
+        ),
+        Statement::Let { name, value, .. } => (
+            Expression::Value(Value::Binding(Binding::Variable(name.clone()))),
+            value,
+        ),
         _ => return None,
     };
     symbol_iterator_source(value).map(|src| (target, src))
@@ -81,13 +90,22 @@ fn symbol_iterator_source(expr: &Expression) -> Option<Expression> {
     if !arguments.is_empty() {
         return None;
     }
-    let Expression::Member { object, property: PropertyKey::Computed(computed), .. } =
-        callee.as_ref()
+    let Expression::Member {
+        object,
+        property: PropertyKey::Computed(computed),
+        ..
+    } = callee.as_ref()
     else {
         return None;
     };
-    if let Expression::Member { object: sym, property, .. } = computed.as_ref() {
-        let is_iter = matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "iterator");
+    if let Expression::Member {
+        object: sym,
+        property,
+        ..
+    } = computed.as_ref()
+    {
+        let is_iter =
+            matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "iterator");
         let is_symbol = matches!(sym.as_ref(), Expression::Value(Value::Binding(Binding::Variable(s))) if s == "Symbol");
         if is_iter && is_symbol {
             return Some((**object).clone());
@@ -139,17 +157,27 @@ fn collect(stmts: &[Statement], start: usize, iter: &Expression) -> Option<(Elem
 // into if/block bodies since the advance is guarded.
 fn advance_result(stmt: &Statement, iter: &Expression) -> Option<Option<Expression>> {
     match stmt {
-        Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } if is_iter_next(value, iter) => {
-            Some(Some(Expression::Value(Value::Binding(Binding::Register(*r)))))
-        }
-        Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), value } if is_iter_next(value, iter) => {
-            Some(Some(Expression::Value(Value::Binding(Binding::Variable(n.clone())))))
-        }
-        Statement::Let { name, value, .. } if is_iter_next(value, iter) => {
-            Some(Some(Expression::Value(Value::Binding(Binding::Variable(name.clone())))))
-        }
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            value,
+        } if is_iter_next(value, iter) => Some(Some(Expression::Value(Value::Binding(
+            Binding::Register(*r),
+        )))),
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(n)),
+            value,
+        } if is_iter_next(value, iter) => Some(Some(Expression::Value(Value::Binding(
+            Binding::Variable(n.clone()),
+        )))),
+        Statement::Let { name, value, .. } if is_iter_next(value, iter) => Some(Some(
+            Expression::Value(Value::Binding(Binding::Variable(name.clone()))),
+        )),
         Statement::Expr(e) if is_iter_next(e, iter) => Some(None),
-        Statement::If { then_body, else_body, .. } => {
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
             // The advance is somewhere inside the guard; the result is whichever
             // branch assigns iter.next().
             for s in then_body.iter().chain(else_body.iter()) {
@@ -175,7 +203,10 @@ fn advance_result(stmt: &Statement, iter: &Expression) -> Option<Option<Expressi
 fn is_iter_next(expr: &Expression, iter: &Expression) -> bool {
     if let Expression::Call { callee, arguments } = expr {
         if arguments.is_empty() {
-            if let Expression::Member { object, property, .. } = callee.as_ref() {
+            if let Expression::Member {
+                object, property, ..
+            } = callee.as_ref()
+            {
                 let is_next = matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "next");
                 return is_next && **object == *iter;
             }
@@ -186,8 +217,16 @@ fn is_iter_next(expr: &Expression, iter: &Expression) -> bool {
 
 // The close: an `if` whose body calls `iter.return()`.
 fn is_close(stmt: &Statement, iter: &Expression) -> bool {
-    if let Statement::If { then_body, else_body, .. } = stmt {
-        return then_body.iter().chain(else_body.iter()).any(|s| is_iter_return(s, iter));
+    if let Statement::If {
+        then_body,
+        else_body,
+        ..
+    } = stmt
+    {
+        return then_body
+            .iter()
+            .chain(else_body.iter())
+            .any(|s| is_iter_return(s, iter));
     }
     is_iter_return(stmt, iter)
 }
@@ -195,7 +234,10 @@ fn is_close(stmt: &Statement, iter: &Expression) -> bool {
 fn is_iter_return(stmt: &Statement, iter: &Expression) -> bool {
     if let Statement::Expr(Expression::Call { callee, arguments }) = stmt {
         if arguments.is_empty() {
-            if let Expression::Member { object, property, .. } = callee.as_ref() {
+            if let Expression::Member {
+                object, property, ..
+            } = callee.as_ref()
+            {
                 let is_ret = matches!(property, PropertyKey::Ident(p) | PropertyKey::String(p) if p == "return");
                 return is_ret && **object == *iter;
             }
@@ -208,7 +250,9 @@ fn is_iter_return(stmt: &Statement, iter: &Expression) -> bool {
 fn is_scratch_target(t: &AssignTarget) -> bool {
     match t {
         AssignTarget::Binding(Binding::Register(_)) => true,
-        AssignTarget::Binding(Binding::Variable(n)) => n.starts_with("tmp") || n.starts_with('r') && n[1..].chars().all(|c| c.is_ascii_digit()),
+        AssignTarget::Binding(Binding::Variable(n)) => {
+            n.starts_with("tmp") || n.starts_with('r') && n[1..].chars().all(|c| c.is_ascii_digit())
+        }
         _ => false,
     }
 }

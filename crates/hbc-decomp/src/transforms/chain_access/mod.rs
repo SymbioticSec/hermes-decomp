@@ -1,10 +1,10 @@
 mod inlining;
 mod usage;
 
-use std::collections::HashSet;
-use crate::ir::{Binding, map_nested_bodies, AssignTarget, Expression, Statement};
+use crate::ir::{map_nested_bodies, AssignTarget, Binding, Expression, Statement};
 use inlining::inline_chains_in_stmt;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use usage::{count_register_defs, count_register_uses, is_chain_candidate};
 
 pub fn optimize_chain_access(stmts: Vec<Statement>) -> Vec<Statement> {
@@ -35,9 +35,10 @@ pub fn optimize_chain_access(stmts: Vec<Statement>) -> Vec<Statement> {
 
     let mut to_inline: BTreeMap<u32, Expression> = BTreeMap::new();
 
-    for (reg, (_, expr)) in &def_map {
+    for (reg, (idx, expr)) in &def_map {
         if use_count.get(reg).copied().unwrap_or(0) == 1
             && def_count.get(reg).copied().unwrap_or(0) == 1
+            && use_follows_without_interference(&stmts, *idx, *reg, expr)
         {
             to_inline.insert(*reg, expr.clone());
         }
@@ -62,6 +63,50 @@ pub fn optimize_chain_access(stmts: Vec<Statement>) -> Vec<Statement> {
     }
 
     result.into_iter().map(process_nested_chains).collect()
+}
+
+// A property read moves to its use only if nothing between the two can
+// change what it reads: no call, no store, no control flow, and no write to a
+// register the read depends on. The use itself has to be at the top level or
+// in a condition evaluated first, never inside a nested body that other
+// statements precede. `a[k] = v` read before a `try` that stores into `a[k]`
+// was being carried past the store, and came out as `a[k] = a[k]`.
+fn use_follows_without_interference(
+    stmts: &[Statement],
+    def_idx: usize,
+    reg: u32,
+    expr: &Expression,
+) -> bool {
+    use crate::ir::{expr_uses_register, stmt_has_side_effects, stmt_uses_register};
+    for stmt in &stmts[def_idx + 1..] {
+        if stmt_uses_register(stmt, reg) {
+            return match stmt {
+                Statement::Assign { .. }
+                | Statement::Let { .. }
+                | Statement::Expr(_)
+                | Statement::Return(_)
+                | Statement::Throw(_) => true,
+                Statement::If { condition, .. } | Statement::While { condition, .. } => {
+                    expr_uses_register(condition, reg)
+                }
+                Statement::Switch { discriminant, .. } => expr_uses_register(discriminant, reg),
+                _ => false,
+            };
+        }
+        if stmt_has_side_effects(stmt) {
+            return false;
+        }
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(w)),
+            ..
+        } = stmt
+        {
+            if expr_uses_register(expr, *w) {
+                return false;
+            }
+        }
+    }
+    false
 }
 
 fn process_nested_chains(stmt: Statement) -> Statement {
@@ -94,7 +139,9 @@ mod tests {
                     optional: false,
                 },
             },
-            Statement::Return(Some(Expression::Value(Value::Binding(Binding::Register(1))))),
+            Statement::Return(Some(Expression::Value(Value::Binding(Binding::Register(
+                1,
+            ))))),
         ];
 
         let result = optimize_chain_access(stmts);

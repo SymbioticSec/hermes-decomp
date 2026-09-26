@@ -1,5 +1,7 @@
+use crate::ir::{
+    AssignTarget, BinaryOp, Binding, Constant, Expression, MutVisitor, Statement, Value,
+};
 use std::collections::BTreeMap;
-use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, Statement, Value, MutVisitor};
 
 // Propagates string concatenations across multiple assignments to reconstruct
 // complete template literals.
@@ -42,7 +44,11 @@ impl ConcatPropagator {
     }
 
     fn append_to_template(base: &Expression, addition: &Expression) -> Option<Expression> {
-        if let Expression::TemplateLiteral { quasis, expressions } = base {
+        if let Expression::TemplateLiteral {
+            quasis,
+            expressions,
+        } = base
+        {
             let mut new_quasis = quasis.clone();
             let mut new_exprs = expressions.clone();
 
@@ -80,19 +86,23 @@ impl ConcatPropagator {
     }
 
     fn is_string_or_template(expr: &Expression) -> bool {
-        matches!(expr, Expression::TemplateLiteral { .. } | Expression::Value(Value::Constant(Constant::String(_))))
+        matches!(
+            expr,
+            Expression::TemplateLiteral { .. }
+                | Expression::Value(Value::Constant(Constant::String(_)))
+        )
     }
 
     fn expr_to_template_base(expr: &Expression) -> Expression {
         match expr {
             Expression::TemplateLiteral { .. } => expr.clone(),
-            Expression::Value(Value::Constant(Constant::String(s))) => Self::build_template_literal(s),
-            _ => {
-                Expression::TemplateLiteral {
-                    quasis: vec![String::new(), String::new()],
-                    expressions: vec![expr.clone()],
-                }
+            Expression::Value(Value::Constant(Constant::String(s))) => {
+                Self::build_template_literal(s)
             }
+            _ => Expression::TemplateLiteral {
+                quasis: vec![String::new(), String::new()],
+                expressions: vec![expr.clone()],
+            },
         }
     }
 }
@@ -107,7 +117,10 @@ impl MutVisitor for ConcatPropagator {
 
     fn visit_statement(&mut self, stmt: &mut Statement) {
         match stmt {
-            Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } => {
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Register(r)),
+                value,
+            } => {
                 // First, try replacing variables inside the value using walk_expression
                 self.walk_expression(value);
 
@@ -115,9 +128,14 @@ impl MutVisitor for ConcatPropagator {
                 match &*value {
                     Expression::Value(Value::Constant(Constant::String(s))) => {
                         // Starts a string chain
-                        self.tracked_strings.insert(*r, Self::build_template_literal(s));
+                        self.tracked_strings
+                            .insert(*r, Self::build_template_literal(s));
                     }
-                    Expression::Binary { op: BinaryOp::Add, left, right } => {
+                    Expression::Binary {
+                        op: BinaryOp::Add,
+                        left,
+                        right,
+                    } => {
                         // Check if either side guarantees this is a string concatenation
                         if Self::is_string_or_template(left) || Self::is_string_or_template(right) {
                             let base = Self::expr_to_template_base(left);
@@ -172,7 +190,7 @@ impl MutVisitor for ConcatPropagator {
                 return;
             }
         }
-        
+
         self.walk_expression(expr);
     }
 }
@@ -188,26 +206,39 @@ mod tests {
         // r2 = r1 + x
         // r3 = r2 + " connected"
         // return r3
-        
+
         let stmts = vec![
-            Statement::assign_reg(1, Expression::constant(Constant::String("User ".to_string()))),
-            Statement::assign_reg(2, Expression::binary(
-                BinaryOp::Add,
-                Expression::register(1),
-                Expression::Value(Value::Binding(Binding::Variable("x".to_string()))),
-            )),
-            Statement::assign_reg(3, Expression::binary(
-                BinaryOp::Add,
-                Expression::register(2),
-                Expression::constant(Constant::String(" connected".to_string())),
-            )),
+            Statement::assign_reg(
+                1,
+                Expression::constant(Constant::String("User ".to_string())),
+            ),
+            Statement::assign_reg(
+                2,
+                Expression::binary(
+                    BinaryOp::Add,
+                    Expression::register(1),
+                    Expression::Value(Value::Binding(Binding::Variable("x".to_string()))),
+                ),
+            ),
+            Statement::assign_reg(
+                3,
+                Expression::binary(
+                    BinaryOp::Add,
+                    Expression::register(2),
+                    Expression::constant(Constant::String(" connected".to_string())),
+                ),
+            ),
             Statement::Return(Some(Expression::register(3))),
         ];
 
         let result = propagate_concatenation(stmts);
-        
+
         // r3 should be replaced in the return statement
-        if let Statement::Return(Some(Expression::TemplateLiteral { quasis, expressions })) = &result[3] {
+        if let Statement::Return(Some(Expression::TemplateLiteral {
+            quasis,
+            expressions,
+        })) = &result[3]
+        {
             assert_eq!(quasis, &vec!["User ".to_string(), " connected".to_string()]);
             assert_eq!(expressions.len(), 1);
             if let Expression::Value(Value::Binding(Binding::Variable(v))) = &expressions[0] {

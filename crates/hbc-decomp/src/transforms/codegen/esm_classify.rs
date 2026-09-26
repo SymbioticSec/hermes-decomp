@@ -1,4 +1,4 @@
-use super::{Codegen, EsmClassification, is_exports_like, is_module_like, sanitize_import_name};
+use super::{is_exports_like, is_module_like, sanitize_import_name, Codegen, EsmClassification};
 use crate::ir::Statement;
 
 impl Codegen {
@@ -8,13 +8,16 @@ impl Codegen {
         stmt: &Statement,
         rebound: &std::collections::HashSet<String>,
     ) -> EsmClassification {
-        use crate::ir::{Expression, Value, Constant, AssignTarget};
+        use crate::ir::{AssignTarget, Constant, Expression, Value};
 
         match stmt {
             // Skip: return undefined / return;
             Statement::Return(None) => EsmClassification::Skip,
             Statement::Return(Some(expr)) => {
-                if matches!(expr, Expression::Value(Value::Constant(Constant::Undefined))) {
+                if matches!(
+                    expr,
+                    Expression::Value(Value::Constant(Constant::Undefined))
+                ) {
                     EsmClassification::Skip
                 } else {
                     EsmClassification::Body
@@ -61,23 +64,31 @@ impl Codegen {
                     if is_exports_like(&obj_str) {
                         // Skip `exports.X = undefined`, Babel initialization noise
                         // The real export value is assigned later or via defineProperty
-                        if matches!(value, Expression::Value(Value::Constant(Constant::Undefined))) {
+                        if matches!(
+                            value,
+                            Expression::Value(Value::Constant(Constant::Undefined))
+                        ) {
                             return EsmClassification::Skip;
                         }
                         if property == "default" {
                             // Try to resolve re-exports: export default require(N) → export { default } from "mod"
                             if let Some(mod_name) = self.resolve_require_module(value) {
-                                return EsmClassification::Export(
-                                    format!("export {{ default }} from \"{mod_name}\";")
-                                );
+                                return EsmClassification::Export(format!(
+                                    "export {{ default }} from \"{mod_name}\";"
+                                ));
                             }
                             // Try require(N).prop → export { prop as default } from "mod"
-                            if let Expression::Member { object, property: prop_key, .. } = value {
+                            if let Expression::Member {
+                                object,
+                                property: prop_key,
+                                ..
+                            } = value
+                            {
                                 if let Some(mod_name) = self.resolve_require_module(object) {
                                     let prop = crate::ir::expr::display::format_key(prop_key);
-                                    return EsmClassification::Export(
-                                        format!("export {{ {prop} as default }} from \"{mod_name}\";")
-                                    );
+                                    return EsmClassification::Export(format!(
+                                        "export {{ {prop} as default }} from \"{mod_name}\";"
+                                    ));
                                 }
                             }
                             // Try require(N)(args) → import + export default call
@@ -85,7 +96,8 @@ impl Codegen {
                                 if let Some(mod_name) = self.resolve_require_module(callee) {
                                     let import_name = sanitize_import_name(&mod_name);
                                     if !import_name.is_empty() {
-                                        let call_str = self.format_call(&import_name, None, arguments, "");
+                                        let call_str =
+                                            self.format_call(&import_name, None, arguments, "");
                                         return EsmClassification::ImportAndExport(
                                             format!("import {import_name} from \"{mod_name}\";"),
                                             format!("export default {call_str};"),
@@ -93,54 +105,106 @@ impl Codegen {
                                     }
                                 }
                             }
-                            return EsmClassification::Export(
-                                format!("export default {};", self.generate_expr(value))
-                            );
+                            return EsmClassification::Export(format!(
+                                "export default {};",
+                                self.generate_expr(value)
+                            ));
                         } else if property == "exports" {
                             // exports.exports = X is the CJS module.exports = X pattern
                             // via the exports parameter alias, treat as default export
-                            return EsmClassification::Export(
-                                format!("export default {};", self.generate_expr(value))
-                            );
+                            return EsmClassification::Export(format!(
+                                "export default {};",
+                                self.generate_expr(value)
+                            ));
                         } else if property == "__esModule" {
                             return EsmClassification::Skip;
                         } else {
+                            // `exports.x = require(N).y` is a re-export; spelling it
+                            // as one keeps the module free of a `require` binding.
+                            if let Expression::Member {
+                                object,
+                                property: crate::ir::PropertyKey::Ident(prop),
+                                ..
+                            } = value
+                            {
+                                if let Some(mod_name) = self.resolve_require_module(object) {
+                                    let line = if prop == property {
+                                        format!("export {{ {property} }} from \"{mod_name}\";")
+                                    } else {
+                                        format!(
+                                            "export {{ {prop} as {property} }} from \"{mod_name}\";"
+                                        )
+                                    };
+                                    return EsmClassification::Export(line);
+                                }
+                            }
                             let val_str = self.generate_expr(value);
                             // Avoid `export const X = X;`, use `export { X }` instead
                             if val_str == *property {
-                                return EsmClassification::Export(
-                                    format!("export {{ {property} }};")
-                                );
+                                return EsmClassification::Export(format!(
+                                    "export {{ {property} }};"
+                                ));
                             }
                             // `export const name = function name()` → `export function name()`
                             // Only for non-arrow functions, arrow functions don't use `function` keyword
-                            if let crate::ir::Expression::Function { name: Some(fn_name), is_arrow: false, .. } = value {
-                                if fn_name == property {
-                                    return EsmClassification::Export(
-                                        format!("export {val_str}")
-                                    );
+                            // The rendered body decides the final shape (an
+                            // inline body can come out as an arrow), so the bare
+                            // form is only used when the text is a declaration.
+                            if let crate::ir::Expression::Function {
+                                name: Some(fn_name),
+                                is_arrow: false,
+                                ..
+                            } = value
+                            {
+                                let is_declaration = val_str.starts_with("function ")
+                                    || val_str.starts_with("async function ");
+                                if fn_name == property && is_declaration {
+                                    return EsmClassification::Export(format!("export {val_str}"));
                                 }
                             }
-                            return EsmClassification::Export(
-                                format!("export const {property} = {val_str};")
-                            );
+                            // `export const null = ...` is not a binding, and
+                            // neither is `export const unsigned short = ...`: a
+                            // reserved word or a name that is no identifier is
+                            // exported under its name from a private binding
+                            // (a string export name is valid since ES2022).
+                            if crate::constants::is_reserved_word(property)
+                                || !crate::util::is_valid_identifier(property)
+                            {
+                                let local = format!("{}_export", identifier_stem(property));
+                                let exported = if crate::util::is_valid_identifier(property) {
+                                    property.clone()
+                                } else {
+                                    crate::util::escape_js_string(property)
+                                };
+                                return EsmClassification::Export(format!(
+                                    "const {local} = {val_str};\nexport {{ {local} as {exported} }};"
+                                ));
+                            }
+                            return EsmClassification::Export(format!(
+                                "export const {property} = {val_str};"
+                            ));
                         }
                     }
                     // module.exports = value (or arg2.exports, p2.exports)
                     if is_module_like(&obj_str) && property == "exports" {
                         // Try to resolve re-exports
                         if let Some(mod_name) = self.resolve_require_module(value) {
-                            return EsmClassification::Export(
-                                format!("export {{ default }} from \"{mod_name}\";")
-                            );
+                            return EsmClassification::Export(format!(
+                                "export {{ default }} from \"{mod_name}\";"
+                            ));
                         }
                         // Try require(N).prop → export { prop as default } from "mod"
-                        if let Expression::Member { object: inner_obj, property: prop_key, .. } = value {
+                        if let Expression::Member {
+                            object: inner_obj,
+                            property: prop_key,
+                            ..
+                        } = value
+                        {
                             if let Some(mod_name) = self.resolve_require_module(inner_obj) {
                                 let prop = crate::ir::expr::display::format_key(prop_key);
-                                return EsmClassification::Export(
-                                    format!("export {{ {prop} as default }} from \"{mod_name}\";")
-                                );
+                                return EsmClassification::Export(format!(
+                                    "export {{ {prop} as default }} from \"{mod_name}\";"
+                                ));
                             }
                         }
                         // Try require(N)(args) → import + export default call
@@ -148,7 +212,8 @@ impl Codegen {
                             if let Some(mod_name) = self.resolve_require_module(callee) {
                                 let import_name = sanitize_import_name(&mod_name);
                                 if !import_name.is_empty() {
-                                    let call_str = self.format_call(&import_name, None, arguments, "");
+                                    let call_str =
+                                        self.format_call(&import_name, None, arguments, "");
                                     return EsmClassification::ImportAndExport(
                                         format!("import {import_name} from \"{mod_name}\";"),
                                         format!("export default {call_str};"),
@@ -156,9 +221,10 @@ impl Codegen {
                                 }
                             }
                         }
-                        return EsmClassification::Export(
-                            format!("export default {};", self.generate_expr(value))
-                        );
+                        return EsmClassification::Export(format!(
+                            "export default {};",
+                            self.generate_expr(value)
+                        ));
                     }
                     // module.exports.__esModule = true (nested member target)
                     if obj_str.ends_with(".exports") && property == "__esModule" {
@@ -211,7 +277,9 @@ impl Codegen {
         rebound: &std::collections::HashSet<String>,
     ) -> Option<EsmClassification> {
         if !rebound.contains(name) {
-            return self.try_import_from_expr(name, value).map(EsmClassification::Import);
+            return self
+                .try_import_from_expr(name, value)
+                .map(EsmClassification::Import);
         }
         let local = crate::util::sanitize_identifier(name);
         if local.is_empty() {
@@ -219,7 +287,10 @@ impl Codegen {
         }
         let alias = format!("{local}_mod");
         let imp = self.try_import_from_expr(&alias, value)?;
-        Some(EsmClassification::ImportAndBody(imp, format!("let {local} = {alias};\n")))
+        Some(EsmClassification::ImportAndBody(
+            imp,
+            format!("let {local} = {alias};\n"),
+        ))
     }
 }
 
@@ -231,7 +302,9 @@ mod rebound_import_tests {
 
     fn require_call(id: i32) -> Expression {
         Expression::Call {
-            callee: Box::new(Expression::Value(Value::Binding(crate::ir::Binding::Variable("require".into())))),
+            callee: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("require".into()),
+            ))),
             arguments: vec![Expression::Value(Value::Constant(Constant::Integer(id)))],
         }
     }
@@ -264,5 +337,39 @@ mod rebound_import_tests {
             }
             _ => panic!("expected an import plus a local alias"),
         }
+    }
+}
+
+// An identifier built from an arbitrary export name: every character that
+// cannot be part of an identifier becomes `_`, and a leading digit is prefixed.
+fn identifier_stem(name: &str) -> String {
+    let mut out: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '$' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    if out.is_empty() {
+        out.push('_');
+    }
+    out
+}
+
+#[cfg(test)]
+mod export_name_tests {
+    use super::identifier_stem;
+
+    #[test]
+    fn an_export_name_that_is_no_identifier_gets_a_stem() {
+        assert_eq!(identifier_stem("unsigned short"), "unsigned_short");
+        assert_eq!(identifier_stem("2d"), "_2d");
+        assert_eq!(identifier_stem("void"), "void");
     }
 }

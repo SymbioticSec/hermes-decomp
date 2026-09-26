@@ -20,9 +20,11 @@ fn ends_with_return(stmts: &[Statement]) -> bool {
         match last {
             Statement::Return(_) => true,
             Statement::Throw(_) => true,
-            Statement::If { then_body, else_body, .. } => {
-                ends_with_return(then_body) && ends_with_return(else_body)
-            }
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => ends_with_return(then_body) && ends_with_return(else_body),
             Statement::While { .. } => false, // Loops may not return
             _ => false,
         }

@@ -32,7 +32,9 @@
 // deviation makes the whole pass bail and return the input unchanged, so an
 // unrecognized generator keeps today's (raw) output rather than wrong code.
 
-use crate::ir::{Binding, AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, Value};
+use crate::ir::{
+    AssignTarget, BinaryOp, Binding, Constant, Expression, PropertyKey, Statement, Value,
+};
 
 pub fn reconstruct_generator_v98(body: Vec<Statement>) -> Vec<Statement> {
     try_reconstruct(&body).unwrap_or(body)
@@ -163,14 +165,15 @@ fn is_catch_label(body: &[Statement]) -> bool {
 fn only_exits(stmt: &Statement) -> bool {
     match stmt {
         Statement::Throw(_) | Statement::Return(_) | Statement::Comment(_) => true,
-        Statement::If { then_body, else_body, .. } => {
-            then_body.iter().all(only_exits) && else_body.iter().all(only_exits)
-        }
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => then_body.iter().all(only_exits) && else_body.iter().all(only_exits),
         Statement::Block(inner) => inner.iter().all(only_exits),
         _ => false,
     }
 }
-
 
 // `suspends` are the yield cases in source order; `terminal` is the done case
 // (resume after the last yield). Thread `yield value` into each next binding.
@@ -185,11 +188,7 @@ fn emit_yield_chain(suspends: &[ParsedCase], terminal: &ParsedCase) -> Option<Ve
         }
         out.extend(case.pre.iter().cloned());
     }
-    push_yield(
-        &mut out,
-        &suspends.last()?.value,
-        &terminal.resume_binding,
-    );
+    push_yield(&mut out, &suspends.last()?.value, &terminal.resume_binding);
     out.extend(terminal.pre.iter().cloned());
     if !is_undefined(&terminal.value) {
         out.push(Statement::Return(Some(terminal.value.clone())));
@@ -221,10 +220,16 @@ fn collect_state_vars(body: &[Statement]) -> std::collections::HashSet<String> {
     struct C(std::collections::HashSet<String>);
     impl<'b> Visitor<'b> for C {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = e {
+            if let Expression::Binary {
+                op: BinaryOp::StrictEq,
+                left,
+                right,
+            } = e
+            {
                 for (a, b) in [(left, right), (right, left)] {
                     if int_const(a).is_some() {
-                        if let Expression::Value(Value::Binding(Binding::Variable(n))) = b.as_ref() {
+                        if let Expression::Value(Value::Binding(Binding::Variable(n))) = b.as_ref()
+                        {
                             self.0.insert(n.clone());
                         }
                     }
@@ -241,7 +246,10 @@ fn collect_state_vars(body: &[Statement]) -> std::collections::HashSet<String> {
 }
 
 // Parse one case body into (resume binding, real pre-code, yielded value, done).
-fn parse_case(case_body: &[Statement], state_vars: &std::collections::HashSet<String>) -> Option<ParsedCase> {
+fn parse_case(
+    case_body: &[Statement],
+    state_vars: &std::collections::HashSet<String>,
+) -> Option<ParsedCase> {
     let real = strip_arg_protocol(case_body);
 
     // A leading `x = <resume param>` binds the value the generator was resumed
@@ -257,7 +265,12 @@ fn parse_case(case_body: &[Statement], state_vars: &std::collections::HashSet<St
 
     let mut pre = Vec::new();
     let (value, done) = collect_pre_and_yield(&real[idx..], &mut pre, state_vars)?;
-    Some(ParsedCase { resume_binding, pre, value, done })
+    Some(ParsedCase {
+        resume_binding,
+        pre,
+        value,
+        done,
+    })
 }
 
 // Walk a case body, appending real code to `pre` and returning the suspend
@@ -283,7 +296,12 @@ fn collect_pre_and_yield(
         // continues to the suspend point flattens to a guard `if (cond) { exit }`
         // plus the continuation branch. Either branch may be the terminal one.
         if i + 1 == stmts.len() {
-            if let Statement::If { condition, then_body, else_body } = &stmts[i] {
+            if let Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } = &stmts[i]
+            {
                 if !else_body.is_empty() {
                     if let Some(exit) = reconstruct_exit_body(then_body, state_vars) {
                         pre.push(Statement::If {
@@ -295,7 +313,10 @@ fn collect_pre_and_yield(
                     }
                     if let Some(exit) = reconstruct_exit_body(else_body, state_vars) {
                         pre.push(Statement::If {
-                            condition: Expression::unary(crate::ir::UnaryOp::Not, condition.clone()),
+                            condition: Expression::unary(
+                                crate::ir::UnaryOp::Not,
+                                condition.clone(),
+                            ),
                             then_body: exit,
                             else_body: Vec::new(),
                         });
@@ -350,11 +371,18 @@ fn reconstruct_exit_body(
 
 // Drop state-slot writes, dead `x = undefined` inits and label copies.
 fn is_bookkeeping(s: &Statement, state_vars: &std::collections::HashSet<String>) -> bool {
-    if let Statement::Assign { target: AssignTarget::Binding(Binding::Variable(n)), value } = s {
+    if let Statement::Assign {
+        target: AssignTarget::Binding(Binding::Variable(n)),
+        value,
+    } = s
+    {
         if state_vars.contains(n) {
             return true;
         }
-        if matches!(value, Expression::Value(Value::Constant(Constant::Undefined))) {
+        if matches!(
+            value,
+            Expression::Value(Value::Constant(Constant::Undefined))
+        ) {
             return true;
         }
         if let Expression::Value(Value::Binding(Binding::Variable(src))) = value {
@@ -382,7 +410,9 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
     // folding used to turn the 3-statement form below into this, which made the
     // whole generator pass bail and leave the raw v98 state machine in the dump.
     if stmts.len() >= 2 {
-        if let Statement::Return(Some(Expression::Value(Value::Binding(Binding::Variable(o2))))) = &stmts[1] {
+        if let Statement::Return(Some(Expression::Value(Value::Binding(Binding::Variable(o2))))) =
+            &stmts[1]
+        {
             if let Some((o1, obj_expr)) = assigned_object(&stmts[0]) {
                 if o1 == o2 {
                     if let Some((v, d)) = parse_result_object(obj_expr) {
@@ -395,8 +425,14 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
     // Incremental object build then return.
     if stmts.len() >= 3 {
         if let (
-            Statement::Assign { target: AssignTarget::Binding(Binding::Variable(o1)), value: Expression::Object { properties } },
-            Statement::Assign { target: value_target, value: real_value },
+            Statement::Assign {
+                target: AssignTarget::Binding(Binding::Variable(o1)),
+                value: Expression::Object { properties },
+            },
+            Statement::Assign {
+                target: value_target,
+                value: real_value,
+            },
             Statement::Return(Some(Expression::Value(Value::Binding(Binding::Variable(o3))))),
         ) = (&stmts[0], &stmts[1], &stmts[2])
         {
@@ -408,7 +444,10 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
             let value_fill = match value_target {
                 AssignTarget::Index { object, key } => Some((
                     object,
-                    matches!(key, Expression::Value(Value::Constant(Constant::Integer(0)))),
+                    matches!(
+                        key,
+                        Expression::Value(Value::Constant(Constant::Integer(0)))
+                    ),
                 )),
                 AssignTarget::Member { object, property } => Some((object, property == "value")),
                 _ => None,
@@ -416,7 +455,9 @@ fn parse_result_return(stmts: &[Statement]) -> Option<(Expression, bool, usize)>
             let (object, fills_value) = value_fill?;
             if o1 == o3 && obj_is(object, o1) && fills_value {
                 let done = properties.iter().find_map(|p| match &p.key {
-                    PropertyKey::Ident(k) | PropertyKey::String(k) if k == "done" => Some(is_truthy(&p.value)),
+                    PropertyKey::Ident(k) | PropertyKey::String(k) if k == "done" => {
+                        Some(is_truthy(&p.value))
+                    }
                     _ => None,
                 })?;
                 return Some((real_value.clone(), done, 3));
@@ -433,8 +474,7 @@ fn is_resume_param(e: &Expression) -> bool {
 // A terminal value that says nothing: the fall through cases return undefined or
 // null having done no work.
 fn is_empty_result(e: &Expression) -> bool {
-    is_undefined(e)
-        || matches!(e, Expression::Value(Value::Constant(Constant::Null)))
+    is_undefined(e) || matches!(e, Expression::Value(Value::Constant(Constant::Null)))
 }
 
 fn is_undefined(e: &Expression) -> bool {
@@ -482,7 +522,12 @@ fn find_dispatch_anywhere(body: &[Statement]) -> Option<&Statement> {
         return Some(found);
     }
     for s in body {
-        if let Statement::If { then_body, else_body, .. } = s {
+        if let Statement::If {
+            then_body,
+            else_body,
+            ..
+        } = s
+        {
             if let Some(found) = find_dispatch_anywhere(then_body) {
                 return Some(found);
             }
@@ -498,7 +543,11 @@ fn find_generator_try(body: &[Statement]) -> Option<&Vec<Statement>> {
     for s in body {
         match s {
             Statement::TryCatch { try_body, .. } => return Some(try_body),
-            Statement::If { then_body, else_body, .. } => {
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 if let Some(t) = find_generator_try(then_body) {
                     return Some(t);
                 }
@@ -518,7 +567,12 @@ fn is_label_dispatch_if(s: &Statement) -> bool {
 
 // `<int> === <var>` or `<var> === <int>` → the integer label.
 fn label_of_condition(cond: &Expression) -> Option<i32> {
-    if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = cond {
+    if let Expression::Binary {
+        op: BinaryOp::StrictEq,
+        left,
+        right,
+    } = cond
+    {
         if let (Some(k), true) = (int_const(left), is_var(right)) {
             return Some(k);
         }
@@ -541,7 +595,8 @@ fn is_var(e: &Expression) -> bool {
     // this stage are `ClosureVar`; a `tmp` copy of the label is a plain Variable.
     matches!(
         e,
-        Expression::Value(Value::Binding(Binding::Variable(_))) | Expression::Value(Value::Binding(Binding::ClosureVar{ .. }))
+        Expression::Value(Value::Binding(Binding::Variable(_)))
+            | Expression::Value(Value::Binding(Binding::ClosureVar { .. }))
     )
 }
 
@@ -550,7 +605,12 @@ fn is_var(e: &Expression) -> bool {
 // terminal/done case (given a sentinel label).
 fn collect_label_cases(mut s: &Statement) -> Option<Vec<(i32, Vec<Statement>)>> {
     let mut cases = Vec::new();
-    while let Statement::If { condition, then_body, else_body } = s {
+    while let Statement::If {
+        condition,
+        then_body,
+        else_body,
+    } = s
+    {
         let Some(k) = label_of_condition(condition) else {
             break;
         };
@@ -583,7 +643,12 @@ fn collect_label_cases(mut s: &Statement) -> Option<Vec<(i32, Vec<Statement>)>> 
 // resume-protocol wrapper to the real (next) branch.
 fn strip_arg_protocol(body: &[Statement]) -> &[Statement] {
     if body.len() == 1 {
-        if let Statement::If { condition, else_body, .. } = &body[0] {
+        if let Statement::If {
+            condition,
+            else_body,
+            ..
+        } = &body[0]
+        {
             if is_resume_protocol_cond(condition) {
                 return strip_arg_protocol(else_body);
             }
@@ -594,7 +659,12 @@ fn strip_arg_protocol(body: &[Statement]) -> &[Statement] {
 
 // `arg0 === 1` or `arg0 === 2` (resume method check; arg0 is Parameter(0)).
 fn is_resume_protocol_cond(cond: &Expression) -> bool {
-    if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = cond {
+    if let Expression::Binary {
+        op: BinaryOp::StrictEq,
+        left,
+        right,
+    } = cond
+    {
         let is_p0 = |e: &Expression| matches!(e, Expression::Value(Value::Parameter(0)));
         let is_12 = |e: &Expression| matches!(int_const(e), Some(1) | Some(2));
         return (is_p0(left) && is_12(right)) || (is_p0(right) && is_12(left));
@@ -747,7 +817,10 @@ mod tests {
         let has_yield = out.iter().any(stmt_has_yield_deep);
         assert!(has_yield, "expected flattened yield, got {out:?}");
         let dump = format!("{out:?}");
-        assert!(!dump.contains("throwTypeError"), "raw executing-guard leaked: {dump}");
+        assert!(
+            !dump.contains("throwTypeError"),
+            "raw executing-guard leaked: {dump}"
+        );
     }
 
     #[test]
@@ -811,9 +884,15 @@ mod tests {
 
         let out = reconstruct_generator_v98(body);
         let dump = format!("{out:?}");
-        assert!(out.iter().any(stmt_has_yield_deep), "expected yield, got {dump}");
+        assert!(
+            out.iter().any(stmt_has_yield_deep),
+            "expected yield, got {dump}"
+        );
         assert!(!dump.contains("throwTypeError"), "raw guard leaked: {dump}");
-        assert!(dump.contains("dispatchRequest"), "lost request dispatch: {dump}");
+        assert!(
+            dump.contains("dispatchRequest"),
+            "lost request dispatch: {dump}"
+        );
         assert!(dump.contains("dispatchSent"), "lost sent dispatch: {dump}");
     }
 }

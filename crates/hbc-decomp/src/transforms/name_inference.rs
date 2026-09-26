@@ -4,7 +4,7 @@
 // e.g. `obj.foo = function() {...}` -> `function foo() {...}`
 // Also infers names for common patterns (e.g. `x = []` -> `arr`).
 
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value};
 
 pub fn infer_names(statements: &mut [Statement]) {
     for stmt in statements {

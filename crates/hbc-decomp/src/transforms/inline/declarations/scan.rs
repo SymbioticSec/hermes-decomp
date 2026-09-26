@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value};
 use std::collections::BTreeMap;
 
 // Variables whose first textual occurrence in the function is a READ (read
@@ -49,7 +49,11 @@ fn scan_first_use(stmts: &[Statement], first_seen: &mut BTreeMap<String, bool>) 
                     first_seen.entry(r).or_insert(true);
                 }
             }
-            Statement::If { condition, then_body, else_body } => {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
                 for r in expr_var_reads(condition) {
                     first_seen.entry(r).or_insert(true);
                 }
@@ -62,26 +66,50 @@ fn scan_first_use(stmts: &[Statement], first_seen: &mut BTreeMap<String, bool>) 
                 }
                 scan_first_use(body, first_seen);
             }
-            Statement::For { init, condition, update, body } => {
-                if let Some(s) = init { scan_first_use(std::slice::from_ref(s), first_seen); }
-                if let Some(c) = condition {
-                    for r in expr_var_reads(c) { first_seen.entry(r).or_insert(true); }
+            Statement::For {
+                init,
+                condition,
+                update,
+                body,
+            } => {
+                if let Some(s) = init {
+                    scan_first_use(std::slice::from_ref(s), first_seen);
                 }
-                if let Some(u) = update { scan_first_use(std::slice::from_ref(u), first_seen); }
+                if let Some(c) = condition {
+                    for r in expr_var_reads(c) {
+                        first_seen.entry(r).or_insert(true);
+                    }
+                }
+                if let Some(u) = update {
+                    scan_first_use(std::slice::from_ref(u), first_seen);
+                }
                 scan_first_use(body, first_seen);
             }
             Statement::Block(inner) => scan_first_use(inner, first_seen),
-            Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
                 scan_first_use(try_body, first_seen);
                 scan_first_use(catch_body, first_seen);
                 scan_first_use(finally_body, first_seen);
             }
-            Statement::Switch { discriminant, cases, default } => {
+            Statement::Switch {
+                discriminant,
+                cases,
+                default,
+            } => {
                 for r in expr_var_reads(discriminant) {
                     first_seen.entry(r).or_insert(true);
                 }
-                for (_, body) in cases { scan_first_use(body, first_seen); }
-                if let Some(d) = default { scan_first_use(d, first_seen); }
+                for (_, body) in cases {
+                    scan_first_use(body, first_seen);
+                }
+                if let Some(d) = default {
+                    scan_first_use(d, first_seen);
+                }
             }
             _ => {}
         }
@@ -129,7 +157,11 @@ pub(super) fn collect_scope_info(
     use crate::ir::AssignTarget;
     for stmt in stmts {
         // Record assignment targets by scope.
-        if let Statement::Assign { target: AssignTarget::Binding(Binding::Variable(name)), .. } = stmt {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(name)),
+            ..
+        } = stmt
+        {
             if in_loop {
                 assigned_in_loop.insert(name.clone());
             } else {
@@ -143,29 +175,94 @@ pub(super) fn collect_scope_info(
         }
         // Recurse, entering loop scope where appropriate.
         match stmt {
-            Statement::While { body, .. } | Statement::DoWhile { body, .. }
-            | Statement::For { body, .. } | Statement::ForIn { body, .. }
+            Statement::While { body, .. }
+            | Statement::DoWhile { body, .. }
+            | Statement::For { body, .. }
+            | Statement::ForIn { body, .. }
             | Statement::ForOf { body, .. } => {
-                collect_scope_info(body, true, assigned_in_loop, assigned_out_loop, ref_out_loop);
+                collect_scope_info(
+                    body,
+                    true,
+                    assigned_in_loop,
+                    assigned_out_loop,
+                    ref_out_loop,
+                );
             }
-            Statement::If { then_body, else_body, .. } => {
-                collect_scope_info(then_body, in_loop, assigned_in_loop, assigned_out_loop, ref_out_loop);
-                collect_scope_info(else_body, in_loop, assigned_in_loop, assigned_out_loop, ref_out_loop);
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_scope_info(
+                    then_body,
+                    in_loop,
+                    assigned_in_loop,
+                    assigned_out_loop,
+                    ref_out_loop,
+                );
+                collect_scope_info(
+                    else_body,
+                    in_loop,
+                    assigned_in_loop,
+                    assigned_out_loop,
+                    ref_out_loop,
+                );
             }
             Statement::Block(inner) => {
-                collect_scope_info(inner, in_loop, assigned_in_loop, assigned_out_loop, ref_out_loop);
+                collect_scope_info(
+                    inner,
+                    in_loop,
+                    assigned_in_loop,
+                    assigned_out_loop,
+                    ref_out_loop,
+                );
             }
-            Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
-                collect_scope_info(try_body, in_loop, assigned_in_loop, assigned_out_loop, ref_out_loop);
-                collect_scope_info(catch_body, in_loop, assigned_in_loop, assigned_out_loop, ref_out_loop);
-                collect_scope_info(finally_body, in_loop, assigned_in_loop, assigned_out_loop, ref_out_loop);
+            Statement::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
+                collect_scope_info(
+                    try_body,
+                    in_loop,
+                    assigned_in_loop,
+                    assigned_out_loop,
+                    ref_out_loop,
+                );
+                collect_scope_info(
+                    catch_body,
+                    in_loop,
+                    assigned_in_loop,
+                    assigned_out_loop,
+                    ref_out_loop,
+                );
+                collect_scope_info(
+                    finally_body,
+                    in_loop,
+                    assigned_in_loop,
+                    assigned_out_loop,
+                    ref_out_loop,
+                );
             }
             Statement::Switch { cases, default, .. } => {
                 for (_, body) in cases {
-                    collect_scope_info(body, in_loop, assigned_in_loop, assigned_out_loop, ref_out_loop);
+                    collect_scope_info(
+                        body,
+                        in_loop,
+                        assigned_in_loop,
+                        assigned_out_loop,
+                        ref_out_loop,
+                    );
                 }
                 if let Some(d) = default {
-                    collect_scope_info(d, in_loop, assigned_in_loop, assigned_out_loop, ref_out_loop);
+                    collect_scope_info(
+                        d,
+                        in_loop,
+                        assigned_in_loop,
+                        assigned_out_loop,
+                        ref_out_loop,
+                    );
                 }
             }
             _ => {}
@@ -214,4 +311,137 @@ pub(super) fn collect_expr_vars(expr: &Expression, out: &mut Vec<String>) {
         }
     }
     VarCollector(out).visit_expression(expr);
+}
+
+// Names assigned inside a nested body (a branch, a try, a switch case, a loop)
+// and referenced somewhere outside that body. Declaring such a name at its
+// first assignment puts the `let` inside the body, out of scope for the use
+// that follows the statement, so these are declared at the function top.
+pub(super) fn names_assigned_in_nested_bodies_and_used_outside(stmts: &[Statement]) -> Vec<String> {
+    let mut total: BTreeMap<String, usize> = BTreeMap::new();
+    count_refs(stmts, &mut total);
+    // A name the function assigns at its own level before any nested body
+    // does gets its declaration there, and that one is in scope for the rest
+    // of the body, so it needs no hoisting.
+    let mut assigned_at_top_first: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    let mut seen_nested: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for stmt in stmts {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(name)),
+            ..
+        } = stmt
+        {
+            if !seen_nested.contains(name) {
+                assigned_at_top_first.insert(name.clone());
+            }
+        }
+        visit_nested_bodies(stmt, &mut |body| {
+            let mut assigned: Vec<String> = Vec::new();
+            collect_assigned(body, &mut assigned);
+            if assigned.is_empty() {
+                return;
+            }
+            let mut inside: BTreeMap<String, usize> = BTreeMap::new();
+            count_refs(body, &mut inside);
+            for name in assigned {
+                seen_nested.insert(name.clone());
+                if assigned_at_top_first.contains(&name) {
+                    continue;
+                }
+                let all = total.get(&name).copied().unwrap_or(0);
+                let here = inside.get(&name).copied().unwrap_or(0);
+                if all > here && !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+        });
+    }
+    out
+}
+
+// Every read of each name, anywhere in `stmts`. A write elsewhere does not
+// need the name in scope, so two switch cases that each assign the same name
+// still declare it separately.
+fn count_refs(stmts: &[Statement], counts: &mut BTreeMap<String, usize>) {
+    for stmt in stmts {
+        let reads: Vec<String> = match stmt {
+            Statement::Assign { target, value } => {
+                let mut v = expr_var_reads(value);
+                v.extend(target_var_reads(target));
+                v
+            }
+            Statement::Let { value, .. } => expr_var_reads(value),
+            _ => stmt_var_refs(stmt),
+        };
+        for name in reads {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+        visit_nested_bodies(stmt, &mut |body| count_refs(body, counts));
+    }
+}
+
+fn collect_assigned(stmts: &[Statement], out: &mut Vec<String>) {
+    for stmt in stmts {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(name)),
+            ..
+        } = stmt
+        {
+            if !out.contains(name) {
+                out.push(name.clone());
+            }
+        }
+        visit_nested_bodies(stmt, &mut |body| collect_assigned(body, out));
+    }
+}
+
+// Calls `f` on each body a statement nests, one level down.
+fn visit_nested_bodies(stmt: &Statement, f: &mut dyn FnMut(&[Statement])) {
+    match stmt {
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            f(then_body);
+            f(else_body);
+        }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::ForIn { body, .. }
+        | Statement::ForOf { body, .. } => f(body),
+        Statement::For {
+            init, update, body, ..
+        } => {
+            if let Some(s) = init {
+                f(std::slice::from_ref(s));
+            }
+            if let Some(u) = update {
+                f(std::slice::from_ref(u));
+            }
+            f(body);
+        }
+        Statement::Block(inner) => f(inner),
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            f(try_body);
+            f(catch_body);
+            f(finally_body);
+        }
+        Statement::Switch { cases, default, .. } => {
+            for (_, body) in cases {
+                f(body);
+            }
+            if let Some(d) = default {
+                f(d);
+            }
+        }
+        _ => {}
+    }
 }

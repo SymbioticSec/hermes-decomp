@@ -4,7 +4,12 @@ use crate::ir::Statement;
 impl Codegen {
     // Check if a statement is an interopDefault check (if(!X) {... default ...} else {... __esModule ...})
     pub(super) fn is_interop_default_check(&self, stmt: &Statement) -> bool {
-        if let Statement::If { then_body, else_body, .. } = stmt {
+        if let Statement::If {
+            then_body,
+            else_body,
+            ..
+        } = stmt
+        {
             // Check if either branch references __esModule or .default
             let debug_str = format!("{stmt:?}");
             if debug_str.contains("__esModule") || debug_str.contains("esModule") {
@@ -33,9 +38,15 @@ impl Codegen {
     // Skip the `undefined` this-argument that Hermes prepends to call arguments.
     pub(super) fn effective_args(arguments: &[crate::ir::Expression]) -> &[crate::ir::Expression] {
         if arguments.len() >= 2
-            && matches!(&arguments[0], crate::ir::Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::Undefined))) {
-                return &arguments[1..];
-            }
+            && matches!(
+                &arguments[0],
+                crate::ir::Expression::Value(crate::ir::Value::Constant(
+                    crate::ir::Constant::Undefined
+                ))
+            )
+        {
+            return &arguments[1..];
+        }
         arguments
     }
 
@@ -64,14 +75,15 @@ impl Codegen {
                 property: PropertyKey::Ident(p) | PropertyKey::String(p),
                 ..
             } => {
-                FactoryRoles::matches_require_loader_name(p) || Self::callee_is_require_loader(object)
+                FactoryRoles::matches_require_loader_name(p)
+                    || Self::callee_is_require_loader(object)
             }
             _ => false,
         }
     }
 
     pub(super) fn resolve_require_module(&self, expr: &crate::ir::Expression) -> Option<String> {
-        use crate::ir::{Expression, Value, Constant};
+        use crate::ir::{Constant, Expression, Value};
 
         let (callee, arguments) = match expr {
             Expression::Call { callee, arguments } => (callee, arguments),
@@ -107,8 +119,11 @@ impl Codegen {
     // emitted import can carry a stable `/* id */` annotation. For an integer require
     // the argument is the absolute id; for `dependencyMap[idx]` the id comes from the
     // factory's dependency array (`dep_ids`), falling back to the raw index.
-    pub(super) fn resolve_require_module_id(&self, expr: &crate::ir::Expression) -> Option<(String, u32)> {
-        use crate::ir::{Expression, Value, Constant};
+    pub(super) fn resolve_require_module_id(
+        &self,
+        expr: &crate::ir::Expression,
+    ) -> Option<(String, u32)> {
+        use crate::ir::{Constant, Expression, Value};
 
         let (callee, arguments) = match expr {
             Expression::Call { callee, arguments } => (callee, arguments),
@@ -133,7 +148,9 @@ impl Codegen {
                 .as_ref()
                 .and_then(|m| m.get(&idx).copied())
                 .unwrap_or(idx);
-            return self.lookup_module_name(idx, false).map(|name| (name, abs_id));
+            return self
+                .lookup_module_name(idx, false)
+                .map(|name| (name, abs_id));
         }
 
         None
@@ -142,13 +159,17 @@ impl Codegen {
     // Extract the integer index from a member expression like `dependencyMap[0]`.
     // Handles both PropertyKey::Index(i64) and PropertyKey::Computed(Integer(N)).
     pub(super) fn extract_array_index(expr: &crate::ir::Expression) -> Option<u32> {
-        use crate::ir::{Expression, Value, Constant, PropertyKey};
+        use crate::ir::{Constant, Expression, PropertyKey, Value};
 
         match expr {
-            Expression::Member { property: PropertyKey::Index(idx), .. } => {
-                Some(*idx as u32)
-            }
-            Expression::Member { property: PropertyKey::Computed(key), .. } => {
+            Expression::Member {
+                property: PropertyKey::Index(idx),
+                ..
+            } => Some(*idx as u32),
+            Expression::Member {
+                property: PropertyKey::Computed(key),
+                ..
+            } => {
                 if let Expression::Value(Value::Constant(Constant::Integer(idx))) = key.as_ref() {
                     Some(*idx as u32)
                 } else {
@@ -192,7 +213,7 @@ impl Codegen {
 
     // Check if an expression is __esModule boilerplate that should be skipped.
     pub(super) fn is_esmodule_boilerplate_expr(&self, expr: &crate::ir::Expression) -> bool {
-        use crate::ir::{Expression, Value, Constant};
+        use crate::ir::{Constant, Expression, Value};
 
         // Pattern 1: Object.defineProperty(exports, "__esModule", ...)
         if let Expression::Call { callee, arguments } = expr {
@@ -208,7 +229,11 @@ impl Codegen {
         }
 
         // Pattern 2: Direct member access like exports.__esModule = true
-        if let Expression::Member { property: crate::ir::PropertyKey::Ident(prop), .. } = expr {
+        if let Expression::Member {
+            property: crate::ir::PropertyKey::Ident(prop),
+            ..
+        } = expr
+        {
             if prop == "__esModule" {
                 return true;
             }
@@ -228,7 +253,10 @@ impl Codegen {
     // Check if an expression is an interop wrapper function definition.
     // These are boilerplate in ESM mode since imports already handle the unwrapping.
     pub(super) fn is_interop_wrapper_def(expr: &crate::ir::Expression) -> bool {
-        if let crate::ir::Expression::Function { name: Some(name), .. } = expr {
+        if let crate::ir::Expression::Function {
+            name: Some(name), ..
+        } = expr
+        {
             let n = name.to_lowercase();
             return n.contains("interop");
         }
@@ -237,32 +265,43 @@ impl Codegen {
 
     // Check if a Let/Assign defines a global alias (e.g. `const Object = globalThis.Object`).
     pub(super) fn is_global_alias_def(name: &str, value: &crate::ir::Expression) -> bool {
-        use crate::ir::{Expression, Value, PropertyKey};
+        use crate::ir::{Expression, PropertyKey, Value};
 
         // Pattern 1: const X = globalThis.X (member access on globalThis/Global)
-        if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } = value {
+        if let Expression::Member {
+            object,
+            property: PropertyKey::Ident(prop),
+            ..
+        } = value
+        {
             let is_global_obj = match object.as_ref() {
                 Expression::Value(Value::Global) => true,
-                Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis" => true,
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(v)))
+                    if v == "globalThis" =>
+                {
+                    true
+                }
                 _ => false,
             };
-            if is_global_obj {
-                // Accept: name starts with the property (Object, Object2, Symbol, etc.)
-                let base = prop.as_str();
-                if name.starts_with(base) && name[base.len()..].chars().all(|c| c.is_ascii_digit()) {
-                    return true;
-                }
+            // Only the exact name is redundant: bare `Object` already resolves to
+            // the global. `Object2 = globalThis.Object` binds a name its uses
+            // are rendered with, so dropping the declaration left `Object2(...)`
+            // referring to nothing.
+            if is_global_obj && name == prop.as_str() {
+                return true;
             }
         }
 
         // Pattern 1b: const prototype = globalThis.X.prototype (chained member on built-in)
         // Also handles: const valueOf = globalThis.Boolean.prototype.valueOf
-        if let Expression::Member { object, property: PropertyKey::Ident(prop), .. } = value {
-            if Self::is_global_builtin_chain(object) {
-                // Accept: name matches or starts with the last property
-                if name.starts_with(prop.as_str()) && name[prop.len()..].chars().all(|c| c.is_ascii_digit()) {
-                    return true;
-                }
+        if let Expression::Member {
+            object,
+            property: PropertyKey::Ident(prop),
+            ..
+        } = value
+        {
+            if Self::is_global_builtin_chain(object) && name == prop.as_str() {
+                return true;
             }
         }
 
@@ -271,12 +310,18 @@ impl Codegen {
         // the binding is unsafe: the variable may be reused as a plain value (e.g.
         // `print = globalThis; print = print.print`), and removing its definition
         // leaves later uses referencing `undefined`.
-        let is_global_alias_name =
-            matches!(name, "window" | "self" | "global" | "globalThis" | "globalObject");
+        let is_global_alias_name = matches!(
+            name,
+            "window" | "self" | "global" | "globalThis" | "globalObject"
+        );
         if is_global_alias_name {
             match value {
                 Expression::Value(Value::Global) => return true,
-                Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis" => return true,
+                Expression::Value(Value::Binding(crate::ir::Binding::Variable(v)))
+                    if v == "globalThis" =>
+                {
+                    return true
+                }
                 _ => {}
             }
         }
@@ -287,13 +332,21 @@ impl Codegen {
     // Check if an expression is a chain of member accesses starting from a global built-in.
     // e.g., globalThis.Object, globalThis.Boolean.prototype, globalThis.ReferenceError.prototype
     pub(super) fn is_global_builtin_chain(expr: &crate::ir::Expression) -> bool {
-        use crate::ir::{Expression, Value, PropertyKey};
+        use crate::ir::{Expression, PropertyKey, Value};
         match expr {
             // Base case: globalThis.BuiltIn
-            Expression::Member { object, property: PropertyKey::Ident(name), .. } => {
+            Expression::Member {
+                object,
+                property: PropertyKey::Ident(name),
+                ..
+            } => {
                 let is_global = match object.as_ref() {
                     Expression::Value(Value::Global) => true,
-                    Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == "globalThis" => true,
+                    Expression::Value(Value::Binding(crate::ir::Binding::Variable(v)))
+                        if v == "globalThis" =>
+                    {
+                        true
+                    }
                     _ => false,
                 };
                 if is_global && crate::ir::expr::display::is_builtin_global(name) {

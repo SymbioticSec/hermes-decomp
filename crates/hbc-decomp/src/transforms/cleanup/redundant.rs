@@ -1,4 +1,4 @@
-use crate::ir::{Binding, map_nested_bodies, Statement, Expression, AssignTarget, Value};
+use crate::ir::{map_nested_bodies, AssignTarget, Binding, Expression, Statement, Value};
 
 pub(super) fn remove_redundant_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     stmts

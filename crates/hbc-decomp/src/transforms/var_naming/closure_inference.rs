@@ -1,8 +1,13 @@
 use super::closure_usage::{unique_object_key, ClosureUsageInfo};
 
 // Infer a name from the collected usage patterns of a closure variable.
-pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_hint: Option<&str>) -> Option<String> {
-    let all_accessed: Vec<&str> = info.methods.iter()
+pub(super) fn infer_name_from_closure_usage(
+    info: &ClosureUsageInfo,
+    slot_name_hint: Option<&str>,
+) -> Option<String> {
+    let all_accessed: Vec<&str> = info
+        .methods
+        .iter()
         .chain(info.properties.iter())
         .map(|s| s.as_str())
         .collect();
@@ -32,10 +37,9 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
                 return Some(hint.to_string());
             }
         }
-        // Called after index: `table[i](…)` is the classic TurboModule / BatchedBridge shape.
-        if info.called_as_function || info.indexed_accesses >= 2 {
-            return Some("dependencyMap".to_string());
-        }
+        // A string-indexed capture is a table. Only a factory slot whose hint
+        // says so is the dependency map: naming moment's `thresholds` and
+        // `aliases` after it was a guess, and it hid the real one.
         return Some("table".to_string());
     }
 
@@ -47,17 +51,38 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
     // Logger: only .log / .warn / .error / .info / .debug
     if !info.methods.is_empty()
         && info.methods.iter().all(|m| {
-            matches!(m.as_str(), "log" | "warn" | "error" | "info" | "debug" | "trace")
+            matches!(
+                m.as_str(),
+                "log" | "warn" | "error" | "info" | "debug" | "trace"
+            )
         })
     {
         return Some("logger".to_string());
     }
 
     // Heuristic 0: React/JSX patterns, very common in React Native bundles
-    let react_hooks = ["useState", "useRef", "useEffect", "useCallback", "useMemo",
-                       "useContext", "useReducer", "useLayoutEffect", "useImperativeHandle"];
-    let react_methods = ["createElement", "createRef", "createContext", "forwardRef",
-                         "memo", "lazy", "Suspense", "Fragment", "Children"];
+    let react_hooks = [
+        "useState",
+        "useRef",
+        "useEffect",
+        "useCallback",
+        "useMemo",
+        "useContext",
+        "useReducer",
+        "useLayoutEffect",
+        "useImperativeHandle",
+    ];
+    let react_methods = [
+        "createElement",
+        "createRef",
+        "createContext",
+        "forwardRef",
+        "memo",
+        "lazy",
+        "Suspense",
+        "Fragment",
+        "Children",
+    ];
     let jsx_props = ["jsx", "jsxs", "jsxDEV"];
 
     let has_react_hook = all_accessed.iter().any(|a| react_hooks.contains(a));
@@ -69,28 +94,62 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
     }
 
     // React Native Animated API
-    if all_accessed.iter().any(|a| matches!(*a, "Animated" | "withTiming" | "withSpring" | "withDecay"
-        | "useSharedValue" | "useAnimatedStyle" | "runOnUI" | "runOnJS"
-        | "interpolate" | "Easing" | "cancelAnimation")) {
+    if all_accessed.iter().any(|a| {
+        matches!(
+            *a,
+            "Animated"
+                | "withTiming"
+                | "withSpring"
+                | "withDecay"
+                | "useSharedValue"
+                | "useAnimatedStyle"
+                | "runOnUI"
+                | "runOnJS"
+                | "interpolate"
+                | "Easing"
+                | "cancelAnimation"
+        )
+    }) {
         return Some("Animated".to_string());
     }
 
     // GraphQL pattern
-    if all_accessed.iter().any(|a| matches!(*a, "GraphQLError" | "DocumentNode" | "gql" | "useQuery" | "useMutation")) {
+    if all_accessed.iter().any(|a| {
+        matches!(
+            *a,
+            "GraphQLError" | "DocumentNode" | "gql" | "useQuery" | "useMutation"
+        )
+    }) {
         return Some("graphql".to_string());
     }
 
     // StyleSheet pattern
-    if info.methods.iter().any(|m| m == "create") && info.properties.iter().any(|p| p == "hairlineWidth" || p == "flatten" || p == "absoluteFill") {
+    if info.methods.iter().any(|m| m == "create")
+        && info
+            .properties
+            .iter()
+            .any(|p| p == "hairlineWidth" || p == "flatten" || p == "absoluteFill")
+    {
         return Some("StyleSheet".to_string());
     }
 
     // Regex pattern: requires definitive regex methods (.exec or .test)
     if all_accessed.iter().any(|a| matches!(*a, "exec" | "test")) {
         // Confirm with absence of non-regex properties
-        let has_non_regex = all_accessed.iter().any(|a| matches!(*a,
-            "alternate" | "memoizedState" | "child" | "sibling" | "stateNode"
-            | "pendingProps" | "memoizedProps" | "updateQueue" | "return"));
+        let has_non_regex = all_accessed.iter().any(|a| {
+            matches!(
+                *a,
+                "alternate"
+                    | "memoizedState"
+                    | "child"
+                    | "sibling"
+                    | "stateNode"
+                    | "pendingProps"
+                    | "memoizedProps"
+                    | "updateQueue"
+                    | "return"
+            )
+        });
         if !has_non_regex {
             return Some("regex".to_string());
         }
@@ -98,33 +157,73 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
 
     // React ref pattern: .current is the primary access and no fiber properties
     let has_current = info.properties.iter().any(|p| p == "current");
-    let has_fiber_props = all_accessed.iter().any(|a| matches!(*a,
-        "child" | "sibling" | "tag" | "flags" | "lanes" | "mode" | "type"
-        | "stateNode" | "pendingProps" | "memoizedProps" | "memoizedState"
-        | "updateQueue" | "return" | "alternate" | "refCleanup"));
+    let has_fiber_props = all_accessed.iter().any(|a| {
+        matches!(
+            *a,
+            "child"
+                | "sibling"
+                | "tag"
+                | "flags"
+                | "lanes"
+                | "mode"
+                | "type"
+                | "stateNode"
+                | "pendingProps"
+                | "memoizedProps"
+                | "memoizedState"
+                | "updateQueue"
+                | "return"
+                | "alternate"
+                | "refCleanup"
+        )
+    });
     if has_current && !has_fiber_props && info.properties.len() <= 3 {
         return Some("ref".to_string());
     }
 
     // Redux pattern
-    if all_accessed.iter().any(|a| matches!(*a, "useSelector" | "useDispatch" | "useStore" | "connect" | "Provider")) {
+    if all_accessed.iter().any(|a| {
+        matches!(
+            *a,
+            "useSelector" | "useDispatch" | "useStore" | "connect" | "Provider"
+        )
+    }) {
         return Some("redux".to_string());
     }
 
     // React Native core components
-    if all_accessed.iter().any(|a| matches!(*a, "View" | "Text" | "Image" | "ScrollView" | "FlatList"
-        | "TouchableOpacity" | "TextInput" | "ActivityIndicator" | "Modal" | "SafeAreaView")) {
+    if all_accessed.iter().any(|a| {
+        matches!(
+            *a,
+            "View"
+                | "Text"
+                | "Image"
+                | "ScrollView"
+                | "FlatList"
+                | "TouchableOpacity"
+                | "TextInput"
+                | "ActivityIndicator"
+                | "Modal"
+                | "SafeAreaView"
+        )
+    }) {
         return Some("RN".to_string());
     }
 
     // Platform check
-    if all_accessed.iter().any(|a| matches!(*a, "Platform" | "OS" | "select"))
-        && all_accessed.iter().any(|a| matches!(*a, "Platform" | "OS")) {
+    if all_accessed
+        .iter()
+        .any(|a| matches!(*a, "Platform" | "OS" | "select"))
+        && all_accessed.iter().any(|a| matches!(*a, "Platform" | "OS"))
+    {
         return Some("Platform".to_string());
     }
 
     // Validation / assertion utilities
-    if all_accessed.iter().any(|a| matches!(*a, "isValid" | "raiseError" | "devAssert" | "invariant")) {
+    if all_accessed
+        .iter()
+        .any(|a| matches!(*a, "isValid" | "raiseError" | "devAssert" | "invariant"))
+    {
         return Some("assert".to_string());
     }
 
@@ -132,8 +231,11 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
     if info.called_as_function && all_accessed.is_empty() {
         // Use slot hint if available
         if let Some(hint) = slot_name_hint {
-            if !hint.starts_with("closure_") && !hint.starts_with("f")
-                && !hint.starts_with("arg") && !hint.starts_with("r") {
+            if !hint.starts_with("closure_")
+                && !hint.starts_with("f")
+                && !hint.starts_with("arg")
+                && !hint.starts_with("r")
+            {
                 return Some(hint.to_string());
             }
         }
@@ -143,7 +245,9 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
     // Heuristic 2: Method call patterns → type-based naming
     if !info.methods.is_empty() {
         // Store pattern: multiple set*/get* methods
-        let setter_getter_count = info.methods.iter()
+        let setter_getter_count = info
+            .methods
+            .iter()
             .filter(|m| m.starts_with("set") || m.starts_with("get"))
             .count();
         if setter_getter_count >= 2 {
@@ -155,38 +259,64 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
         }
 
         // Navigation pattern, requires at least one navigation-specific method
-        if info.methods.iter().any(|m| matches!(m.as_str(), "navigate" | "goBack" | "reset"))
+        if info
+            .methods
+            .iter()
+            .any(|m| matches!(m.as_str(), "navigate" | "goBack" | "reset"))
             || (info.methods.iter().any(|m| m == "push" || m == "replace")
-                && info.methods.iter().any(|m| matches!(m.as_str(), "navigate" | "goBack" | "reset" | "getParam" | "setParams")))
+                && info.methods.iter().any(|m| {
+                    matches!(
+                        m.as_str(),
+                        "navigate" | "goBack" | "reset" | "getParam" | "setParams"
+                    )
+                }))
         {
             return Some("navigation".to_string());
         }
 
         // Promise pattern
-        if info.methods.iter().any(|m| matches!(m.as_str(), "then" | "catch" | "finally")) {
+        if info
+            .methods
+            .iter()
+            .any(|m| matches!(m.as_str(), "then" | "catch" | "finally"))
+        {
             return Some("promise".to_string());
         }
 
         // Array pattern
-        if info.methods.iter().any(|m| matches!(m.as_str(), "push" | "pop" | "shift" | "unshift" | "splice" | "slice")) {
+        if info.methods.iter().any(|m| {
+            matches!(
+                m.as_str(),
+                "push" | "pop" | "shift" | "unshift" | "splice" | "slice"
+            )
+        }) {
             return Some("arr".to_string());
         }
 
         // Map/Set pattern
-        if info.methods.iter().any(|m| matches!(m.as_str(), "has" | "delete"))
+        if info
+            .methods
+            .iter()
+            .any(|m| matches!(m.as_str(), "has" | "delete"))
             && info.methods.iter().any(|m| m == "set" || m == "get")
         {
             return Some("map".to_string());
         }
 
         // Set pattern (has + add but no set/get)
-        if info.methods.iter().any(|m| m == "has" || m == "add" || m == "delete")
-            && !info.methods.iter().any(|m| m == "set" || m == "get") {
+        if info
+            .methods
+            .iter()
+            .any(|m| m == "has" || m == "add" || m == "delete")
+            && !info.methods.iter().any(|m| m == "set" || m == "get")
+        {
             return Some("set".to_string());
         }
 
         // Prototype access → class/constructor
-        if info.methods.iter().any(|m| m == "prototype") || info.properties.iter().any(|p| p == "prototype") {
+        if info.methods.iter().any(|m| m == "prototype")
+            || info.properties.iter().any(|p| p == "prototype")
+        {
             return Some("ctor".to_string());
         }
 
@@ -207,8 +337,11 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
         if info.properties.len() == 1 && info.properties[0] == "default" {
             // If we have a slot name hint from ClosureContext, use it
             if let Some(hint) = slot_name_hint {
-                if !hint.starts_with("closure_") && !hint.starts_with("f")
-                    && !hint.starts_with("arg") && !hint.starts_with("r") {
+                if !hint.starts_with("closure_")
+                    && !hint.starts_with("f")
+                    && !hint.starts_with("arg")
+                    && !hint.starts_with("r")
+                {
                     return Some(hint.to_string());
                 }
             }
@@ -221,7 +354,11 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
         }
 
         // ALL_CAPS properties → constants object
-        if info.properties.iter().all(|p| p.chars().all(|c| c.is_ascii_uppercase() || c == '_')) {
+        if info
+            .properties
+            .iter()
+            .all(|p| p.chars().all(|c| c.is_ascii_uppercase() || c == '_'))
+        {
             return Some("constants".to_string());
         }
 
@@ -244,8 +381,11 @@ pub(super) fn infer_name_from_closure_usage(info: &ClosureUsageInfo, slot_name_h
         if info.called_as_function {
             // Use slot hint if meaningful
             if let Some(hint) = slot_name_hint {
-                if !hint.starts_with("closure_") && !hint.starts_with("f")
-                    && !hint.starts_with("arg") && !hint.starts_with("r") {
+                if !hint.starts_with("closure_")
+                    && !hint.starts_with("f")
+                    && !hint.starts_with("arg")
+                    && !hint.starts_with("r")
+                {
                     return Some(hint.to_string());
                 }
             }
@@ -305,21 +445,49 @@ fn is_strong_slot_hint(hint: &str) -> bool {
             | "StyleSheet"
             | "Platform"
     ) || (hint.len() > 2
-        && !hint.starts_with("closure_")
-        && !hint.starts_with('c')
-        && !hint.starts_with("arg")
-        && !hint.starts_with('r')
-        && !hint.starts_with('f')
+        && !is_placeholder_name(hint)
         && hint.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         && hint
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$'))
 }
 
+// A decompiler placeholder, not a name: `r12`, `f9`, `c3`, `closure_1_4`,
+// `arg0`, `tmp7`, and the register-role names. Rejecting every hint that
+// merely started with `r`, `f` or `c` threw away the owner's real binding
+// (`releasePooledEvent`, `fetchData`, `config`) and let a usage-derived name
+// (`release`) rename the readers away from it.
+fn is_placeholder_name(hint: &str) -> bool {
+    let digits_after = |prefix: &str| {
+        hint.strip_prefix(prefix)
+            .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+    };
+    if hint.starts_with("closure_") || digits_after("r") || digits_after("f") || digits_after("c") {
+        return true;
+    }
+    if digits_after("arg") {
+        return true;
+    }
+    let stem = hint.trim_end_matches(|c: char| c.is_ascii_digit());
+    matches!(
+        stem,
+        "tmp"
+            | "obj"
+            | "arr"
+            | "str"
+            | "num"
+            | "fn"
+            | "flag"
+            | "self"
+            | "val"
+            | "result"
+            | "tmpResult"
+    )
+}
+
 fn is_usable_slot_hint(hint: &str) -> bool {
     // A leading 'c' followed only by digits is a raw closure slot like "c12".
-    let is_closure_number =
-        hint.starts_with('c') && hint[1..].chars().all(|c| c.is_ascii_digit());
+    let is_closure_number = hint.starts_with('c') && hint[1..].chars().all(|c| c.is_ascii_digit());
     hint.len() > 1
         && !hint.starts_with("closure_")
         && !hint.starts_with('f')
@@ -332,7 +500,8 @@ fn is_usable_slot_hint(hint: &str) -> bool {
 // e.g., ["setToken", "setErrorLogin", "getUser"] → "auth" (common theme)
 // e.g., ["setLoading", "setData"] → "state"
 fn extract_store_domain(methods: &[String]) -> Option<String> {
-    let stripped: Vec<&str> = methods.iter()
+    let stripped: Vec<&str> = methods
+        .iter()
         .filter_map(|m| strip_accessor_prefix(m))
         .collect();
 
@@ -344,15 +513,27 @@ fn extract_store_domain(methods: &[String]) -> Option<String> {
     let lower: Vec<String> = stripped.iter().map(|s| s.to_lowercase()).collect();
 
     // Auth-related
-    if lower.iter().any(|s| s.contains("token") || s.contains("login") || s.contains("auth") || s.contains("user") || s.contains("password")) {
+    if lower.iter().any(|s| {
+        s.contains("token")
+            || s.contains("login")
+            || s.contains("auth")
+            || s.contains("user")
+            || s.contains("password")
+    }) {
         return Some("auth".to_string());
     }
     // Loading/error state
-    if lower.iter().any(|s| s.contains("loading")) && lower.iter().any(|s| s.contains("error") || s.contains("data")) {
+    if lower.iter().any(|s| s.contains("loading"))
+        && lower
+            .iter()
+            .any(|s| s.contains("error") || s.contains("data"))
+    {
         return Some("state".to_string());
     }
     // UI state
-    if lower.iter().any(|s| s.contains("visible") || s.contains("modal") || s.contains("show") || s.contains("open")) {
+    if lower.iter().any(|s| {
+        s.contains("visible") || s.contains("modal") || s.contains("show") || s.contains("open")
+    }) {
         return Some("ui".to_string());
     }
 
@@ -366,7 +547,10 @@ fn strip_accessor_prefix(method: &str) -> Option<&str> {
         && method.as_bytes()[3].is_ascii_uppercase()
     {
         Some(&method[3..])
-    } else if method.len() > 2 && method.starts_with("is") && method.as_bytes()[2].is_ascii_uppercase() {
+    } else if method.len() > 2
+        && method.starts_with("is")
+        && method.as_bytes()[2].is_ascii_uppercase()
+    {
         Some(&method[2..])
     } else {
         None
@@ -396,7 +580,9 @@ fn infer_object_name_from_property(prop: &str) -> String {
     // Known property → domain mappings
     match prop {
         "email" | "password" | "username" | "token" | "avatar" => "user".to_string(),
-        "navigate" | "goBack" | "push" | "replace" | "reset" | "params" | "route" => "navigation".to_string(),
+        "navigate" | "goBack" | "push" | "replace" | "reset" | "params" | "route" => {
+            "navigation".to_string()
+        }
         "dispatch" | "getState" => "store".to_string(),
         "width" | "height" | "flex" | "margin" | "padding" | "fontSize" => "styles".to_string(),
         "current" => "ref".to_string(),
@@ -415,20 +601,42 @@ fn infer_object_name_from_property(prop: &str) -> String {
 // Infer a name from multiple property accesses.
 fn infer_name_from_multiple_properties(properties: &[String]) -> Option<String> {
     // Check for style-related properties
-    let style_props = ["width", "height", "flex", "margin", "padding", "fontSize", "color", "backgroundColor", "borderRadius"];
+    let style_props = [
+        "width",
+        "height",
+        "flex",
+        "margin",
+        "padding",
+        "fontSize",
+        "color",
+        "backgroundColor",
+        "borderRadius",
+    ];
     if properties.iter().any(|p| style_props.contains(&p.as_str())) {
         return Some("styles".to_string());
     }
 
     // Check for user-related properties
-    let user_props = ["email", "password", "username", "name", "avatar", "id", "token"];
-    if properties.iter().filter(|p| user_props.contains(&p.as_str())).count() >= 2 {
+    let user_props = [
+        "email", "password", "username", "name", "avatar", "id", "token",
+    ];
+    if properties
+        .iter()
+        .filter(|p| user_props.contains(&p.as_str()))
+        .count()
+        >= 2
+    {
         return Some("user".to_string());
     }
 
     // Check for config-related properties
-    let config_props = ["baseURL", "timeout", "headers", "apiKey", "endpoint", "host", "port"];
-    if properties.iter().any(|p| config_props.contains(&p.as_str())) {
+    let config_props = [
+        "baseURL", "timeout", "headers", "apiKey", "endpoint", "host", "port",
+    ];
+    if properties
+        .iter()
+        .any(|p| config_props.contains(&p.as_str()))
+    {
         return Some("config".to_string());
     }
 

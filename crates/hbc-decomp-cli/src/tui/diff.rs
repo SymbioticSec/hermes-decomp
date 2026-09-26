@@ -101,7 +101,15 @@ fn compute_status_for_name(
     if in_1 && in_2 {
         let id1 = ctx1.map[name];
         let id2 = ctx2.map[name];
-        compare_functions(ctx1.file, ctx1.format, id1, ctx2.file, ctx2.format, id2, mode)
+        compare_functions(
+            ctx1.file,
+            ctx1.format,
+            id1,
+            ctx2.file,
+            ctx2.format,
+            id2,
+            mode,
+        )
     } else if in_1 {
         DiffStatus::Removed
     } else {
@@ -222,8 +230,16 @@ pub fn spawn_diff_status_worker(
             let map2 = Arc::clone(&map2);
 
             handles.push(thread::spawn(move || {
-                let c1 = DiffFileCtx { file: &file1, format: &format1, map: &map1 };
-                let c2 = DiffFileCtx { file: &file2, format: &format2, map: &map2 };
+                let c1 = DiffFileCtx {
+                    file: &file1,
+                    format: &format1,
+                    map: &map1,
+                };
+                let c2 = DiffFileCtx {
+                    file: &file2,
+                    format: &format2,
+                    map: &map2,
+                };
                 for name in names {
                     let status = compute_status_for_name(&name, &c1, &c2, mode);
                     let _ = tx_chunk.send((name, status));
@@ -254,8 +270,16 @@ pub fn spawn_diff_status_worker(
         }
 
         {
-            let c1 = DiffFileCtx { file: &file1, format: &format1, map: &map1 };
-            let c2 = DiffFileCtx { file: &file2, format: &format2, map: &map2 };
+            let c1 = DiffFileCtx {
+                file: &file1,
+                format: &format1,
+                map: &map1,
+            };
+            let c2 = DiffFileCtx {
+                file: &file2,
+                format: &format2,
+                map: &map2,
+            };
             apply_rename_detection(&mut diff_status, &c1, &c2, mode);
         }
 

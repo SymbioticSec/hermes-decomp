@@ -1,4 +1,6 @@
-use crate::ir::{Binding, AssignTarget, Expression, Statement, Value, expr_uses_register, stmt_has_side_effects};
+use crate::ir::{
+    expr_uses_register, stmt_has_side_effects, AssignTarget, Binding, Expression, Statement, Value,
+};
 
 pub fn transform_array_literals(statements: &mut Vec<Statement>) {
     let mut i = 0;

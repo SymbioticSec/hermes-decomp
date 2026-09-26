@@ -14,7 +14,7 @@
 // AFTER the block (the real binding). An element whose value never reaches such a
 // register is a hole (`,`).
 
-use crate::ir::{Binding, AssignTarget, Expression, PropertyKey, Statement, Value, Visitor};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value, Visitor};
 use std::collections::{HashMap, HashSet};
 
 pub fn detect_iterator_destructuring(stmts: Vec<Statement>) -> Vec<Statement> {
@@ -24,7 +24,11 @@ pub fn detect_iterator_destructuring(stmts: Vec<Statement>) -> Vec<Statement> {
     // `iter = src[Symbol.iterator].call(src)` / `next = iter.next` chains).
     let mut defs: HashMap<u32, Expression> = HashMap::new();
     for s in &stmts {
-        if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = s {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            value,
+        } = s
+        {
             defs.insert(*r, value.clone());
         }
     }
@@ -91,7 +95,11 @@ fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
     stmts
         .into_iter()
         .map(|stmt| match stmt {
-            Statement::If { condition, then_body, else_body } => Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => Statement::If {
                 condition,
                 then_body: detect_iterator_destructuring(then_body),
                 else_body: detect_iterator_destructuring(else_body),
@@ -104,31 +112,47 @@ fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
                 body: detect_iterator_destructuring(body),
                 condition,
             },
-            Statement::For { init, condition, update, body } => Statement::For {
+            Statement::For {
+                init,
+                condition,
+                update,
+                body,
+            } => Statement::For {
                 init,
                 condition,
                 update,
                 body: detect_iterator_destructuring(body),
             },
-            Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+            Statement::ForOf {
+                variable,
+                iterable,
+                body,
+            } => Statement::ForOf {
                 variable,
                 iterable,
                 body: detect_iterator_destructuring(body),
             },
-            Statement::ForIn { variable, object, body } => Statement::ForIn {
+            Statement::ForIn {
+                variable,
+                object,
+                body,
+            } => Statement::ForIn {
                 variable,
                 object,
                 body: detect_iterator_destructuring(body),
             },
             Statement::Block(inner) => Statement::Block(detect_iterator_destructuring(inner)),
-            Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => {
-                Statement::TryCatch {
-                    try_body: detect_iterator_destructuring(try_body),
-                    catch_param,
-                    catch_body: detect_iterator_destructuring(catch_body),
-                    finally_body: detect_iterator_destructuring(finally_body),
-                }
-            }
+            Statement::TryCatch {
+                try_body,
+                catch_param,
+                catch_body,
+                finally_body,
+            } => Statement::TryCatch {
+                try_body: detect_iterator_destructuring(try_body),
+                catch_param,
+                catch_body: detect_iterator_destructuring(catch_body),
+                finally_body: detect_iterator_destructuring(finally_body),
+            },
             other => other,
         })
         .collect()
@@ -136,14 +160,24 @@ fn recurse(stmts: Vec<Statement>) -> Vec<Statement> {
 
 // `iter = src[Symbol.iterator]()` -> (iter_reg, src).
 fn iterator_begin(stmt: &Statement) -> Option<(u32, Expression)> {
-    if let Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), value } = stmt {
+    if let Statement::Assign {
+        target: AssignTarget::Binding(Binding::Register(r)),
+        value,
+    } = stmt
+    {
         if let Expression::Call { callee, arguments } = value {
             if arguments.is_empty() {
-                if let Expression::Member { object, property: PropertyKey::Computed(c), .. } =
-                    callee.as_ref()
+                if let Expression::Member {
+                    object,
+                    property: PropertyKey::Computed(c),
+                    ..
+                } = callee.as_ref()
                 {
-                    if let Expression::Member { object: sym, property: PropertyKey::Ident(p), .. } =
-                        c.as_ref()
+                    if let Expression::Member {
+                        object: sym,
+                        property: PropertyKey::Ident(p),
+                        ..
+                    } = c.as_ref()
                     {
                         if p == "iterator"
                             && matches!(sym.as_ref(), Expression::Value(Value::Binding(Binding::Variable(s))) if s == "Symbol")
@@ -180,11 +214,11 @@ fn legacy_iterator_begin(
     };
     // Require `next = iter.next` to exist (the protocol's per-element advance).
     let next_reg = defs.iter().find_map(|(&r, v)| match v {
-        Expression::Member { object, property: PropertyKey::Ident(p), .. }
-            if p == "next" && reg_of(object) == Some(iter_reg) =>
-        {
-            Some(r)
-        }
+        Expression::Member {
+            object,
+            property: PropertyKey::Ident(p),
+            ..
+        } if p == "next" && reg_of(object) == Some(iter_reg) => Some(r),
         _ => None,
     })?;
     Some((iter_reg, src, next_reg))
@@ -199,7 +233,11 @@ fn reg_of(e: &Expression) -> Option<u32> {
 
 // The callee register of a legacy iterator-begin call statement.
 fn begin_callee_reg(stmt: &Statement) -> Option<u32> {
-    if let Statement::Assign { value: Expression::Call { callee, .. }, .. } = stmt {
+    if let Statement::Assign {
+        value: Expression::Call { callee, .. },
+        ..
+    } = stmt
+    {
         return reg_of(callee);
     }
     None
@@ -217,7 +255,12 @@ fn is_legacy_next(value: &Expression, next_reg: u32, iter_reg: u32) -> bool {
 
 // Legacy `elem = result.value`, returns the result register.
 fn legacy_value_source(value: &Expression) -> Option<u32> {
-    if let Expression::Member { object, property: PropertyKey::Ident(p), .. } = value {
+    if let Expression::Member {
+        object,
+        property: PropertyKey::Ident(p),
+        ..
+    } = value
+    {
         if p == "value" {
             return reg_of(object);
         }
@@ -228,8 +271,11 @@ fn legacy_value_source(value: &Expression) -> Option<u32> {
 fn is_iter_next(value: &Expression, iter_reg: u32) -> bool {
     if let Expression::Call { callee, arguments } = value {
         if arguments.is_empty() {
-            if let Expression::Member { object, property: PropertyKey::Ident(p), .. } =
-                callee.as_ref()
+            if let Expression::Member {
+                object,
+                property: PropertyKey::Ident(p),
+                ..
+            } = callee.as_ref()
             {
                 return p == "next"
                     && matches!(object.as_ref(), Expression::Value(Value::Binding(Binding::Register(r))) if *r == iter_reg);
@@ -255,7 +301,11 @@ fn is_iter_return(stmt: &Statement, iter_reg: u32) -> bool {
                         && matches!(object.as_ref(), Expression::Value(Value::Binding(Binding::Register(r))) if *r == iter_reg)
             )
         }
-        Expression::Member { object, property: PropertyKey::Ident(p), .. } => {
+        Expression::Member {
+            object,
+            property: PropertyKey::Ident(p),
+            ..
+        } => {
             p == "return"
                 && matches!(object.as_ref(), Expression::Value(Value::Binding(Binding::Register(r))) if *r == iter_reg)
         }
@@ -277,9 +327,17 @@ fn stmt_contains_iter_return(stmt: &Statement, iter_reg: u32) -> bool {
         return true;
     }
     match stmt {
-        Statement::If { then_body, else_body, .. } => {
-            then_body.iter().any(|s| stmt_contains_iter_return(s, iter_reg))
-                || else_body.iter().any(|s| stmt_contains_iter_return(s, iter_reg))
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            then_body
+                .iter()
+                .any(|s| stmt_contains_iter_return(s, iter_reg))
+                || else_body
+                    .iter()
+                    .any(|s| stmt_contains_iter_return(s, iter_reg))
         }
         Statement::Block(inner) => inner.iter().any(|s| stmt_contains_iter_return(s, iter_reg)),
         _ => false,
@@ -343,7 +401,10 @@ impl WalkState<'_> {
     fn walk(&mut self, stmts: &[Statement]) {
         for stmt in stmts {
             match stmt {
-                Statement::Assign { target: AssignTarget::Binding(Binding::Register(dst)), value } => {
+                Statement::Assign {
+                    target: AssignTarget::Binding(Binding::Register(dst)),
+                    value,
+                } => {
                     if let Some(next_reg) = self.next_reg {
                         // Legacy: `result = next.call(iter)` opens an element;
                         // `elem = result.value` binds it.
@@ -385,7 +446,11 @@ impl WalkState<'_> {
                         self.reg_to_elem.remove(dst);
                     }
                 }
-                Statement::If { then_body, else_body, .. } => {
+                Statement::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
                     self.walk(then_body);
                     self.walk(else_body);
                 }

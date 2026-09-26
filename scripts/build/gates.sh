@@ -34,6 +34,10 @@ report() { # <name> <exit code>
   fi
 }
 
+step "fmt"
+cargo fmt --all -- --check
+report "fmt" $?
+
 step "clippy"
 cargo clippy --workspace --all-targets -- -D warnings
 report "clippy" $?
@@ -41,6 +45,12 @@ report "clippy" $?
 step "tests"
 cargo test --workspace
 report "tests" $?
+
+# The round trip and the parse check run the release binary; build it from the
+# code under test first, otherwise they judge whatever was built last.
+step "release build"
+cargo build --release -p hbc-decomp-cli
+report "release build" $?
 
 step "round trip corpus"
 bash "$ROOT/scripts/build/roundtrip.sh"
