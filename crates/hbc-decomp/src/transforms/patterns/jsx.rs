@@ -8,7 +8,7 @@ use crate::ir::{
     map_nested_bodies_mut, AssignTarget, Constant, Expression, MutVisitor, ObjectProperty,
     PropertyKey, Statement, Value,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 /// Run JSX reconstruction over a statement list (idempotent).
 pub fn reconstruct_jsx(mut stmts: Vec<Statement>) -> Vec<Statement> {
@@ -80,56 +80,82 @@ fn rewrite_stmt_calls(stmt: &mut Statement, objects: &BTreeMap<String, Expressio
 }
 
 fn subst_jsx_props_in_expr(expr: &mut Expression, objects: &BTreeMap<String, Expression>) {
+    subst_jsx_props_in_expr_inner(expr, objects, &mut HashSet::new());
+}
+
+fn subst_jsx_props_in_expr_inner(
+    expr: &mut Expression,
+    objects: &BTreeMap<String, Expression>,
+    expanding: &mut HashSet<String>,
+) {
     match expr {
         Expression::Call { callee, arguments } if is_jsx_call(callee) && arguments.len() >= 2 => {
+            let mut expanded_name = None;
             if let Expression::Value(Value::Variable(name)) = &arguments[1] {
                 if let Some(obj) = objects.get(name) {
-                    arguments[1] = obj.clone();
+                    if expanding.insert(name.clone()) {
+                        expanded_name = Some(name.clone());
+                        arguments[1] = obj.clone();
+                    }
                 }
             }
-            // Recurse into children args (classic createElement children may nest jsx)
-            for a in arguments.iter_mut() {
-                subst_jsx_props_in_expr(a, objects);
+            // Keep the variable reference when the tracked object reaches the
+            // JSX call that is currently expanding it.  Replacing it again
+            // would clone the same object forever.
+            subst_jsx_props_in_expr_inner(&mut arguments[1], objects, expanding);
+            if let Some(name) = expanded_name {
+                expanding.remove(&name);
             }
-            subst_jsx_props_in_expr(callee, objects);
+            // Recurse into the other arguments once. Classic createElement
+            // children can contain JSX calls too.
+            for (index, argument) in arguments.iter_mut().enumerate() {
+                if index != 1 {
+                    subst_jsx_props_in_expr_inner(argument, objects, expanding);
+                }
+            }
+            subst_jsx_props_in_expr_inner(callee, objects, expanding);
         }
         Expression::Call { callee, arguments } | Expression::New { callee, arguments } => {
-            subst_jsx_props_in_expr(callee, objects);
+            subst_jsx_props_in_expr_inner(callee, objects, expanding);
             for a in arguments {
-                subst_jsx_props_in_expr(a, objects);
+                subst_jsx_props_in_expr_inner(a, objects, expanding);
             }
         }
         Expression::Binary { left, right, .. } => {
-            subst_jsx_props_in_expr(left, objects);
-            subst_jsx_props_in_expr(right, objects);
+            subst_jsx_props_in_expr_inner(left, objects, expanding);
+            subst_jsx_props_in_expr_inner(right, objects, expanding);
         }
         Expression::Unary { operand, .. }
         | Expression::Spread(operand)
         | Expression::Await(operand)
-        | Expression::Yield { value: operand, .. } => subst_jsx_props_in_expr(operand, objects),
-        Expression::Member { object, .. } => subst_jsx_props_in_expr(object, objects),
+        | Expression::Yield { value: operand, .. } => {
+            subst_jsx_props_in_expr_inner(operand, objects, expanding)
+        }
+        Expression::Member { object, .. } => {
+            subst_jsx_props_in_expr_inner(object, objects, expanding)
+        }
         Expression::Conditional {
             condition,
             then_expr,
             else_expr,
         } => {
-            subst_jsx_props_in_expr(condition, objects);
-            subst_jsx_props_in_expr(then_expr, objects);
-            subst_jsx_props_in_expr(else_expr, objects);
+            subst_jsx_props_in_expr_inner(condition, objects, expanding);
+            subst_jsx_props_in_expr_inner(then_expr, objects, expanding);
+            subst_jsx_props_in_expr_inner(else_expr, objects, expanding);
         }
         Expression::Array { elements } => {
             for e in elements.iter_mut().flatten() {
-                subst_jsx_props_in_expr(e, objects);
+                subst_jsx_props_in_expr_inner(e, objects, expanding);
             }
         }
         Expression::Object { properties } => {
             for p in properties {
-                subst_jsx_props_in_expr(&mut p.value, objects);
+                subst_jsx_props_in_expr_inner(&mut p.value, objects, expanding);
             }
         }
         Expression::Assignment { target, value } => {
-            subst_jsx_props_in_expr(target, objects);
-            subst_jsx_props_in_expr(value, objects);
+            subst_jsx_props_in_expr_inner(target, objects, expanding);
+            subst_jsx_props_in_expr_inner(value, objects, expanding);
         }
         Expression::JSXElement {
             attributes,
@@ -137,10 +163,10 @@ fn subst_jsx_props_in_expr(expr: &mut Expression, objects: &BTreeMap<String, Exp
             ..
         } => {
             for (_, v) in attributes {
-                subst_jsx_props_in_expr(v, objects);
+                subst_jsx_props_in_expr_inner(v, objects, expanding);
             }
             for c in children {
-                subst_jsx_props_in_expr(c, objects);
+                subst_jsx_props_in_expr_inner(c, objects, expanding);
             }
         }
         _ => {}
@@ -318,6 +344,33 @@ fn push_props(
 mod tests {
     use super::*;
     use crate::ir::VarKind;
+
+    fn create_element(props: Expression) -> Expression {
+        Expression::call(
+            Expression::member(
+                Expression::Value(Value::Variable("React".into())),
+                "createElement",
+            ),
+            vec![Expression::Value(Value::Variable("View".into())), props],
+        )
+    }
+
+    #[test]
+    fn props_substitution_stops_at_direct_cycle() {
+        let nested = create_element(Expression::Value(Value::Variable("props".into())));
+        let props = Expression::Object {
+            properties: vec![ObjectProperty {
+                key: PropertyKey::Ident("children".into()),
+                value: nested,
+            }],
+        };
+        let objects = BTreeMap::from([("props".into(), props.clone())]);
+        let mut expr = create_element(Expression::Value(Value::Variable("props".into())));
+
+        subst_jsx_props_in_expr(&mut expr, &objects);
+
+        assert_eq!(expr, create_element(props));
+    }
 
     #[test]
     fn test_classic_jsx_element() {
