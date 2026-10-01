@@ -1,0 +1,1 @@
+function App(React, View) { const props = {}; props.children = React.createElement(View, props); return React.createElement(View, props); } var React = { createElement: function (t, p) { return { t: t, p: p }; } }; print(typeof App(React, "View"), App(React, "View").p.children.t);

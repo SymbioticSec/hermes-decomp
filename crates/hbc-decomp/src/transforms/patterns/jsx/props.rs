@@ -123,60 +123,88 @@ fn rewrite_stmt_calls(stmt: &mut Statement, objects: &PropScope) {
 }
 
 fn subst_jsx_props_in_expr(expr: &mut Expression, objects: &PropScope) {
+    subst_jsx_props_in_expr_inner(expr, objects, &mut std::collections::HashSet::new());
+}
+
+// `expanding`: the props objects being substituted up the current path. A
+// props object can hold an element built from itself (`props.children =
+// createElement(View, props)` before `createElement(View, props)`), and
+// substituting it again inside its own copy never ends: the reference is
+// kept at that point and the expansion stops there. Reported in issue #24,
+// guard contributed by luca-regne.
+fn subst_jsx_props_in_expr_inner(
+    expr: &mut Expression,
+    objects: &PropScope,
+    expanding: &mut std::collections::HashSet<String>,
+) {
     match expr {
         Expression::Call { callee, arguments }
             if super::is_jsx_call(callee) && arguments.len() >= 2 =>
         {
+            let mut expanded = None;
             if let Expression::Value(Value::Binding(Binding::Variable(name))) = &arguments[1] {
                 if let Some(obj) = objects.get(name) {
-                    arguments[1] = obj.clone();
+                    if expanding.insert(name.clone()) {
+                        expanded = Some(name.clone());
+                        arguments[1] = obj.clone();
+                    }
                 }
             }
-            // Recurse into children args (classic createElement children may nest jsx)
-            for a in arguments.iter_mut() {
-                subst_jsx_props_in_expr(a, objects);
+            subst_jsx_props_in_expr_inner(&mut arguments[1], objects, expanding);
+            if let Some(name) = expanded {
+                expanding.remove(&name);
             }
-            subst_jsx_props_in_expr(callee, objects);
+            // Children args of a classic createElement may nest jsx calls.
+            for (index, a) in arguments.iter_mut().enumerate() {
+                if index != 1 {
+                    subst_jsx_props_in_expr_inner(a, objects, expanding);
+                }
+            }
+            subst_jsx_props_in_expr_inner(callee, objects, expanding);
         }
         Expression::Call { callee, arguments } | Expression::New { callee, arguments } => {
-            subst_jsx_props_in_expr(callee, objects);
+            subst_jsx_props_in_expr_inner(callee, objects, expanding);
             for a in arguments {
-                subst_jsx_props_in_expr(a, objects);
+                subst_jsx_props_in_expr_inner(a, objects, expanding);
             }
         }
         Expression::Binary { left, right, .. } => {
-            subst_jsx_props_in_expr(left, objects);
-            subst_jsx_props_in_expr(right, objects);
+            subst_jsx_props_in_expr_inner(left, objects, expanding);
+            subst_jsx_props_in_expr_inner(right, objects, expanding);
         }
         Expression::Unary { operand, .. }
         | Expression::Spread(operand)
         | Expression::Await(operand)
-        | Expression::Yield { value: operand, .. } => subst_jsx_props_in_expr(operand, objects),
-        Expression::Member { object, .. } => subst_jsx_props_in_expr(object, objects),
+        | Expression::Yield { value: operand, .. } => {
+            subst_jsx_props_in_expr_inner(operand, objects, expanding)
+        }
+        Expression::Member { object, .. } => {
+            subst_jsx_props_in_expr_inner(object, objects, expanding)
+        }
         Expression::Conditional {
             condition,
             then_expr,
             else_expr,
         } => {
-            subst_jsx_props_in_expr(condition, objects);
-            subst_jsx_props_in_expr(then_expr, objects);
-            subst_jsx_props_in_expr(else_expr, objects);
+            subst_jsx_props_in_expr_inner(condition, objects, expanding);
+            subst_jsx_props_in_expr_inner(then_expr, objects, expanding);
+            subst_jsx_props_in_expr_inner(else_expr, objects, expanding);
         }
         Expression::Array { elements } => {
             for e in elements.iter_mut().flatten() {
-                subst_jsx_props_in_expr(e, objects);
+                subst_jsx_props_in_expr_inner(e, objects, expanding);
             }
         }
         Expression::Object { properties } => {
             for p in properties {
-                subst_jsx_props_in_expr(&mut p.value, objects);
+                subst_jsx_props_in_expr_inner(&mut p.value, objects, expanding);
             }
         }
         Expression::Assignment { target, value } => {
             crate::ir::for_each_target_expression_mut(target, &mut |e| {
-                subst_jsx_props_in_expr(e, objects)
+                subst_jsx_props_in_expr_inner(e, objects, expanding)
             });
-            subst_jsx_props_in_expr(value, objects);
+            subst_jsx_props_in_expr_inner(value, objects, expanding);
         }
         Expression::JSXElement {
             attributes,
@@ -184,10 +212,10 @@ fn subst_jsx_props_in_expr(expr: &mut Expression, objects: &PropScope) {
             ..
         } => {
             for (_, v) in attributes {
-                subst_jsx_props_in_expr(v, objects);
+                subst_jsx_props_in_expr_inner(v, objects, expanding);
             }
             for c in children {
-                subst_jsx_props_in_expr(c, objects);
+                subst_jsx_props_in_expr_inner(c, objects, expanding);
             }
         }
         _ => {}

@@ -88,6 +88,8 @@ paper/
 # Bytecode inputs and everything a decompile produces. Bundles pulled from an
 # APK live next to the repo for local runs and never belong in it.
 *.hbc
+# Tracked crash-regression fixtures, a few hundred bytes each (tests/e2e_corpus.rs).
+!/crates/hbc-decomp-cli/tests/fixtures/*.hbc
 *.bundle
 *.hasm
 *.apk

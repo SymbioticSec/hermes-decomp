@@ -170,7 +170,18 @@ fn main() {
     panic::set_hook(Box::new(|_| {}));
     FULL.store(std::env::var("FUZZ_FULL").is_ok(), Ordering::Relaxed);
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Each argument must name an existing regular file; anything else is
+    // refused before being read.
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        .map(|a| match std::fs::canonicalize(&a) {
+            Ok(p) if p.is_file() => p.to_string_lossy().into_owned(),
+            _ => {
+                eprintln!("not a file: {a}");
+                std::process::exit(2);
+            }
+        })
+        .collect();
     if args.is_empty() {
         eprintln!("usage: fuzz_parse <bundle.hbc> [more...]");
         std::process::exit(2);

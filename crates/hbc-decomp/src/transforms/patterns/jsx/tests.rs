@@ -201,3 +201,44 @@ fn test_modern_jsx_member_factory() {
         other => panic!("{other:?}"),
     }
 }
+
+// Issue #24: a props object holding an element built from itself. Expanding
+// it inside its own copy never ended and overflowed the stack; the expansion
+// stops at the cycle and keeps the reference there.
+#[test]
+fn props_substitution_stops_at_a_direct_cycle() {
+    let create_element = |props: Expression| {
+        Expression::call(
+            Expression::member(
+                Expression::Value(Value::Binding(Binding::Variable("React".into()))),
+                "createElement",
+            ),
+            vec![
+                Expression::Value(Value::Binding(Binding::Variable("View".into()))),
+                props,
+            ],
+        )
+    };
+    let props_ref = || Expression::Value(Value::Binding(Binding::Variable("props".into())));
+    let stmts = vec![
+        Statement::Let {
+            name: "props".into(),
+            value: Expression::Object { properties: vec![] },
+            kind: VarKind::Let,
+        },
+        Statement::Assign {
+            target: AssignTarget::Member {
+                object: props_ref(),
+                property: "children".into(),
+            },
+            value: create_element(props_ref()),
+        },
+        Statement::Return(Some(create_element(props_ref()))),
+    ];
+    let out = reconstruct_jsx(stmts);
+    let text = format!("{out:?}");
+    assert!(
+        text.contains("props"),
+        "the recursive edge stays a reference: {text}"
+    );
+}

@@ -134,15 +134,12 @@ fn build_jsx_element(callee: &Expression, arguments: &[Expression]) -> Option<Ex
                     push_props(properties, &mut jsx_attributes, &mut jsx_children, false);
                 }
                 Expression::Value(Value::Constant(Constant::Null | Constant::Undefined)) => {}
-                Expression::Spread(_) => {
-                    jsx_attributes.push(("...".to_string(), arguments[1].clone()));
+                // The spread attribute holds the bare expression; codegen adds
+                // the dots. Wrapping it in `Spread` printed `{......obj}`.
+                Expression::Spread(inner) => {
+                    jsx_attributes.push(("...".to_string(), (**inner).clone()));
                 }
-                other => {
-                    jsx_attributes.push((
-                        "...".to_string(),
-                        Expression::Spread(Box::new(other.clone())),
-                    ));
-                }
+                other => jsx_attributes.push(("...".to_string(), other.clone())),
             }
         }
         for child in arguments.iter().skip(2) {

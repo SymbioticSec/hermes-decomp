@@ -52,7 +52,7 @@ for vdir in "$RN"/v*/; do
   [ -d "$vdir" ] || continue
   ver="$(basename "$vdir")"
   tsv="$vdir/roundtrip.tsv"; : > "$tsv"
-  pass=0; fail=0; nodec=0
+  pass=0; fail=0; nodec=0; jsx=0
   for edir in "$vdir"expressions/*/; do
     name="$(basename "$edir")"
     src="$edir/source.js"; dec="$edir/decompiled.js"; hbc="$edir/bytecode.hbc"
@@ -64,7 +64,19 @@ for vdir in "$RN"/v*/; do
       "$DECOMP" decompile "$hbc" --output "$dec" 2>/dev/null || true
     fi
     if [ ! -f "$dec" ]; then
+      # No bytecode (the toolchain could not compile the snippet) is a gap. A
+      # bytecode file with no output is a decompiler that crashed or refused,
+      # and that fails the gate like a wrong output does: a stack overflow on
+      # one snippet (issue #24) hid in this column for weeks.
+      if [ -f "$hbc" ]; then
+        printf '%s\tFAIL\n' "$name" >> "$tsv"; fail=$((fail+1)); continue
+      fi
       printf '%s\tNO-DECOMP\n' "$name" >> "$tsv"; nodec=$((nodec+1)); continue
+    fi
+    # JSX output is outside this judge, as it is for the parse check: node has
+    # no JSX. The crash guards for JSX snippets live in tests/e2e_corpus.rs.
+    if grep -qE '<[A-Z][A-Za-z0-9_.]*[ />]' "$dec" && grep -qE '/>|</[A-Z]' "$dec"; then
+      printf '%s\tJSX\n' "$name" >> "$tsv"; jsx=$((jsx+1)); continue
     fi
     exp="$(run_original "$src")"
     got="$(run_decompiled "$dec")"
@@ -74,7 +86,7 @@ for vdir in "$RN"/v*/; do
       printf '%s\tFAIL\n' "$name" >> "$tsv"; fail=$((fail+1))
     fi
   done
-  printf '%-6s pass=%-3s fail=%-3s no-decomp=%-3s\n' "$ver" "$pass" "$fail" "$nodec"
+  printf '%-6s pass=%-3s fail=%-3s no-decomp=%-3s jsx=%-3s\n' "$ver" "$pass" "$fail" "$nodec" "$jsx"
   total_pass=$((total_pass+pass)); total_fail=$((total_fail+fail))
 done
 

@@ -11,7 +11,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("usage: cache_query <bundle.hbc> <fid>…");
         std::process::exit(2);
     }
-    let input = std::path::PathBuf::from(&args[1]);
+    // The argument must name an existing regular file; the canonical path
+    // is what the cache is keyed on.
+    let input = std::fs::canonicalize(&args[1])?;
+    if !input.is_file() {
+        eprintln!("not a file: {}", input.display());
+        std::process::exit(2);
+    }
     let bytes = std::fs::read(&input)?;
     let file = hbc_decomp::BytecodeFile::parse_auto(&bytes)?;
     let format = hbc_decomp::BytecodeFormat::for_version(file.header.version)?;
