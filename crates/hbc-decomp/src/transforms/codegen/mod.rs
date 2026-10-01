@@ -1,13 +1,13 @@
+mod control_flow;
+mod esm_boilerplate;
+mod esm_classify;
+mod esm_descriptors;
 mod esm_gen;
 mod esm_imports;
-mod esm_classify;
 mod esm_patterns;
-mod esm_descriptors;
-mod esm_boilerplate;
 mod expr_gen;
 mod format;
 mod stmt_gen;
-mod control_flow;
 
 #[cfg(test)]
 mod tests;
@@ -86,12 +86,46 @@ pub(super) fn sanitize_import_name(mod_name: &str) -> String {
     if result.len() <= 1
         || matches!(
             result.as_str(),
-            "default" | "export" | "import" | "class" | "function" | "return"
-            | "var" | "let" | "const" | "if" | "else" | "for" | "while" | "do"
-            | "switch" | "case" | "break" | "continue" | "new" | "delete"
-            | "typeof" | "void" | "in" | "of" | "instanceof" | "this" | "super"
-            | "with" | "throw" | "try" | "catch" | "finally" | "yield" | "await"
-            | "async" | "from" | "true" | "false" | "null" | "undefined"
+            "default"
+                | "export"
+                | "import"
+                | "class"
+                | "function"
+                | "return"
+                | "var"
+                | "let"
+                | "const"
+                | "if"
+                | "else"
+                | "for"
+                | "while"
+                | "do"
+                | "switch"
+                | "case"
+                | "break"
+                | "continue"
+                | "new"
+                | "delete"
+                | "typeof"
+                | "void"
+                | "in"
+                | "of"
+                | "instanceof"
+                | "this"
+                | "super"
+                | "with"
+                | "throw"
+                | "try"
+                | "catch"
+                | "finally"
+                | "yield"
+                | "await"
+                | "async"
+                | "from"
+                | "true"
+                | "false"
+                | "null"
+                | "undefined"
         )
     {
         return String::new();
@@ -144,6 +178,40 @@ pub(super) fn replace_whole_word(text: &str, old: &str, new_val: &str) -> String
     }
     result.push_str(remaining);
     result
+}
+
+// What a function whose body could not be rendered prints as. It parses as
+// an empty body, keeps the function id, and stays searchable.
+// Whether a statement contains `break label` or `continue label`.
+fn stmt_jumps_to_label(stmt: &Statement, label: &str) -> bool {
+    use crate::ir::Visitor;
+    struct J<'a>(&'a str, bool);
+    impl<'a, 'b> Visitor<'b> for J<'a> {
+        fn visit_statement(&mut self, s: &'b Statement) {
+            match s {
+                Statement::Break(Some(l)) | Statement::Continue(Some(l)) if l == self.0 => {
+                    self.1 = true
+                }
+                _ => self.walk_statement(s),
+            }
+        }
+    }
+    let mut j = J(label, false);
+    j.visit_statement(stmt);
+    j.1
+}
+
+pub const BODY_HOLE: &str = "/* body not rendered";
+
+pub fn body_hole(id: u32) -> String {
+    format!("{{ {BODY_HOLE}: F{id} */ }}")
+}
+
+// `label0:` as the structure recovery spells a loop label, and nothing else.
+pub(super) fn loop_label(text: &str) -> Option<&str> {
+    let name = text.strip_suffix(':')?;
+    let digits = name.strip_prefix("label")?;
+    (!digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())).then_some(name)
 }
 
 // Options for code generation.
@@ -201,6 +269,11 @@ pub(super) enum EsmClassification {
 pub struct Codegen {
     pub(super) options: CodegenOptions,
     pub(super) indent_level: usize,
+    // Expression nesting while rendering. A left-leaning chain of ten thousand
+    // `+` terms exists in real bundles and would otherwise recurse once per
+    // term; past the cap the innermost part is elided rather than the process
+    // overflowing its stack.
+    pub(super) expr_depth: std::cell::Cell<usize>,
     pub(super) import_map: Option<BTreeMap<u32, String>>,
     // When true, generate ESM-style output for module factories.
     pub(super) esm_mode: bool,
@@ -211,6 +284,12 @@ pub struct Codegen {
     pub(super) dep_ids: Option<BTreeMap<u32, u32>>,
     // Pre-rendered inline function bodies (function_id -> complete function expression string).
     pub(super) inline_bodies: Arc<BTreeMap<u32, String>>,
+    // Names written by the function bodies that get inlined into this module, with
+    // the child's own `let` declarations already excluded. Those bodies are only
+    // available here as rendered strings, so the ESM pass cannot see their writes
+    // on its own, and a write buried in one of them invalidates an import binding
+    // just as surely as a write at the top level.
+    pub(super) nested_writes: BTreeMap<String, usize>,
 }
 
 impl Codegen {
@@ -218,11 +297,13 @@ impl Codegen {
         Codegen {
             options,
             indent_level: 0,
+            expr_depth: std::cell::Cell::new(0),
             import_map: None,
             esm_mode: false,
             dep_names: None,
             dep_ids: None,
             inline_bodies: Arc::new(BTreeMap::new()),
+            nested_writes: BTreeMap::new(),
         }
     }
 
@@ -249,10 +330,45 @@ impl Codegen {
         self
     }
 
+    // Writes performed by the descendant bodies rendered inside this module.
+    pub fn with_nested_writes(mut self, writes: BTreeMap<String, usize>) -> Self {
+        self.nested_writes = writes;
+        self
+    }
+
     // Generate code for a list of statements.
     pub fn generate_statements(&mut self, statements: &[Statement]) -> String {
         let mut output = String::new();
+        // A loop label the structure recovery left as `labelN:` belongs to
+        // the next loop of this list, which later passes may have separated
+        // from it by hoisted declarations. A label with no loop after it is
+        // dropped: a label before a `const` is a syntax error.
+        let mut pending_label: Option<String> = None;
         for stmt in statements {
+            if let Statement::Comment(text) = stmt {
+                if let Some(label) = loop_label(text) {
+                    pending_label = Some(label.to_string());
+                    continue;
+                }
+            }
+            if let Some(label) = pending_label.take() {
+                if matches!(
+                    stmt,
+                    Statement::While { .. }
+                        | Statement::DoWhile { .. }
+                        | Statement::For { .. }
+                        | Statement::ForIn { .. }
+                        | Statement::ForOf { .. }
+                ) {
+                    // A label no `break`/`continue` names is noise: 5 654 of
+                    // them for 14 labelled jumps on the reference bundle.
+                    if stmt_jumps_to_label(stmt, &label) {
+                        output.push_str(&format!("{}{label}:\n", self.current_indent()));
+                    }
+                } else {
+                    pending_label = Some(label);
+                }
+            }
             output.push_str(&self.generate_stmt(stmt));
         }
         output

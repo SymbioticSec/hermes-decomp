@@ -2,7 +2,7 @@ use super::suggestions::{
     get_function_name, name_for_call, name_for_instance, name_for_property,
     name_for_qualified_call, sanitize_name,
 };
-use crate::ir::{Expression, PropertyKey};
+use crate::ir::{Binding, Expression, PropertyKey, Value};
 use std::collections::{BTreeMap, HashSet};
 
 pub struct VariableNamer {
@@ -51,7 +51,6 @@ impl VariableNamer {
         self.used_names.insert(name.to_string());
     }
 
-
     fn get_unique_name(&mut self, base: &str) -> String {
         // Clean the base name
         let base = sanitize_name(base);
@@ -72,7 +71,6 @@ impl VariableNamer {
             }
         }
     }
-
 }
 
 // Infer a name from an expression (free function, no state needed).
@@ -85,7 +83,8 @@ pub fn infer_name_from_expr(expr: &Expression) -> Option<String> {
                 object,
                 property: PropertyKey::Ident(method),
                 ..
-            } = &**callee {
+            } = &**callee
+            {
                 if let Some(obj_name) = get_function_name(object) {
                     let qualified = format!("{obj_name}.{method}");
                     if let Some(name) = name_for_qualified_call(&qualified) {
@@ -108,9 +107,18 @@ pub fn infer_name_from_expr(expr: &Expression) -> Option<String> {
 
         // obj.property → prefer raw property name when it's a clean identifier
         Expression::Member {
+            object,
             property: PropertyKey::Ident(prop),
             ..
         } => {
+            // `componentStack = componentStack.componentStack` names the fresh
+            // local after the value it reads, so the declaration and the read
+            // collapse into one statement. Keep the generic name.
+            if let Expression::Value(Value::Binding(Binding::Variable(base))) = object.as_ref() {
+                if base == prop {
+                    return None;
+                }
+            }
             // Use raw property name if it's a clean identifier (2-20 chars, alphanumeric)
             if prop.len() >= 2
                 && prop.len() <= 20

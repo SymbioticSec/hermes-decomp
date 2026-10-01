@@ -3,7 +3,7 @@
 use super::env_state::EnvRegMap;
 use super::opcodes_flow::FlowResult;
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{Expression, Statement};
+use crate::ir::{Binding, Expression, Statement};
 
 // CreateEnvironment / CreateFunctionEnvironment / CreateTopLevelEnvironment /
 // CreateInnerEnvironment, result register holds the *current* function env
@@ -20,13 +20,14 @@ pub fn handle_create_environment(
         env_map.claim_function_env(dst);
         return Some(FlowResult::Noop);
     }
-    env_map.set_level(dst, 0);
     // CreateTopLevelEnvironment / CreateInnerEnvironment / 3-operand
-    // CreateEnvironment build an ADDITIONAL environment, a separate scope. It is
-    // captured a moment later by `StoreToEnvironment parent, K, thisEnv`; the
-    // store gives it the identity of parent slot K so its own slot accesses use
-    // the same level the capturing child computes, instead of colliding with the
-    // running env's slot names (`email = undefined` over the real login email).
+    // CreateEnvironment build an ADDITIONAL environment, a separate scope. When
+    // it is captured a moment later by `StoreToEnvironment parent, K, thisEnv`
+    // the store gives it the identity of parent slot K, so its own slot
+    // accesses use the same level the capturing child computes. Until then it
+    // has a level of its own: at level 0 its slots collided with the running
+    // env's (`email = undefined` over the real login email, a class stored
+    // over the factory's `global`).
     let creates_new_env = match name {
         "CreateFunctionEnvironment" => false,
         "CreateEnvironment" => inst.operands.len() >= 3,
@@ -34,7 +35,9 @@ pub fn handle_create_environment(
         _ => false,
     };
     if creates_new_env {
-        env_map.mark_created_env(dst);
+        env_map.claim_created_env(dst);
+    } else {
+        env_map.set_level(dst, 0);
     }
     // No visible JS statement, pure env setup.
     Some(FlowResult::Noop)
@@ -93,8 +96,11 @@ pub fn handle_load_from_environment(
     env_map.set_source_slot(dst, level, slot);
 
     Some(FlowResult::Statement(Statement::Assign {
-        target: crate::ir::AssignTarget::Register(dst),
-        value: Expression::Value(crate::ir::Value::ClosureVar { level, slot }),
+        target: crate::ir::AssignTarget::Binding(Binding::Register(dst)),
+        value: Expression::Value(crate::ir::Value::Binding(Binding::ClosureVar {
+            level,
+            slot,
+        })),
     }))
 }
 
@@ -121,7 +127,7 @@ pub fn handle_store_to_environment(
     let value = reg_expr(&inst.operands, 2)?;
 
     Some(FlowResult::Statement(Statement::Assign {
-        target: crate::ir::AssignTarget::ClosureVar { level, slot },
+        target: crate::ir::AssignTarget::Binding(Binding::ClosureVar { level, slot }),
         value,
     }))
 }

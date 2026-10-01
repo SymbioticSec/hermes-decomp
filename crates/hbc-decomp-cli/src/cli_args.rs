@@ -17,18 +17,28 @@ pub struct Cli {
     pub command: Command,
 }
 
+// The three bytecode-format options every file-reading subcommand accepts.
+#[derive(clap::Args, Clone, Debug)]
+pub struct FormatArgs {
+    /// Override the detected HBC bytecode version.
+    #[arg(long)]
+    pub format_version: Option<u32>,
+    /// File header layout (auto-detected by default).
+    #[arg(long, value_enum, default_value = "auto")]
+    pub layout: LayoutArg,
+    /// Per-function header layout (auto-detected by default).
+    #[arg(long, value_enum, default_value = "auto")]
+    pub function_layout: FunctionLayoutArg,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Print bytecode header info (version, function/string counts, sections).
     Info {
         /// Path to the .hbc file or React Native .bundle.
         input: PathBuf,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// List all supported HBC opcode-table versions (40-99).
     Versions,
@@ -39,18 +49,11 @@ pub enum Command {
         /// Second bundle to diff against (enables diff mode).
         #[arg(long)]
         input2: Option<PathBuf>,
-        /// Override the detected HBC bytecode version.
-        #[arg(long)]
-        format_version: Option<u32>,
         /// In diff mode, compare decompiled code per function (slower).
         #[arg(long)]
         diff_code: bool,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Disassemble functions to Hermes assembly.
     Disasm {
@@ -62,15 +65,8 @@ pub enum Command {
         /// Write output to this file instead of stdout.
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
-        /// Override the detected HBC bytecode version.
-        #[arg(long)]
-        format_version: Option<u32>,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
         /// Annotate each instruction with its bytecode offset.
         #[arg(long)]
         show_offsets: bool,
@@ -94,15 +90,8 @@ pub enum Command {
         /// Write output to this file instead of stdout.
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
-        /// Override the detected HBC bytecode version.
-        #[arg(long)]
-        format_version: Option<u32>,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
         /// Include bytecode offsets as comments.
         #[arg(long)]
         show_offsets: bool,
@@ -162,6 +151,11 @@ pub enum Command {
         /// Disable the on-disk analysis cache (`<input>.hdcache`); always re-analyze.
         #[arg(long)]
         no_cache: bool,
+        /// Apply the names in a proposal artifact (see `cascade extract` / `cascade verify`)
+        /// for the proposals this bytecode confirms. Implies --no-cache, since the cache
+        /// does not key on the artifact.
+        #[arg(long)]
+        cascade: Option<PathBuf>,
     },
     /// Show closure mappings for a function (what each closure_X refers to).
     Closures {
@@ -170,15 +164,11 @@ pub enum Command {
         /// Function ID to inspect.
         #[arg(long)]
         function: u32,
-        /// Override the detected HBC bytecode version.
+        /// Emit JSON instead of the text report.
         #[arg(long)]
-        format_version: Option<u32>,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        json: bool,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Show a Metro module's dependency tree.
     Deps {
@@ -187,46 +177,34 @@ pub enum Command {
         /// Metro module ID (not the function ID).
         #[arg(long)]
         module: u32,
-        /// Override the detected HBC bytecode version.
-        #[arg(long)]
-        format_version: Option<u32>,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
         /// Dependency-tree depth to display.
         #[arg(long, default_value = "2")]
         depth: usize,
+        /// Emit JSON instead of the text report.
+        #[arg(long)]
+        json: bool,
     },
     /// List all Metro modules in the bundle.
     Modules {
         /// Path to the .hbc file or .bundle.
         input: PathBuf,
-        /// Override the detected HBC bytecode version.
-        #[arg(long)]
-        format_version: Option<u32>,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
         /// Show only the first N modules.
         #[arg(long)]
         limit: Option<usize>,
+        /// Emit JSON instead of the text report.
+        #[arg(long)]
+        json: bool,
     },
     /// Show embedded debug info (variable names, scope descriptors, callees).
     Debug {
         /// Path to the .hbc file or .bundle.
         input: PathBuf,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
         /// Show only scope descriptors.
         #[arg(long)]
         scopes: bool,
@@ -244,15 +222,8 @@ pub enum Command {
         /// Output directory for the extracted modules.
         #[arg(short = 'o', long)]
         output: PathBuf,
-        /// Override the detected HBC bytecode version.
-        #[arg(long)]
-        format_version: Option<u32>,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
         /// Don't resolve string-table indices to literals.
         #[arg(long)]
         no_strings: bool,
@@ -267,15 +238,8 @@ pub enum Command {
         /// Write the DOT to this file instead of stdout.
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
-        /// Override the detected HBC bytecode version.
-        #[arg(long)]
-        format_version: Option<u32>,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
         /// Open the generated graph immediately (requires xdot or `open`).
         #[arg(long)]
         open: bool,
@@ -290,15 +254,11 @@ pub enum Command {
         /// What `query` refers to: string | function.
         #[arg(long, value_enum, default_value = "string")]
         kind: XrefKind,
-        /// Override the detected HBC bytecode version.
+        /// Emit JSON instead of the text report.
         #[arg(long)]
-        format_version: Option<u32>,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        json: bool,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Diff two bundles (added/removed/modified functions).
     BinDiff {
@@ -306,18 +266,14 @@ pub enum Command {
         input1: PathBuf,
         /// Second (new) bundle.
         input2: PathBuf,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
-        /// Override the detected HBC bytecode version.
-        #[arg(long)]
-        format_version: Option<u32>,
+        #[command(flatten)]
+        format: FormatArgs,
         /// Compare decompiled code for modified functions (slower).
         #[arg(long)]
         diff_code: bool,
+        /// Emit JSON instead of the text report.
+        #[arg(long)]
+        json: bool,
     },
     /// Dump raw HBC tables (strings, functions).
     Dump {
@@ -329,12 +285,16 @@ pub enum Command {
         /// Emit the selected table as JSON.
         #[arg(long)]
         json: bool,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
+    },
+    /// Extract the functions worth proposing a name for, or verify proposals against the bytecode.
+    ///
+    /// The proposal itself is made offline: nothing here contacts a network, and a
+    /// proposal only changes the output once the bytecode confirms it.
+    Cascade {
+        #[command(subcommand)]
+        action: CascadeAction,
     },
     /// Print the bundle call graph (caller → callee edges).
     Callgraph {
@@ -349,15 +309,11 @@ pub enum Command {
         /// Max hops from --function.
         #[arg(long, default_value = "3")]
         depth: usize,
-        /// Override the detected HBC bytecode version.
-        #[arg(long)]
-        format_version: Option<u32>,
-        /// File header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        /// Per-function header layout (auto-detected by default).
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        /// Emit JSON instead of the text edge listing.
+        #[arg(long, conflicts_with = "dot")]
+        json: bool,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Check for and install updates from GitHub releases.
     Update {
@@ -374,10 +330,8 @@ pub enum Command {
     /// Scan string table for likely secrets / credentials.
     Secrets {
         input: PathBuf,
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
         /// Emit JSON instead of a text report.
         #[arg(long)]
         json: bool,
@@ -397,12 +351,8 @@ pub enum Command {
         /// Output directory for before.js / after.js / agent.js / run.sh.
         #[arg(short = 'o', long, default_value = "./frida_hooks_out")]
         output: PathBuf,
-        #[arg(long)]
-        format_version: Option<u32>,
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Emit HASM (disasm) for one function to a file.
     EmitHasm {
@@ -411,12 +361,8 @@ pub enum Command {
         function: u32,
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
-        #[arg(long)]
-        format_version: Option<u32>,
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Assemble HASM text into a function body and write a new .hbc.
     Asm {
@@ -428,12 +374,8 @@ pub enum Command {
         function: u32,
         #[arg(short = 'o', long)]
         output: PathBuf,
-        #[arg(long)]
-        format_version: Option<u32>,
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Patch a string table entry (same-length only for now).
     PatchString {
@@ -446,12 +388,8 @@ pub enum Command {
         old: Option<String>,
         #[arg(long)]
         new: String,
-        #[arg(long)]
-        format_version: Option<u32>,
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Patch a function body from a HASM file (alias of `asm`).
     PatchFunction {
@@ -462,12 +400,8 @@ pub enum Command {
         function: u32,
         #[arg(long)]
         hasm: PathBuf,
-        #[arg(long)]
-        format_version: Option<u32>,
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Inject a small bytecode stub into a function.
     InjectStub {
@@ -479,12 +413,8 @@ pub enum Command {
         /// Stub kind: `nop` or `log`.
         #[arg(long, default_value = "log")]
         kind: String,
-        #[arg(long)]
-        format_version: Option<u32>,
-        #[arg(long, value_enum, default_value = "auto")]
-        layout: LayoutArg,
-        #[arg(long, value_enum, default_value = "auto")]
-        function_layout: FunctionLayoutArg,
+        #[command(flatten)]
+        format: FormatArgs,
     },
     /// Create a minimal valid .hbc from scratch. Legacy headers for v96 and lower, modern headers for v97 and newer.
     Create {
@@ -536,4 +466,29 @@ pub enum FunctionLayoutArg {
     Auto,
     Legacy16,
     Modern12,
+}
+
+#[derive(clap::Subcommand, Debug)]
+pub enum CascadeAction {
+    /// Write out the candidate functions, as JSON, for a reader to propose names for.
+    Extract {
+        /// Path to the .hbc file or .bundle.
+        input: PathBuf,
+        /// Write to this file instead of standard output.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Override the detected HBC bytecode version.
+        #[arg(long)]
+        format_version: Option<u32>,
+    },
+    /// Check a proposal artifact against the bytecode and report what it confirms.
+    Verify {
+        /// Path to the .hbc file or .bundle.
+        input: PathBuf,
+        /// Path to the proposal artifact (JSON).
+        artifact: PathBuf,
+        /// Override the detected HBC bytecode version.
+        #[arg(long)]
+        format_version: Option<u32>,
+    },
 }

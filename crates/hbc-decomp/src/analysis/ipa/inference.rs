@@ -1,6 +1,6 @@
 use crate::ir::{Expression, PropertyKey, Value};
-use std::collections::HashMap;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 // Votes on the best parameter name for each argument index.
 //
@@ -180,8 +180,7 @@ pub fn is_generic_name(name: &str) -> bool {
 
     // Names that are too short/generic for parameter inference
     let generic_vars = [
-        "_", "__", "$$", "e", "a", "b", "c", "i", "j", "k", "n", "x", "y", "z",
-        "tmp", "temp",
+        "_", "__", "$$", "e", "a", "b", "c", "i", "j", "k", "n", "x", "y", "z", "tmp", "temp",
     ];
     if generic_vars.contains(&name) {
         return true;
@@ -280,10 +279,7 @@ mod tests {
 
     #[test]
     fn test_vote_on_names_ignores_generic() {
-        let sites = vec![
-            vec![Some("arg0".into())],
-            vec![Some("email".into())],
-        ];
+        let sites = vec![vec![Some("arg0".into())], vec![Some("email".into())]];
         let result = vote_on_names(sites);
         assert_eq!(result[0], Some("email".to_string()));
     }

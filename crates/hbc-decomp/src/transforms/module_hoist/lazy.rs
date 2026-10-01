@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value, Visitor};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value, Visitor};
 
 use super::detect::{collect_loader_ids, loader_call};
 use super::kinds::LoaderKind;
@@ -70,7 +70,7 @@ fn body_is_only_loader_plumbing(
         match s {
             Statement::Let { value, .. }
             | Statement::Assign {
-                target: AssignTarget::Variable(_),
+                target: AssignTarget::Binding(Binding::Variable(_)),
                 value,
             } => {
                 if !is_lazy_plumbing_value(value, aliases, deps) {
@@ -111,11 +111,14 @@ fn is_default_key(property: &PropertyKey) -> bool {
 
 fn is_var_or_default_of_var(expr: &Expression) -> bool {
     match expr {
-        Expression::Value(Value::Variable(_)) => true,
+        Expression::Value(Value::Binding(Binding::Variable(_))) => true,
         Expression::Member {
             object, property, ..
         } if is_default_key(property) => {
-            matches!(object.as_ref(), Expression::Value(Value::Variable(_)))
+            matches!(
+                object.as_ref(),
+                Expression::Value(Value::Binding(Binding::Variable(_)))
+            )
         }
         _ => false,
     }
@@ -166,7 +169,7 @@ fn is_get_key(key: &PropertyKey) -> bool {
 fn function_id_of(expr: &Expression, var_fns: &HashMap<String, u32>) -> Option<u32> {
     match expr {
         Expression::Function { id, .. } => Some(id.0),
-        Expression::Value(Value::Variable(n)) => var_fns.get(n).copied(),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => var_fns.get(n).copied(),
         _ => None,
     }
 }
@@ -180,7 +183,7 @@ fn collect_function_bindings(stmts: &[Statement], out: &mut HashMap<String, u32>
                 }
             }
             Statement::Assign {
-                target: AssignTarget::Variable(name),
+                target: AssignTarget::Binding(Binding::Variable(name)),
                 value,
             } => {
                 if let Expression::Function { id, .. } = value {
@@ -198,7 +201,9 @@ fn collect_function_bindings(stmts: &[Statement], out: &mut HashMap<String, u32>
             Statement::While { body, .. }
             | Statement::DoWhile { body, .. }
             | Statement::Block(body) => collect_function_bindings(body, out),
-            Statement::For { init, body, update, .. } => {
+            Statement::For {
+                init, body, update, ..
+            } => {
                 if let Some(i) = init {
                     collect_function_bindings(std::slice::from_ref(i.as_ref()), out);
                 }
@@ -220,9 +225,7 @@ fn collect_function_bindings(stmts: &[Statement], out: &mut HashMap<String, u32>
                 collect_function_bindings(catch_body, out);
                 collect_function_bindings(finally_body, out);
             }
-            Statement::Switch {
-                cases, default, ..
-            } => {
+            Statement::Switch { cases, default, .. } => {
                 for (_, body) in cases {
                     collect_function_bindings(body, out);
                 }
@@ -246,17 +249,15 @@ fn is_lazy_plumbing_value(
         return true;
     }
     match expr {
-        Expression::Value(Value::Variable(_)) => true,
+        Expression::Value(Value::Binding(Binding::Variable(_))) => true,
         Expression::Member {
             object, property, ..
         } if is_default_key(property) => is_lazy_plumbing_value(object, aliases, deps),
         Expression::Call { callee, arguments } => {
             // Allow interop wrappers around a loader: _interopRequireDefault(require(N))
             let callee_ok = match callee.as_ref() {
-                Expression::Value(Value::Variable(n)) => {
-                    n.contains("interop")
-                        || n == "_interopRequireDefault"
-                        || n == "_interopDefault"
+                Expression::Value(Value::Binding(Binding::Variable(n))) => {
+                    n.contains("interop") || n == "_interopRequireDefault" || n == "_interopDefault"
                 }
                 _ => false,
             };

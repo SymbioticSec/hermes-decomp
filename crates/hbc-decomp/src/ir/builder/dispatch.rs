@@ -1,6 +1,6 @@
+use super::env_state::EnvRegMap;
 use super::opcodes_arith::*;
 use super::opcodes_call::*;
-use super::env_state::EnvRegMap;
 use super::opcodes_environment::{
     handle_create_environment, handle_get_closure_environment, handle_get_environment,
     handle_load_from_environment, handle_store_np_to_environment, handle_store_to_environment,
@@ -52,7 +52,14 @@ pub fn dispatch_instruction(
     if let Some(result) = try_prop_handlers(name, inst, file, resolve_strings) {
         return result;
     }
-    if let Some(result) = try_call_handlers(name, inst, file, resolve_strings, frame_size, format.version) {
+    if let Some(result) = try_call_handlers(
+        name,
+        inst,
+        file,
+        resolve_strings,
+        frame_size,
+        format.version,
+    ) {
         return result;
     }
     if let Some(result) = try_obj_handlers(name, inst, file, resolve_strings) {
@@ -68,11 +75,7 @@ pub fn dispatch_instruction(
     )))
 }
 
-fn try_env_handlers(
-    name: &str,
-    inst: &Instruction,
-    env_map: &mut EnvRegMap,
-) -> Option<FlowResult> {
+fn try_env_handlers(name: &str, inst: &Instruction, env_map: &mut EnvRegMap) -> Option<FlowResult> {
     match name {
         "CreateEnvironment"
         | "CreateFunctionEnvironment"
@@ -83,9 +86,7 @@ fn try_env_handlers(
         "LoadFromEnvironment" | "LoadFromEnvironmentL" => {
             handle_load_from_environment(inst, env_map)
         }
-        "StoreToEnvironment" | "StoreToEnvironmentL" => {
-            handle_store_to_environment(inst, env_map)
-        }
+        "StoreToEnvironment" | "StoreToEnvironmentL" => handle_store_to_environment(inst, env_map),
         "StoreNPToEnvironment" | "StoreNPToEnvironmentL" => {
             handle_store_np_to_environment(inst, env_map)
         }
@@ -125,8 +126,9 @@ fn try_load_handlers(
         | "LoadConstString"
         | "LoadConstStringLongIndex"
         | "LoadConstBigInt"
-        | "LoadConstBigIntLongIndex" =>
-            handle_load_const(name, inst, file, resolve_strings).map(FlowResult::Statement),
+        | "LoadConstBigIntLongIndex" => {
+            handle_load_const(name, inst, file, resolve_strings).map(FlowResult::Statement)
+        }
         "Mov" | "MovLong" => handle_mov(inst).map(FlowResult::Statement),
         "LoadParam" | "LoadParamLong" => handle_load_param(inst).map(FlowResult::Statement),
         "GetGlobalObject" => handle_get_global(inst).map(FlowResult::Statement),
@@ -143,14 +145,16 @@ fn try_arith_handlers(name: &str, inst: &Instruction) -> Option<FlowResult> {
         "Add" | "AddN" | "AddS" | "Sub" | "SubN" | "Mul" | "MulN" | "Div" | "DivN" | "Mod"
         | "BitAnd" | "BitOr" | "BitXor" | "LShift" | "Shl" | "RShift" | "Shr" | "URshift"
         | "UShr" => handle_binary_op(name, inst).map(FlowResult::Statement),
-        "Eq" | "StrictEq" | "Neq" | "StrictNeq" | "Less" | "LessEq" | "Greater"
-        | "GreaterEq" => handle_comparison(name, inst).map(FlowResult::Statement),
+        "Eq" | "StrictEq" | "Neq" | "StrictNeq" | "Less" | "LessEq" | "Greater" | "GreaterEq" => {
+            handle_comparison(name, inst).map(FlowResult::Statement)
+        }
         "Negate" | "Not" | "BitNot" | "TypeOf" => {
             handle_unary_op(name, inst).map(FlowResult::Statement)
         }
         "Inc" | "Dec" => handle_inc_dec(name, inst).map(FlowResult::Statement),
-        "ToNumber" | "ToNumeric" | "ToInt32" | "ToUint32" | "AddEmptyString"
-        | "CoerceThisNS" => handle_coercion(name, inst).map(FlowResult::Statement),
+        "ToNumber" | "ToNumeric" | "ToInt32" | "ToUint32" | "AddEmptyString" | "CoerceThisNS" => {
+            handle_coercion(name, inst).map(FlowResult::Statement)
+        }
         "InstanceOf" | "IsIn" => handle_instance_in(name, inst).map(FlowResult::Statement),
         _ => None,
     }
@@ -172,10 +176,21 @@ fn try_prop_handlers(
         "TryGetById" | "TryGetByIdLong" => {
             handle_try_get_by_id(inst, file, resolve_strings).map(FlowResult::Statement)
         }
-        "PutById" | "PutByIdLong" | "PutByIdLoose" | "PutByIdStrict" | "PutByIdLooseLong"
-        | "PutByIdStrictLong" | "PutNewOwnById" | "PutNewOwnByIdLong" | "PutNewOwnByIdShort"
-        | "TryPutById" | "TryPutByIdLong" | "TryPutByIdLoose" | "TryPutByIdStrict"
-        | "TryPutByIdLooseLong" | "TryPutByIdStrictLong" => {
+        "PutById"
+        | "PutByIdLong"
+        | "PutByIdLoose"
+        | "PutByIdStrict"
+        | "PutByIdLooseLong"
+        | "PutByIdStrictLong"
+        | "PutNewOwnById"
+        | "PutNewOwnByIdLong"
+        | "PutNewOwnByIdShort"
+        | "TryPutById"
+        | "TryPutByIdLong"
+        | "TryPutByIdLoose"
+        | "TryPutByIdStrict"
+        | "TryPutByIdLooseLong"
+        | "TryPutByIdStrictLong" => {
             handle_put_by_id(inst, file, resolve_strings).map(FlowResult::Statement)
         }
         "DefineOwnById" | "DefineOwnByIdLong" => {
@@ -186,22 +201,12 @@ fn try_prop_handlers(
         "CreatePrivateName" => {
             handle_create_private_name(inst, file, resolve_strings).map(FlowResult::Statement)
         }
-        "GetOwnPrivateBySym" => {
-            handle_get_own_private_by_sym(inst).map(FlowResult::Statement)
-        }
-        "PutOwnPrivateBySym" => {
-            handle_put_own_private_by_sym(inst).map(FlowResult::Statement)
-        }
-        "AddOwnPrivateBySym" => {
-            handle_add_own_private_by_sym(inst).map(FlowResult::Statement)
-        }
+        "GetOwnPrivateBySym" => handle_get_own_private_by_sym(inst).map(FlowResult::Statement),
+        "PutOwnPrivateBySym" => handle_put_own_private_by_sym(inst).map(FlowResult::Statement),
+        "AddOwnPrivateBySym" => handle_add_own_private_by_sym(inst).map(FlowResult::Statement),
         "PrivateIsIn" => handle_private_is_in(inst).map(FlowResult::Statement),
-        "GetByValWithReceiver" => {
-            handle_get_by_val_with_receiver(inst).map(FlowResult::Statement)
-        }
-        "PutByValWithReceiver" => {
-            handle_put_by_val_with_receiver(inst).map(FlowResult::Statement)
-        }
+        "GetByValWithReceiver" => handle_get_by_val_with_receiver(inst).map(FlowResult::Statement),
+        "PutByValWithReceiver" => handle_put_by_val_with_receiver(inst).map(FlowResult::Statement),
         "PutByVal" | "PutByValLoose" | "PutByValStrict" => {
             handle_put_by_val(inst).map(FlowResult::Statement)
         }
@@ -209,9 +214,7 @@ fn try_prop_handlers(
             handle_del_by_val(inst).map(FlowResult::Statement)
         }
         "DelById" => handle_del_by_id(inst, file, resolve_strings).map(FlowResult::Statement),
-        "TypeOfIs" => {
-            handle_typeof_is(inst, file, resolve_strings).map(FlowResult::Statement)
-        }
+        "TypeOfIs" => handle_typeof_is(inst, file, resolve_strings).map(FlowResult::Statement),
         "TypeOfIsNot" => {
             // The inverse of TypeOfIs. The decoded condition may be any boolean
             // shape (a single compare or a disjunction), so negate the whole
@@ -290,10 +293,12 @@ fn try_obj_handlers(
         "NewArrayWithBuffer" | "NewArrayWithBufferLong" => {
             handle_new_array_with_buffer(inst, file).map(FlowResult::Statement)
         }
-        "PutOwnByIndex" | "PutOwnByIndexL" | "DefineOwnByIndex" | "DefineOwnByIndexL"
-        | "DefineOwnInDenseArray" | "DefineOwnInDenseArrayL" => {
-            handle_put_own_by_index(inst).map(FlowResult::Statement)
-        }
+        "PutOwnByIndex"
+        | "PutOwnByIndexL"
+        | "DefineOwnByIndex"
+        | "DefineOwnByIndexL"
+        | "DefineOwnInDenseArray"
+        | "DefineOwnInDenseArrayL" => handle_put_own_by_index(inst).map(FlowResult::Statement),
         // PutOwnBySlotIdx: store value into object slot (same semantics as PutOwnByIndex)
         "PutOwnBySlotIdx" | "PutOwnBySlotIdxLong" => {
             handle_put_own_by_index(inst).map(FlowResult::Statement)
@@ -303,9 +308,7 @@ fn try_obj_handlers(
             handle_get_own_by_slot(inst).map(FlowResult::Statement)
         }
         "GetByIndex" => handle_get_by_index(inst).map(FlowResult::Statement),
-        "PutOwnByVal" | "DefineOwnByVal" => {
-            handle_put_own_by_val(inst).map(FlowResult::Statement)
-        }
+        "PutOwnByVal" | "DefineOwnByVal" => handle_put_own_by_val(inst).map(FlowResult::Statement),
         "FastArrayLoad" => handle_fast_array_load(inst).map(FlowResult::Statement),
         "FastArrayStore" | "FastArrayStoreLoose" => {
             handle_fast_array_store(inst).map(FlowResult::Statement)
@@ -317,8 +320,7 @@ fn try_obj_handlers(
             handle_create_regexp(inst, file, resolve_strings).map(FlowResult::Statement)
         }
         "GetArgumentsLength" => handle_get_arguments_length(inst).map(FlowResult::Statement),
-        "GetArgumentsPropByVal" | "GetArgumentsPropByValLoose"
-        | "GetArgumentsPropByValStrict" => {
+        "GetArgumentsPropByVal" | "GetArgumentsPropByValLoose" | "GetArgumentsPropByValStrict" => {
             handle_get_arguments_prop_by_val(inst).map(FlowResult::Statement)
         }
         "ReifyArguments" | "ReifyArgumentsLoose" | "ReifyArgumentsStrict" => {
@@ -398,9 +400,10 @@ fn try_flow_handlers(
         "JmpUndefined" | "JmpUndefinedLong" => handle_jmp_undefined(name, inst, format),
         // JmpTypeOfIs: branch if typeof(reg) === typeString
         "JmpTypeOfIs" => handle_jmp_typeof_is(inst, format, file),
-        // JmpBuiltinIs/IsNot: branch if typeof(reg) === typeString (builtin type check)
+        // JmpBuiltinIs/IsNot: branch if the register holds the given intrinsic
+        // (a builtin table index, see handle_jmp_builtin_is).
         "JmpBuiltinIs" | "JmpBuiltinIsLong" | "JmpBuiltinIsNot" | "JmpBuiltinIsNotLong" => {
-            handle_jmp_builtin_is(name, inst, format)
+            handle_jmp_builtin_is(name, inst, format, file.header.version)
         }
         "Ret" => handle_ret(inst),
         "Throw" => handle_throw(inst),
@@ -424,9 +427,7 @@ fn try_flow_handlers(
         "SwitchImm" | "UIntSwitchImm" => {
             handle_switch_imm(inst, format, file, func_bytecode_offset)
         }
-        "StringSwitchImm" => {
-            handle_string_switch_imm(inst, format, file, func_bytecode_offset)
-        }
+        "StringSwitchImm" => handle_string_switch_imm(inst, format, file, func_bytecode_offset),
         _ => None,
     }
 }

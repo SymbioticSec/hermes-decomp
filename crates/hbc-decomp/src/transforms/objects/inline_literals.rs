@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Expression, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, Statement, Value};
 
 // Inline registers defined once as a pure object/array literal and used exactly
 // once, regardless of statement order. Repeats to a fixed point so deep nests
@@ -12,7 +12,11 @@ pub(super) fn inline_single_use_literals(statements: &mut Vec<Statement>) {
     let mut def_count: HashMap<u32, usize> = HashMap::new();
     let mut use_count: HashMap<u32, usize> = HashMap::new();
     for stmt in statements.iter() {
-        if let Statement::Assign { target: AssignTarget::Register(r), .. } = stmt {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            ..
+        } = stmt
+        {
             *def_count.entry(*r).or_insert(0) += 1;
         }
         collect_value_reg_uses(stmt, &mut use_count);
@@ -23,7 +27,11 @@ pub(super) fn inline_single_use_literals(statements: &mut Vec<Statement>) {
     // to the general inliner.
     let mut map: HashMap<u32, Expression> = HashMap::new();
     for stmt in statements.iter() {
-        if let Statement::Assign { target: AssignTarget::Register(r), value } = stmt {
+        if let Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            value,
+        } = stmt
+        {
             let is_composite =
                 matches!(value, Expression::Object { .. } | Expression::Array { .. });
             if is_composite
@@ -63,19 +71,22 @@ pub(super) fn inline_single_use_literals(statements: &mut Vec<Statement>) {
         substitute_registers_in_stmt(stmt, &map);
     }
     statements.retain(|stmt| {
-        !matches!(stmt, Statement::Assign { target: AssignTarget::Register(r), .. } if map.contains_key(r))
+        !matches!(stmt, Statement::Assign { target: AssignTarget::Binding(Binding::Register(r)), .. } if map.contains_key(r))
     });
 }
 
 // Replace every `Register(r)` for which `map` has an entry with that entry's
 // value, in one traversal. `exclude` skips a register (used while resolving the
 // map into itself so a value is not substituted for its own register).
-fn substitute_registers_in_stmt(stmt: &mut Statement, map: &std::collections::HashMap<u32, Expression>) {
+fn substitute_registers_in_stmt(
+    stmt: &mut Statement,
+    map: &std::collections::HashMap<u32, Expression>,
+) {
     use crate::ir::MutVisitor;
     struct S<'a>(&'a std::collections::HashMap<u32, Expression>);
     impl<'a> MutVisitor for S<'a> {
         fn visit_expression(&mut self, e: &mut Expression) {
-            if let Expression::Value(Value::Register(r)) = e {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = e {
                 if let Some(v) = self.0.get(r) {
                     *e = v.clone();
                     return;
@@ -96,7 +107,7 @@ fn substitute_registers_in_expr(
     struct S<'a>(&'a std::collections::HashMap<u32, Expression>, Option<u32>);
     impl<'a> MutVisitor for S<'a> {
         fn visit_expression(&mut self, e: &mut Expression) {
-            if let Expression::Value(Value::Register(r)) = e {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = e {
                 if Some(*r) != self.1 {
                     if let Some(v) = self.0.get(r) {
                         *e = v.clone();
@@ -115,7 +126,7 @@ fn is_pure_literal(expr: &Expression) -> bool {
         Expression::Object { properties } => properties.iter().all(|p| is_pure_literal(&p.value)),
         Expression::Array { elements } => elements.iter().flatten().all(is_pure_literal),
         Expression::Value(Value::Constant(_)) => true,
-        Expression::Value(Value::Register(_)) => true,
+        Expression::Value(Value::Binding(Binding::Register(_))) => true,
         _ => false,
     }
 }
@@ -137,7 +148,7 @@ fn collect_value_reg_uses(stmt: &Statement, counts: &mut std::collections::HashM
             }
         }
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Register(r)) = e {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = e {
                 *self.0.entry(*r).or_insert(0) += 1;
             }
             self.walk_expression(e);

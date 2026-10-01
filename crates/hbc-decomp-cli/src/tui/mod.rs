@@ -62,7 +62,8 @@ pub(crate) fn decompile_or_log(
 // Disassemble a single function, logging any error and returning a visible
 // comment instead of an empty string.
 pub(crate) fn disasm_or_log(file: &BytecodeFile, format: &BytecodeFormat, id: u32) -> String {
-    match hbc_decomp::disassemble_function(file, format, id, &hbc_decomp::DisasmOptions::default()) {
+    match hbc_decomp::disassemble_function(file, format, id, &hbc_decomp::DisasmOptions::default())
+    {
         Ok(s) => s,
         Err(e) => {
             debug_log(&format!("[disasm] function {id} failed: {e}"));
@@ -78,9 +79,7 @@ pub fn run_tui(
     diff_target: Option<(BytecodeFile, BytecodeFormat, String)>,
     diff_code: bool,
 ) -> io::Result<()> {
-    debug_log(
-        "TUI logging enabled: also writing to /tmp/hermes-decomp-tui.log",
-    );
+    debug_log("TUI logging enabled: also writing to /tmp/hermes-decomp-tui.log");
     debug_log(&format!(
         "[TUI] Starting setup (diff_target: {}, diff_mode: {})",
         diff_target.is_some(),

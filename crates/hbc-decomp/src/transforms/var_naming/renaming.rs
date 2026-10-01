@@ -1,5 +1,5 @@
 use super::state::VariableNamer;
-use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Expression, PropertyKey, Statement, Value};
 
 pub fn rename_stmt(namer: &VariableNamer, stmt: Statement) -> Statement {
     match stmt {
@@ -108,25 +108,40 @@ pub fn rename_stmt(namer: &VariableNamer, stmt: Statement) -> Statement {
         Statement::Block(stmts) => {
             Statement::Block(stmts.into_iter().map(|s| rename_stmt(namer, s)).collect())
         }
+        // The `extends` expression reads the enclosing scope like any other
+        // expression; left untouched, the base class kept its old name while
+        // its definition was renamed, and `class X extends tmp2` extended a
+        // name nothing defined any more. The class body is not renamed here.
+        Statement::Class {
+            name,
+            super_class,
+            constructor,
+            methods,
+        } => Statement::Class {
+            name,
+            super_class: super_class.map(|e| rename_expr(namer, e)),
+            constructor,
+            methods,
+        },
         other => other,
     }
 }
 
 fn rename_target(namer: &VariableNamer, target: AssignTarget) -> AssignTarget {
     match target {
-        AssignTarget::Register(r) => {
+        AssignTarget::Binding(Binding::Register(r)) => {
             let key = format!("r{r}");
             if let Some(name) = namer.inferred_names.get(&key) {
-                AssignTarget::Variable(name.clone())
+                AssignTarget::Binding(Binding::Variable(name.clone()))
             } else {
-                AssignTarget::Register(r)
+                AssignTarget::Binding(Binding::Register(r))
             }
         }
-        AssignTarget::Variable(v) => {
+        AssignTarget::Binding(Binding::Variable(v)) => {
             if let Some(name) = namer.inferred_names.get(&v) {
-                AssignTarget::Variable(name.clone())
+                AssignTarget::Binding(Binding::Variable(name.clone()))
             } else {
-                AssignTarget::Variable(v)
+                AssignTarget::Binding(Binding::Variable(v))
             }
         }
         AssignTarget::Member { object, property } => AssignTarget::Member {
@@ -143,19 +158,19 @@ fn rename_target(namer: &VariableNamer, target: AssignTarget) -> AssignTarget {
 
 fn rename_expr(namer: &VariableNamer, expr: Expression) -> Expression {
     match expr {
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(Binding::Register(r))) => {
             let key = format!("r{r}");
             if let Some(name) = namer.inferred_names.get(&key) {
-                Expression::Value(Value::Variable(name.clone()))
+                Expression::Value(Value::Binding(Binding::Variable(name.clone())))
             } else {
-                Expression::Value(Value::Register(r))
+                Expression::Value(Value::Binding(Binding::Register(r)))
             }
         }
-        Expression::Value(Value::Variable(v)) => {
+        Expression::Value(Value::Binding(Binding::Variable(v))) => {
             if let Some(name) = namer.inferred_names.get(&v) {
-                Expression::Value(Value::Variable(name.clone()))
+                Expression::Value(Value::Binding(Binding::Variable(name.clone())))
             } else {
-                Expression::Value(Value::Variable(v))
+                Expression::Value(Value::Binding(Binding::Variable(v)))
             }
         }
         Expression::Binary { op, left, right } => Expression::Binary {
@@ -223,7 +238,7 @@ fn rename_expr(namer: &VariableNamer, expr: Expression) -> Expression {
             else_expr: Box::new(rename_expr(namer, *else_expr)),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(rename_expr(namer, *target)),
+            target: Box::new(rename_target(namer, *target)),
             value: Box::new(rename_expr(namer, *value)),
         },
         Expression::Spread(inner) => Expression::Spread(Box::new(rename_expr(namer, *inner))),

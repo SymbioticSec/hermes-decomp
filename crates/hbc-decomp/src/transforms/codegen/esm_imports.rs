@@ -37,7 +37,10 @@ pub(super) fn consolidate_imports(imports: Vec<String>) -> Vec<String> {
             Some((specs, tail)) => {
                 let key = tail.clone();
                 let gi = *group_index.entry(key).or_insert_with(|| {
-                    groups.push(Group { specs: Vec::new(), tail: tail.clone() });
+                    groups.push(Group {
+                        specs: Vec::new(),
+                        tail: tail.clone(),
+                    });
                     order.push(Slot::Group(groups.len() - 1));
                     groups.len() - 1
                 });
@@ -166,7 +169,10 @@ fn collapse_same_export_specs(specs: &[String]) -> (Vec<String>, Vec<(String, St
         if !groups.contains_key(&export) {
             order.push(export.clone());
         }
-        groups.entry(export).or_default().push((spec.clone(), local, aliased));
+        groups
+            .entry(export)
+            .or_default()
+            .push((spec.clone(), local, aliased));
     }
     let mut kept = Vec::new();
     let mut rewrites = Vec::new();
@@ -352,11 +358,14 @@ mod tests {
             "import _curry2 from \"_curry2\" /* 3159 */;".to_string(),
             "import _curry2 from \"_curry2\" /* 3192 */;".to_string(),
         ];
-        assert_eq!(consolidate_imports(input), vec![
-            "import _curry2 from \"_curry2\" /* 3100 */;".to_string(),
-            "import _curry2 from \"_curry2\" /* 3159 */;".to_string(),
-            "import _curry2 from \"_curry2\" /* 3192 */;".to_string(),
-        ]);
+        assert_eq!(
+            consolidate_imports(input),
+            vec![
+                "import _curry2 from \"_curry2\" /* 3100 */;".to_string(),
+                "import _curry2 from \"_curry2\" /* 3159 */;".to_string(),
+                "import _curry2 from \"_curry2\" /* 3192 */;".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -387,7 +396,10 @@ mod tests {
             vec!["import { MessageType } from \"module_1307\" /* 1307 */;".to_string()]
         );
         assert!(extras.is_empty());
-        assert_eq!(body, vec!["use(MessageType, MessageType, MessageType);".to_string()]);
+        assert_eq!(
+            body,
+            vec!["use(MessageType, MessageType, MessageType);".to_string()]
+        );
     }
 
     #[test]
@@ -435,5 +447,162 @@ mod tests {
             consolidate_imports(input),
             vec!["import { \"foo, bar\" as x, y } from \"M\" /* 1 */;".to_string()]
         );
+    }
+}
+
+// Give each dependency its own default-import name.
+//
+// The name comes from what the module inferred locally, and two dependencies in
+// one file can infer the same one, so both asked to be imported as
+// `defineLazyObjectProperty_mod`. Importing one name twice binds it twice, which
+// a parser rejects and the module is lost whole. The first line keeps the name
+// and later ones take a numbered form, applied to the body as well since that is
+// where the binding is read.
+pub(super) fn make_default_imports_distinct(
+    imports: &mut [String],
+    body: &mut [String],
+    exports: &mut [String],
+) {
+    use std::collections::{HashMap, HashSet};
+    use std::sync::OnceLock;
+    static DEFAULT_IMPORT: OnceLock<regex::Regex> = OnceLock::new();
+    let rx = DEFAULT_IMPORT.get_or_init(|| {
+        regex::Regex::new(r#"^import\s+([A-Za-z_$][\w$]*)\s+from\s"#).expect("static")
+    });
+
+    // name -> the import line that claimed it first
+    let mut owner: HashMap<String, String> = HashMap::new();
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut renames: Vec<(String, String)> = Vec::new();
+
+    for line in imports.iter() {
+        if let Some(c) = rx.captures(line) {
+            taken.insert(c[1].to_string());
+        }
+    }
+
+    for line in imports.iter_mut() {
+        let Some(name) = rx.captures(line).map(|c| c[1].to_string()) else {
+            continue;
+        };
+        match owner.get(&name) {
+            // The same dependency imported twice collapses elsewhere.
+            Some(existing) if existing == line => continue,
+            None => {
+                owner.insert(name, line.clone());
+            }
+            Some(_) => {
+                let mut n = 2u32;
+                let mut candidate = format!("{name}{n}");
+                while !taken.insert(candidate.clone()) {
+                    n += 1;
+                    candidate = format!("{name}{n}");
+                }
+                *line = replace_word(line, &name, &candidate);
+                owner.insert(candidate.clone(), line.clone());
+                renames.push((name, candidate));
+            }
+        }
+    }
+
+    if renames.is_empty() {
+        return;
+    }
+    // The renamed binding is read in the body, so it has to follow.
+    for (from, to) in &renames {
+        for chunk in body.iter_mut().chain(exports.iter_mut()) {
+            *chunk = replace_word(chunk, from, to);
+        }
+    }
+}
+
+// Replace whole-word occurrences only, so `X` never rewrites part of `X_other`.
+fn replace_word(haystack: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(haystack.len());
+    let bytes = haystack.as_bytes();
+    let mut i = 0;
+    while let Some(pos) = haystack[i..].find(from) {
+        let start = i + pos;
+        let end = start + from.len();
+        let before_ok = start == 0 || !is_ident_byte(bytes[start - 1]);
+        let after_ok = end >= bytes.len() || !is_ident_byte(bytes[end]);
+        out.push_str(&haystack[i..start]);
+        if before_ok && after_ok {
+            out.push_str(to);
+        } else {
+            out.push_str(from);
+        }
+        i = end;
+    }
+    out.push_str(&haystack[i..]);
+    out
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+#[cfg(test)]
+mod distinct_default_import_tests {
+    use super::make_default_imports_distinct;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|x| (*x).to_string()).collect()
+    }
+
+    #[test]
+    fn two_dependencies_asking_for_one_name_are_separated() {
+        // Both lines bind the same name, which a parser rejects outright.
+        let mut imports = v(&[
+            "import prop_mod from \"defineLazyObjectProperty\";",
+            "import prop_mod from \"module_91\";",
+        ]);
+        let mut body = v(&["let prop = prop_mod;\n"]);
+        let mut exports = v(&[]);
+        make_default_imports_distinct(&mut imports, &mut body, &mut exports);
+        assert_eq!(
+            imports[0],
+            "import prop_mod from \"defineLazyObjectProperty\";"
+        );
+        assert_eq!(imports[1], "import prop_mod2 from \"module_91\";");
+    }
+
+    #[test]
+    fn the_body_follows_the_rename() {
+        let mut imports = v(&["import m from \"a\";", "import m from \"b\";"]);
+        let mut body = v(&["let x = m;\n", "use(m, m_other);\n"]);
+        let mut exports = v(&["export const y = m;"]);
+        make_default_imports_distinct(&mut imports, &mut body, &mut exports);
+        // Only whole words move, so `m_other` is left alone.
+        assert_eq!(body[1], "use(m2, m_other);\n");
+        assert_eq!(exports[0], "export const y = m2;");
+    }
+
+    #[test]
+    fn the_same_dependency_twice_is_left_to_the_usual_collapse() {
+        let mut imports = v(&["import m from \"a\";", "import m from \"a\";"]);
+        let mut body = v(&["let x = m;\n"]);
+        let mut exports = v(&[]);
+        make_default_imports_distinct(&mut imports, &mut body, &mut exports);
+        assert_eq!(
+            imports[1], "import m from \"a\";",
+            "no rename for one dependency"
+        );
+        assert_eq!(body[0], "let x = m;\n");
+    }
+
+    #[test]
+    fn a_named_import_is_not_mistaken_for_a_default_one() {
+        // `import { a as b } from` starts with a brace, and reading that brace as
+        // the name rewrote lines into `import {2 ...`.
+        let mut imports = v(&[
+            "import { a as b } from \"x\";",
+            "import { c as d } from \"y\";",
+        ]);
+        let before = imports.clone();
+        let mut body = v(&[]);
+        let mut exports = v(&[]);
+        make_default_imports_distinct(&mut imports, &mut body, &mut exports);
+        assert_eq!(imports, before);
     }
 }

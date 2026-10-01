@@ -1,7 +1,7 @@
-use crate::ir::{
-    AssignTarget, Expression, ObjectProperty, Statement, Value, stmt_has_side_effects,
-};
 use super::is_reg_used;
+use crate::ir::{
+    stmt_has_side_effects, AssignTarget, Binding, Expression, ObjectProperty, Statement, Value,
+};
 
 // Fold `obj = { k0:v0, k1:<placeholder>, ... }; obj[N] = val` (a slot-index
 // fill from PutOwnBySlotIdx) into the literal's Nth property. Only replaces a
@@ -53,7 +53,11 @@ pub(super) fn fold_slot_index_fills_here(statements: &mut Vec<Statement>) {
                     if is_placeholder(&properties[slot].value) {
                         properties[slot].value = val;
                         consumed[j] = true;
-                        record_defs(&statements[j], &mut defined_after_regs, &mut defined_after_vars);
+                        record_defs(
+                            &statements[j],
+                            &mut defined_after_regs,
+                            &mut defined_after_vars,
+                        );
                         j += 1;
                         continue;
                     }
@@ -65,7 +69,11 @@ pub(super) fn fold_slot_index_fills_here(statements: &mut Vec<Statement>) {
             {
                 break;
             }
-            record_defs(&statements[j], &mut defined_after_regs, &mut defined_after_vars);
+            record_defs(
+                &statements[j],
+                &mut defined_after_regs,
+                &mut defined_after_vars,
+            );
             j += 1;
         }
         i += 1;
@@ -110,7 +118,11 @@ fn fold_named_placeholder_fills_here(statements: &mut Vec<Statement>) {
                         if is_placeholder(&properties[slot].value) {
                             properties[slot].value = val;
                             consumed[j] = true;
-                            record_defs(&statements[j], &mut defined_after_regs, &mut defined_after_vars);
+                            record_defs(
+                                &statements[j],
+                                &mut defined_after_regs,
+                                &mut defined_after_vars,
+                            );
                             j += 1;
                             continue;
                         }
@@ -123,7 +135,11 @@ fn fold_named_placeholder_fills_here(statements: &mut Vec<Statement>) {
             {
                 break;
             }
-            record_defs(&statements[j], &mut defined_after_regs, &mut defined_after_vars);
+            record_defs(
+                &statements[j],
+                &mut defined_after_regs,
+                &mut defined_after_vars,
+            );
             j += 1;
         }
         i += 1;
@@ -147,8 +163,8 @@ fn named_member_fill(stmt: &Statement, obj: &ObjRef) -> Option<(String, Expressi
         return None;
     };
     let obj_now = match object {
-        Expression::Value(Value::Register(r)) => ObjRef::Register(*r),
-        Expression::Value(Value::Variable(n)) => ObjRef::Name(n.clone()),
+        Expression::Value(Value::Binding(Binding::Register(r))) => ObjRef::Register(*r),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => ObjRef::Name(n.clone()),
         _ => return None,
     };
     if !obj_ref_eq(&obj_now, obj) {
@@ -197,16 +213,21 @@ fn rewrite_slot_index_names_in(
                 _ => return None,
             };
             let obj_now = match object {
-                Expression::Value(Value::Register(r)) => ObjRef::Register(*r),
-                Expression::Value(Value::Variable(name)) => ObjRef::Name(name.clone()),
+                Expression::Value(Value::Binding(Binding::Register(r))) => ObjRef::Register(*r),
+                Expression::Value(Value::Binding(Binding::Variable(name))) => {
+                    ObjRef::Name(name.clone())
+                }
                 _ => return None,
             };
-            shapes.iter().find(|(o, _)| obj_ref_eq(o, &obj_now)).and_then(|(_, keys)| {
-                keys.get(n).map(|name| AssignTarget::Member {
-                    object: object.clone(),
-                    property: name.clone(),
+            shapes
+                .iter()
+                .find(|(o, _)| obj_ref_eq(o, &obj_now))
+                .and_then(|(_, keys)| {
+                    keys.get(n).map(|name| AssignTarget::Member {
+                        object: object.clone(),
+                        property: name.clone(),
+                    })
                 })
-            })
         })();
         if let Some(new_target) = rewritten {
             if let Statement::Assign { target, .. } = stmt {
@@ -267,11 +288,11 @@ fn reassigns_deep(stmt: &Statement, obj: &ObjRef) -> bool {
 fn object_ident_keys(stmt: &Statement) -> Option<(ObjRef, Vec<String>)> {
     let (obj, props) = match stmt {
         Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value: Expression::Object { properties },
         } if !properties.is_empty() => (ObjRef::Register(*r), properties),
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(Binding::Variable(name)),
             value: Expression::Object { properties },
         } if !properties.is_empty() => (ObjRef::Name(name.clone()), properties),
         Statement::Let {
@@ -307,11 +328,11 @@ enum ObjRef {
 fn object_literal_def(stmt: &Statement) -> Option<(ObjRef, usize)> {
     match stmt {
         Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(Binding::Register(r)),
             value: Expression::Object { properties },
         } if !properties.is_empty() => Some((ObjRef::Register(*r), properties.len())),
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(Binding::Variable(name)),
             value: Expression::Object { properties },
         } if !properties.is_empty() => Some((ObjRef::Name(name.clone()), properties.len())),
         Statement::Let {
@@ -338,7 +359,11 @@ fn object_properties_mut(stmt: &mut Statement) -> Option<&mut Vec<ObjectProperty
 }
 
 // `obj[N] = val` with a constant N < prop_count → (N, val).
-fn slot_index_fill(stmt: &Statement, obj: &ObjRef, prop_count: usize) -> Option<(usize, Expression)> {
+fn slot_index_fill(
+    stmt: &Statement,
+    obj: &ObjRef,
+    prop_count: usize,
+) -> Option<(usize, Expression)> {
     let Statement::Assign {
         target: AssignTarget::Index { object, key },
         value,
@@ -347,8 +372,8 @@ fn slot_index_fill(stmt: &Statement, obj: &ObjRef, prop_count: usize) -> Option<
         return None;
     };
     let matches_obj = match (obj, object) {
-        (ObjRef::Register(r), Expression::Value(Value::Register(r2))) => r == r2,
-        (ObjRef::Name(n), Expression::Value(Value::Variable(n2))) => n == n2,
+        (ObjRef::Register(r), Expression::Value(Value::Binding(Binding::Register(r2)))) => r == r2,
+        (ObjRef::Name(n), Expression::Value(Value::Binding(Binding::Variable(n2)))) => n == n2,
         _ => false,
     };
     if !matches_obj {
@@ -372,8 +397,14 @@ fn slot_index_fill(stmt: &Statement, obj: &ObjRef, prop_count: usize) -> Option<
 // name a fill value could read; member/index writes mutate an existing binding.
 fn record_defs(stmt: &Statement, regs: &mut Vec<u32>, vars: &mut Vec<String>) {
     match stmt {
-        Statement::Assign { target: AssignTarget::Register(r), .. } => regs.push(*r),
-        Statement::Assign { target: AssignTarget::Variable(n), .. } => vars.push(n.clone()),
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Register(r)),
+            ..
+        } => regs.push(*r),
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(n)),
+            ..
+        } => vars.push(n.clone()),
         Statement::Let { name, .. } => vars.push(name.clone()),
         _ => {}
     }
@@ -384,12 +415,22 @@ fn record_defs(stmt: &Statement, regs: &mut Vec<u32>, vars: &mut Vec<String>) {
 // before it is assigned.
 fn val_refs_forward(val: &Expression, regs: &[u32], vars: &[String]) -> bool {
     use crate::ir::Visitor;
-    struct C<'a> { regs: &'a [u32], vars: &'a [String], found: bool }
+    struct C<'a> {
+        regs: &'a [u32],
+        vars: &'a [String],
+        found: bool,
+    }
     impl Visitor<'_> for C<'_> {
         fn visit_expression(&mut self, e: &Expression) {
             match e {
-                Expression::Value(Value::Register(r)) if self.regs.contains(r) => self.found = true,
-                Expression::Value(Value::Variable(n)) if self.vars.iter().any(|v| v == n) => {
+                Expression::Value(Value::Binding(Binding::Register(r)))
+                    if self.regs.contains(r) =>
+                {
+                    self.found = true
+                }
+                Expression::Value(Value::Binding(Binding::Variable(n)))
+                    if self.vars.iter().any(|v| v == n) =>
+                {
                     self.found = true
                 }
                 _ => {}
@@ -399,7 +440,11 @@ fn val_refs_forward(val: &Expression, regs: &[u32], vars: &[String]) -> bool {
             }
         }
     }
-    let mut c = C { regs, vars, found: false };
+    let mut c = C {
+        regs,
+        vars,
+        found: false,
+    };
     c.visit_expression(val);
     c.found
 }
@@ -409,14 +454,14 @@ fn obj_reassigned(stmt: &Statement, obj: &ObjRef) -> bool {
         (
             ObjRef::Register(r),
             Statement::Assign {
-                target: AssignTarget::Register(r2),
+                target: AssignTarget::Binding(Binding::Register(r2)),
                 ..
             },
         ) => r == r2,
         (
             ObjRef::Name(n),
             Statement::Assign {
-                target: AssignTarget::Variable(n2),
+                target: AssignTarget::Binding(Binding::Variable(n2)),
                 ..
             },
         ) => n == n2,
@@ -463,7 +508,7 @@ fn expr_uses_var(expr: &Expression, name: &str) -> bool {
     struct C<'a>(&'a str, bool);
     impl Visitor<'_> for C<'_> {
         fn visit_expression(&mut self, e: &Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(Binding::Variable(n))) = e {
                 if n == self.0 {
                     self.1 = true;
                     return;

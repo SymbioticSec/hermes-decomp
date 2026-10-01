@@ -8,7 +8,7 @@ pub(super) fn int(n: i32) -> Expression {
 }
 
 pub(super) fn var(n: &str) -> Expression {
-    Expression::Value(Value::Variable(n.to_string()))
+    Expression::Value(Value::Binding(crate::ir::Binding::Variable(n.to_string())))
 }
 
 pub(super) fn call(callee: &str, arg: Expression) -> Expression {
@@ -40,6 +40,7 @@ pub(super) fn empty_registry_with_factory(
         dependencies: deps,
         exports: HashMap::new(),
         roles: FactoryRoles::from_param_count(7),
+        name_from_default_export: false,
     };
     reg.function_to_module.insert(factory_id, module_id);
     reg.factories.insert(factory_id, module.clone());
@@ -54,6 +55,7 @@ pub(super) fn empty_registry_with_factory(
                 dependencies: vec![],
                 exports: HashMap::new(),
                 roles: FactoryRoles::standard(),
+                name_from_default_export: false,
             },
         );
     }

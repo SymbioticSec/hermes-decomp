@@ -1,12 +1,12 @@
-use crate::ir::{map_nested_bodies, Statement, Expression, AssignTarget, Value};
+use crate::ir::{map_nested_bodies, AssignTarget, Binding, Expression, Statement, Value};
 
 pub(super) fn remove_redundant_assignments(stmts: Vec<Statement>) -> Vec<Statement> {
     stmts
         .into_iter()
         .filter(|stmt| {
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
-                value: Expression::Value(Value::Register(r2)),
+                target: AssignTarget::Binding(Binding::Register(r)),
+                value: Expression::Value(Value::Binding(Binding::Register(r2))),
             } = stmt
             {
                 return r != r2;

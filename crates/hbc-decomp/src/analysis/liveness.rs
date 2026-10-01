@@ -1,4 +1,4 @@
-use crate::ir::{BlockId, Expression, Statement, Value, CFG};
+use crate::ir::{Binding, BlockId, Expression, Statement, Value, CFG};
 use std::collections::{BTreeMap, HashSet};
 
 // Liveness analysis determines which registers are "live" (hold a useful value) at each point in the program.
@@ -108,7 +108,7 @@ fn collect_stmt_uses(stmt: &Statement, uses: &mut HashSet<u32>, defs: &HashSet<u
 
 fn collect_stmt_defs(stmt: &Statement, defs: &mut HashSet<u32>) {
     if let Statement::Assign {
-        target: crate::ir::AssignTarget::Register(r),
+        target: crate::ir::AssignTarget::Binding(Binding::Register(r)),
         ..
     } = stmt
     {
@@ -132,7 +132,7 @@ fn collect_terminator_uses(
 
 fn collect_expr_uses(expr: &Expression, uses: &mut HashSet<u32>, defs: &HashSet<u32>) {
     match expr {
-        Expression::Value(Value::Register(r)) if !defs.contains(r) => {
+        Expression::Value(Value::Binding(Binding::Register(r))) if !defs.contains(r) => {
             uses.insert(*r);
         }
         Expression::Binary { left, right, .. } => {
@@ -163,7 +163,9 @@ mod tests {
             0,
             Expression::constant(Constant::Integer(1)),
         ));
-        builder.emit_return(Some(Expression::Value(Value::Register(0))));
+        builder.emit_return(Some(Expression::Value(Value::Binding(Binding::Register(
+            0,
+        )))));
 
         let cfg = builder.finish();
         let liveness = LivenessInfo::analyze(&cfg);

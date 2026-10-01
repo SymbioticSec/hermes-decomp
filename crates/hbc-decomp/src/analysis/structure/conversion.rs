@@ -122,7 +122,11 @@ impl Structure {
                     default: default_opt,
                 }]
             }
-            Structure::TryCatch { try_body, catch_param, catch_body } => {
+            Structure::TryCatch {
+                try_body,
+                catch_param,
+                catch_body,
+            } => {
                 let try_stmts = try_body.to_statements(_cfg);
                 let catch_stmts = catch_body.to_statements(_cfg);
                 vec![Statement::TryCatch {
@@ -155,9 +159,11 @@ impl Structure {
             Structure::Switch { cases, default, .. } => {
                 cases.iter().all(|(_, s)| s.is_empty()) && default.is_empty()
             }
-            Structure::TryCatch { try_body, catch_body, .. } => {
-                try_body.is_empty() && catch_body.is_empty()
-            }
+            Structure::TryCatch {
+                try_body,
+                catch_body,
+                ..
+            } => try_body.is_empty() && catch_body.is_empty(),
             _ => false,
         }
     }

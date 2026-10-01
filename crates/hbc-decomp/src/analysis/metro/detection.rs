@@ -1,5 +1,5 @@
 use super::registry::{MetroModule, MetroRegistry};
-use crate::ir::{Expression, Statement, Value};
+use crate::ir::{Binding, Expression, Statement, Value};
 use std::collections::HashMap;
 
 pub struct MetroDetector;
@@ -39,8 +39,8 @@ impl MetroDetector {
         match stmt {
             Statement::Assign { target, value } => {
                 let var_name = match target {
-                    crate::ir::AssignTarget::Register(r) => Some(format!("r{r}")),
-                    crate::ir::AssignTarget::Variable(n) => Some(n.clone()),
+                    crate::ir::AssignTarget::Binding(Binding::Register(r)) => Some(format!("r{r}")),
+                    crate::ir::AssignTarget::Binding(Binding::Variable(n)) => Some(n.clone()),
                     _ => None,
                 };
 
@@ -56,10 +56,24 @@ impl MetroDetector {
                     }
                 }
 
-                Self::check_for_d_call(value, reg_functions, reg_arrays, reg_integers, registry, param_counts);
+                Self::check_for_d_call(
+                    value,
+                    reg_functions,
+                    reg_arrays,
+                    reg_integers,
+                    registry,
+                    param_counts,
+                );
             }
             Statement::Expr(expr) => {
-                Self::check_for_d_call(expr, reg_functions, reg_arrays, reg_integers, registry, param_counts);
+                Self::check_for_d_call(
+                    expr,
+                    reg_functions,
+                    reg_arrays,
+                    reg_integers,
+                    registry,
+                    param_counts,
+                );
             }
             Statement::If {
                 then_body,
@@ -67,25 +81,60 @@ impl MetroDetector {
                 ..
             } => {
                 for s in then_body {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
+                    Self::analyze_stmt(
+                        s,
+                        reg_functions,
+                        reg_arrays,
+                        reg_integers,
+                        registry,
+                        param_counts,
+                    );
                 }
                 for s in else_body {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
+                    Self::analyze_stmt(
+                        s,
+                        reg_functions,
+                        reg_arrays,
+                        reg_integers,
+                        registry,
+                        param_counts,
+                    );
                 }
             }
             Statement::While { body, .. } => {
                 for s in body {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
+                    Self::analyze_stmt(
+                        s,
+                        reg_functions,
+                        reg_arrays,
+                        reg_integers,
+                        registry,
+                        param_counts,
+                    );
                 }
             }
             Statement::For { body, .. } => {
                 for s in body {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
+                    Self::analyze_stmt(
+                        s,
+                        reg_functions,
+                        reg_arrays,
+                        reg_integers,
+                        registry,
+                        param_counts,
+                    );
                 }
             }
             Statement::Block(inner) => {
                 for s in inner {
-                    Self::analyze_stmt(s, reg_functions, reg_arrays, reg_integers, registry, param_counts);
+                    Self::analyze_stmt(
+                        s,
+                        reg_functions,
+                        reg_arrays,
+                        reg_integers,
+                        registry,
+                        param_counts,
+                    );
                 }
             }
             _ => {}
@@ -116,10 +165,12 @@ impl MetroDetector {
                 // Get function ID - either directly or via register/variable lookup
                 let function_id = match &arguments[1] {
                     Expression::Function { id, .. } => Some(id.0),
-                    Expression::Value(Value::Register(r)) => {
+                    Expression::Value(Value::Binding(Binding::Register(r))) => {
                         reg_functions.get(&format!("r{r}")).copied()
                     }
-                    Expression::Value(Value::Variable(n)) => reg_functions.get(n).copied(),
+                    Expression::Value(Value::Binding(Binding::Variable(n))) => {
+                        reg_functions.get(n).copied()
+                    }
                     _ => None,
                 };
 
@@ -131,10 +182,12 @@ impl MetroDetector {
                     Expression::Value(Value::Constant(crate::ir::Constant::Number(n))) => {
                         Some(*n as u32)
                     }
-                    Expression::Value(Value::Register(r)) => {
+                    Expression::Value(Value::Binding(Binding::Register(r))) => {
                         reg_integers.get(&format!("r{r}")).copied()
                     }
-                    Expression::Value(Value::Variable(n)) => reg_integers.get(n).copied(),
+                    Expression::Value(Value::Binding(Binding::Variable(n))) => {
+                        reg_integers.get(n).copied()
+                    }
                     _ => None,
                 };
 
@@ -144,11 +197,11 @@ impl MetroDetector {
                         extract_array_of_integers(&arguments[3], Some(reg_integers))
                             .unwrap_or_default()
                     }
-                    Expression::Value(Value::Register(r)) => reg_arrays
+                    Expression::Value(Value::Binding(Binding::Register(r))) => reg_arrays
                         .get(&format!("r{r}"))
                         .cloned()
                         .unwrap_or_default(),
-                    Expression::Value(Value::Variable(n)) => {
+                    Expression::Value(Value::Binding(Binding::Variable(n))) => {
                         reg_arrays.get(n).cloned().unwrap_or_default()
                     }
                     _ => Vec::new(),
@@ -174,8 +227,13 @@ impl MetroDetector {
                         // modern 7-param with importDefault/importAll).
                         roles: param_counts
                             .get(&func_id)
-                            .map(|&n| crate::analysis::metro::registry::FactoryRoles::from_param_count(n))
-                            .unwrap_or_else(crate::analysis::metro::registry::FactoryRoles::standard),
+                            .map(|&n| {
+                                crate::analysis::metro::registry::FactoryRoles::from_param_count(n)
+                            })
+                            .unwrap_or_else(
+                                crate::analysis::metro::registry::FactoryRoles::standard,
+                            ),
+                        name_from_default_export: false,
                     };
                     registry.function_to_module.insert(func_id, mod_id);
                     registry.factories.insert(func_id, module.clone());
@@ -209,12 +267,14 @@ fn extract_array_of_integers(
                 // Try resolving register/variable
                 if let Some(map) = reg_integers {
                     match e {
-                        Expression::Value(Value::Register(r)) => {
+                        Expression::Value(Value::Binding(Binding::Register(r))) => {
                             let key = format!("r{r}");
                             let val = map.get(&key).copied();
                             val
                         }
-                        Expression::Value(Value::Variable(n)) => map.get(n).copied(),
+                        Expression::Value(Value::Binding(Binding::Variable(n))) => {
+                            map.get(n).copied()
+                        }
                         _ => None,
                     }
                 } else {
@@ -234,10 +294,16 @@ fn extract_array_of_integers(
 
 pub(crate) fn is_meaningful_name(name: &str) -> bool {
     // Reject purely numeric names
-    if name.chars().all(|c| c.is_ascii_digit()) { return false; }
+    if name.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
     // Reject f1234 pattern (decompiler-generated function names)
-    if name.starts_with('f') && name.len() > 1 && name[1..].chars().all(|c| c.is_ascii_digit()) { return false; }
+    if name.starts_with('f') && name.len() > 1 && name[1..].chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
     // Reject obviously generic names (shared core)
-    if super::is_obviously_generic(name) { return false; }
+    if super::is_obviously_generic(name) {
+        return false;
+    }
     true
 }

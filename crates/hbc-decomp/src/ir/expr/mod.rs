@@ -58,8 +58,12 @@ pub enum Expression {
         is_async: bool,
         is_generator: bool,
     },
+    // An assignment used as an expression (`a = b` inside a larger expression).
+    // The target is an `AssignTarget` and not an `Expression`, so a pass cannot
+    // build a write to something that is not a place. The statement form uses the
+    // same type, which is what lets one visitor hook see every write.
     Assignment {
-        target: Box<Expression>,
+        target: Box<crate::ir::AssignTarget>,
         value: Box<Expression>,
     },
     Spread(Box<Expression>),
@@ -99,7 +103,7 @@ impl Expression {
     }
 
     pub fn register(r: u32) -> Self {
-        Expression::Value(Value::Register(r))
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r)))
     }
 
     pub fn binary(op: BinaryOp, left: Expression, right: Expression) -> Self {

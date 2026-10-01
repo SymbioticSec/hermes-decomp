@@ -2,6 +2,7 @@ mod display;
 
 use super::{BlockId, Expression};
 
+use crate::ir::Binding;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -139,11 +140,32 @@ pub enum MethodKind {
     Setter,
 }
 
+impl From<crate::ir::Binding> for AssignTarget {
+    fn from(b: crate::ir::Binding) -> Self {
+        AssignTarget::Binding(b)
+    }
+}
+
+impl AssignTarget {
+    /// The binding this target writes, when it names one directly. A member, an
+    /// index or a destructuring pattern writes through something else and yields
+    /// `None`, which is exactly the distinction a caller needs before treating a
+    /// target as a plain name.
+    pub fn as_binding(&self) -> Option<crate::ir::Binding> {
+        match self {
+            AssignTarget::Binding(b) => Some(b.clone()),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AssignTarget {
-    Variable(String),
-
-    Register(u32),
+    /// A write straight to a named location: a register, a variable or an
+    /// environment slot. Everything else in this enum writes *through*
+    /// something, which is the distinction a caller needs before treating a
+    /// target as a plain name.
+    Binding(crate::ir::Binding),
 
     Member {
         object: Expression,
@@ -153,11 +175,6 @@ pub enum AssignTarget {
     Index {
         object: Expression,
         key: Expression,
-    },
-
-    ClosureVar {
-        level: u32,
-        slot: u32,
     },
 
     DestructuringArray(Vec<Option<(AssignTarget, Option<Expression>)>>),
@@ -231,14 +248,14 @@ impl Statement {
 
     pub fn assign_var(name: impl Into<String>, value: Expression) -> Self {
         Statement::Assign {
-            target: AssignTarget::Variable(name.into()),
+            target: AssignTarget::Binding(Binding::Variable(name.into())),
             value,
         }
     }
 
     pub fn assign_reg(reg: u32, value: Expression) -> Self {
         Statement::Assign {
-            target: AssignTarget::Register(reg),
+            target: AssignTarget::Binding(Binding::Register(reg)),
             value,
         }
     }

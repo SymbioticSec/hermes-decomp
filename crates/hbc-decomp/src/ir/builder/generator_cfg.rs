@@ -14,13 +14,17 @@
 // This makes the yield visible to structure recovery as a regular statement,
 // not a return that breaks the control flow.
 
-use crate::ir::{AssignTarget, BlockId, Expression, PropertyKey, Statement, Terminator, CFG};
+use crate::ir::{
+    AssignTarget, Binding, BlockId, Expression, PropertyKey, Statement, Terminator, CFG,
+};
 use std::collections::BTreeMap;
 
 pub fn transform_generator_cfg(cfg: &mut CFG) {
     // Check if this function has any generator patterns
     let has_start_gen = cfg.blocks().any(|b| {
-        b.statements.iter().any(|s| matches!(s, Statement::Comment(c) if c == "StartGenerator"))
+        b.statements
+            .iter()
+            .any(|s| matches!(s, Statement::Comment(c) if c == "StartGenerator"))
     });
     if !has_start_gen {
         return;
@@ -48,7 +52,6 @@ pub fn transform_generator_cfg(cfg: &mut CFG) {
         }
     }
 
-
     if yield_blocks.is_empty() {
         return;
     }
@@ -59,7 +62,7 @@ pub fn transform_generator_cfg(cfg: &mut CFG) {
         if let Some(block) = cfg.get(block_id) {
             if let Some(first_stmt) = block.statements.first() {
                 if let Statement::Assign {
-                    target: AssignTarget::Register(reg),
+                    target: AssignTarget::Binding(Binding::Register(reg)),
                     value,
                 } = first_stmt
                 {
@@ -88,14 +91,16 @@ pub fn transform_generator_cfg(cfg: &mut CFG) {
 
         // Create the yield expression
         let yield_expr = Expression::Yield {
-            value: Box::new(yield_value.unwrap_or(Expression::constant(crate::ir::Constant::Undefined))),
+            value: Box::new(
+                yield_value.unwrap_or(Expression::constant(crate::ir::Constant::Undefined)),
+            ),
             delegate: false,
         };
 
         // If there's a resume register, assign the yield result to it
         if let Some(&result_reg) = resume_registers.get(&resume_offset) {
             block.statements.push(Statement::Assign {
-                target: AssignTarget::Register(result_reg),
+                target: AssignTarget::Binding(Binding::Register(result_reg)),
                 value: yield_expr,
             });
         } else {
@@ -116,7 +121,8 @@ pub fn transform_generator_cfg(cfg: &mut CFG) {
 
             // Remove the resume call statement
             if !resume_block_data.statements.is_empty() {
-                if let Some(Statement::Assign { value, .. }) = resume_block_data.statements.first() {
+                if let Some(Statement::Assign { value, .. }) = resume_block_data.statements.first()
+                {
                     if is_resume_call(value) {
                         resume_block_data.statements.remove(0);
                     }
@@ -125,7 +131,12 @@ pub fn transform_generator_cfg(cfg: &mut CFG) {
 
             // If the terminator is a Branch checking the "is completed" flag,
             // redirect to just the "not completed" (continue) path
-            if let Terminator::Branch { true_target, false_target, .. } = resume_block_data.terminator.clone() {
+            if let Terminator::Branch {
+                true_target,
+                false_target,
+                ..
+            } = resume_block_data.terminator.clone()
+            {
                 // true_target = "generator completed" (return path)
                 // false_target = "continue execution" (normal path)
                 resume_block_data.set_terminator(Terminator::Jump(false_target));
@@ -143,7 +154,9 @@ pub fn transform_generator_cfg(cfg: &mut CFG) {
     let entry_id = cfg.entry;
     if let Some(entry) = cfg.get_mut(entry_id) {
         // Remove StartGenerator comment
-        entry.statements.retain(|s| !matches!(s, Statement::Comment(c) if c == "StartGenerator"));
+        entry
+            .statements
+            .retain(|s| !matches!(s, Statement::Comment(c) if c == "StartGenerator"));
 
         // Remove the initial ResumeGenerator (it's the "is being resumed" check)
         let mut resume_idx = None;

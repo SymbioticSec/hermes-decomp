@@ -1,7 +1,10 @@
 use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Terminator, Value};
 use std::collections::BTreeMap;
 
-pub(super) fn substitute_terminator(term: &Terminator, copies: &BTreeMap<u32, Expression>) -> Terminator {
+pub(super) fn substitute_terminator(
+    term: &Terminator,
+    copies: &BTreeMap<u32, Expression>,
+) -> Terminator {
     match term {
         Terminator::Branch {
             condition,
@@ -64,7 +67,7 @@ fn substitute_target(target: &AssignTarget, copies: &BTreeMap<u32, Expression>) 
 
 fn substitute_expr(expr: &Expression, copies: &BTreeMap<u32, Expression>) -> Expression {
     match expr {
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
             copies.get(r).cloned().unwrap_or_else(|| expr.clone())
         }
         Expression::Binary { op, left, right } => Expression::binary(
@@ -127,7 +130,7 @@ fn substitute_expr(expr: &Expression, copies: &BTreeMap<u32, Expression>) -> Exp
             else_expr: Box::new(substitute_expr(else_expr, copies)),
         },
         Expression::Assignment { target, value } => Expression::Assignment {
-            target: Box::new(substitute_expr(target, copies)),
+            target: Box::new(substitute_target(target, copies)),
             value: Box::new(substitute_expr(value, copies)),
         },
         Expression::Spread(inner) => Expression::Spread(Box::new(substitute_expr(inner, copies))),

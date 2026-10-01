@@ -96,10 +96,7 @@ pub fn resolve_exports(registry: &MetroRegistry, module_id: u32) -> Result<Vec<S
     names.sort();
     if names.is_empty() {
         // Still emit a hook skeleton with common CJS shapes.
-        names = vec![
-            "default".into(),
-            "__esModule".into(),
-        ];
+        names = vec!["default".into(), "__esModule".into()];
     }
     Ok(names)
 }
@@ -111,8 +108,8 @@ pub fn generate_frida_hooks(
     if options.exports.is_empty() {
         options.exports = resolve_exports(registry, options.module_id)?;
     }
-    let exports_json = serde_json::to_string(&options.exports)
-        .map_err(|e| Error::Write(format!("json: {e}")))?;
+    let exports_json =
+        serde_json::to_string(&options.exports).map_err(|e| Error::Write(format!("json: {e}")))?;
     let overrides_json = serde_json::to_string(&options.overrides)
         .map_err(|e| Error::Write(format!("json: {e}")))?;
 
@@ -403,9 +400,11 @@ mod tests {
     fn generate_script_contains_module_id() {
         let registry = MetroRegistry::new();
         // Insert a fake module if API allows, otherwise empty hooks still generate.
-        let mut opts = FridaHookOptions::default();
-        opts.module_id = 42;
-        opts.exports = vec!["API_BASE".into(), "default".into()];
+        let opts = FridaHookOptions {
+            module_id: 42,
+            exports: vec!["API_BASE".into(), "default".into()],
+            ..FridaHookOptions::default()
+        };
         let bundle = generate_frida_hooks(&registry, opts).unwrap();
         assert!(bundle.before_js.contains("MODULE_ID = 42"));
         assert!(bundle.before_js.contains("API_BASE"));

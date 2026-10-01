@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Value, Visitor};
+use crate::ir::{
+    AssignTarget, Binding, Constant, Expression, PropertyKey, Statement, Value, Visitor,
+};
 
 use super::kinds::{LoaderKind, LOADER_NAMES};
 
@@ -22,12 +24,12 @@ pub(super) fn loader_aliases(stmts: &[Statement]) -> HashMap<String, LoaderKind>
             let (name, value) = match s {
                 Statement::Let { name, value, .. } => (name, value),
                 Statement::Assign {
-                    target: AssignTarget::Variable(name),
+                    target: AssignTarget::Binding(Binding::Variable(name)),
                     value,
                 } => (name, value),
                 _ => continue,
             };
-            if let Expression::Value(Value::Variable(v)) = value {
+            if let Expression::Value(Value::Binding(Binding::Variable(v))) = value {
                 if let Some(&kind) = map.get(v) {
                     if map.insert(name.clone(), kind).is_none() {
                         changed = true;
@@ -51,7 +53,7 @@ fn is_depmap_name(name: &str) -> bool {
 
 fn is_depmap_object(expr: &Expression) -> bool {
     match expr {
-        Expression::Value(Value::Variable(name)) => is_depmap_name(name),
+        Expression::Value(Value::Binding(Binding::Variable(name))) => is_depmap_name(name),
         _ => false,
     }
 }
@@ -101,7 +103,7 @@ pub(super) fn loader_call<'a>(
         return None;
     };
     let name = match callee.as_ref() {
-        Expression::Value(Value::Variable(n)) => n.as_str(),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => n.as_str(),
         _ => return None,
     };
     let kind = *aliases.get(name)?;
@@ -162,10 +164,6 @@ pub(super) fn collect_loader_ids(
             self.walk_expression(e);
         }
     }
-    let mut c = C {
-        aliases,
-        deps,
-        out,
-    };
+    let mut c = C { aliases, deps, out };
     c.visit_expression(expr);
 }

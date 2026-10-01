@@ -76,7 +76,10 @@ fn main() {
                 continue;
             }
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                if let Some(v) = stem.strip_prefix("Builtins").and_then(|s| s.parse::<u32>().ok()) {
+                if let Some(v) = stem
+                    .strip_prefix("Builtins")
+                    .and_then(|s| s.parse::<u32>().ok())
+                {
                     builtin_versions.push(v);
                 }
             }
@@ -106,7 +109,11 @@ fn main() {
     writeln!(
         out_file,
         "pub fn builtin_table_versions() -> &'static [u32] {{ &[{}] }}",
-        builtin_versions.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
+        builtin_versions
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     )
     .unwrap();
 
@@ -121,10 +128,16 @@ fn main() {
 fn emit_build_fingerprint(manifest_dir: &Path) {
     let src_dir = manifest_dir.join("src");
     println!("cargo:rerun-if-changed={}", src_dir.display());
-    println!("cargo:rerun-if-changed={}", manifest_dir.join("Cargo.toml").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("Cargo.toml").display()
+    );
 
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a 64-bit offset basis
-    fnv_update(&mut hash, env::var("CARGO_PKG_VERSION").unwrap_or_default().as_bytes());
+    fnv_update(
+        &mut hash,
+        env::var("CARGO_PKG_VERSION").unwrap_or_default().as_bytes(),
+    );
 
     let mut files = Vec::new();
     collect_files(&src_dir, "rs", &mut files);

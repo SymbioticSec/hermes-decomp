@@ -1,7 +1,9 @@
 // Opcode handlers for object and array operations.
 
 use super::opcodes_load::{get_reg, reg_expr};
-use crate::ir::{AssignTarget, Constant, Expression, ObjectProperty, PropertyKey, Statement};
+use crate::ir::{
+    AssignTarget, Binding, Constant, Expression, ObjectProperty, PropertyKey, Statement,
+};
 use crate::{BytecodeFile, Instruction};
 
 // Handle NewObject opcode.
@@ -9,7 +11,7 @@ pub fn handle_new_object(inst: &Instruction) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Object { properties: vec![] },
     })
 }
@@ -51,13 +53,13 @@ pub fn handle_create_class(
         is_generator: false,
     };
     let class_assign = Statement::Assign {
-        target: AssignTarget::Register(class_reg),
+        target: AssignTarget::Binding(Binding::Register(class_reg)),
         value: class_fn,
     };
     let proto_assign = Statement::Assign {
-        target: AssignTarget::Register(home_reg),
+        target: AssignTarget::Binding(Binding::Register(home_reg)),
         value: Expression::member(
-            Expression::Value(crate::ir::Value::Register(class_reg)),
+            Expression::Value(crate::ir::Value::Binding(Binding::Register(class_reg))),
             "prototype",
         ),
     };
@@ -72,34 +74,41 @@ pub fn handle_create_class(
     //   2. Emit a recognizable `__hermes_class_extends__(class, super)` marker
     //      that the class reconstruction pass turns into `extends`. Both reads
     //      resolve correctly after SSA (capture = base, class_reg = derived).
+    // The interpreter writes the home object first and the class last, so
+    // when both land in one register the home object is simply discarded.
+    // Emitting `r = class; r = r.prototype` in that case left the prototype
+    // where the class should be: the env store, the export and the extends
+    // marker all took the prototype, and the class came out named after it.
+    let proto_assign = (home_reg != class_reg).then_some(proto_assign);
+
     if derived {
         if let Some(super_reg) = get_reg(&inst.operands, 3) {
             // Synthetic, collision-free temp: above physical registers, unique
             // per derived constructor. SSA renumbers it regardless.
             let super_tmp = 0xFFFF_0000u32 | (func_idx & 0xFFFF);
             let capture = Statement::Assign {
-                target: AssignTarget::Register(super_tmp),
-                value: Expression::Value(crate::ir::Value::Register(super_reg)),
+                target: AssignTarget::Binding(Binding::Register(super_tmp)),
+                value: Expression::Value(crate::ir::Value::Binding(Binding::Register(super_reg))),
             };
             let extends_marker = Statement::Expr(Expression::Call {
-                callee: Box::new(Expression::Value(crate::ir::Value::Variable(
-                    EXTENDS_MARKER.to_string(),
+                callee: Box::new(Expression::Value(crate::ir::Value::Binding(
+                    Binding::Variable(EXTENDS_MARKER.to_string()),
                 ))),
                 arguments: vec![
-                    Expression::Value(crate::ir::Value::Register(class_reg)),
-                    Expression::Value(crate::ir::Value::Register(super_tmp)),
+                    Expression::Value(crate::ir::Value::Binding(Binding::Register(class_reg))),
+                    Expression::Value(crate::ir::Value::Binding(Binding::Register(super_tmp))),
                 ],
             });
-            return Some(Statement::Block(vec![
-                capture,
-                class_assign,
-                proto_assign,
-                extends_marker,
-            ]));
+            let mut block = vec![capture, class_assign];
+            block.extend(proto_assign);
+            block.push(extends_marker);
+            return Some(Statement::Block(block));
         }
     }
 
-    Some(Statement::Block(vec![class_assign, proto_assign]))
+    let mut block = vec![class_assign];
+    block.extend(proto_assign);
+    Some(Statement::Block(block))
 }
 
 // Sentinel callee name for the synthetic `extends` marker emitted by
@@ -108,10 +117,7 @@ pub fn handle_create_class(
 pub const EXTENDS_MARKER: &str = "__hermes_class_extends__";
 
 // Handle NewObjectWithParent opcode → `Object.create(parent)`.
-pub fn handle_new_object_with_parent(
-    inst: &Instruction,
-    file: &BytecodeFile,
-) -> Option<Statement> {
+pub fn handle_new_object_with_parent(inst: &Instruction, file: &BytecodeFile) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
     let parent = reg_expr(&inst.operands, 1)?;
 
@@ -132,7 +138,7 @@ pub fn handle_new_object_with_parent(
                     "assign",
                 );
                 return Some(Statement::Assign {
-                    target: AssignTarget::Register(dst),
+                    target: AssignTarget::Binding(Binding::Register(dst)),
                     value: Expression::Call {
                         callee: Box::new(assign),
                         arguments: vec![
@@ -159,7 +165,7 @@ pub fn handle_new_object_with_parent(
         "create",
     );
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(object_create),
             arguments: vec![parent],
@@ -242,7 +248,7 @@ pub fn handle_new_object_with_buffer(
     }
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Object { properties },
     })
 }
@@ -253,7 +259,7 @@ pub fn handle_new_array(inst: &Instruction) -> Option<Statement> {
     let size = inst.operands.get(1)?.value.as_u32()? as usize;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Array {
             elements: vec![None; size],
         },
@@ -275,7 +281,7 @@ pub fn handle_new_array_with_buffer(inst: &Instruction, file: &BytecodeFile) -> 
     }
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Array { elements },
     })
 }
@@ -302,7 +308,7 @@ pub fn handle_get_own_by_slot(inst: &Instruction) -> Option<Statement> {
     let slot = inst.operands.get(2)?.value.as_u32()? as i64;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(obj),
             property: PropertyKey::Computed(Box::new(Expression::constant(Constant::Integer(
@@ -320,7 +326,7 @@ pub fn handle_get_by_index(inst: &Instruction) -> Option<Statement> {
     let index = inst.operands.get(2)?.value.as_u32()? as i64;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(obj),
             property: PropertyKey::Computed(Box::new(Expression::constant(Constant::Integer(
@@ -353,7 +359,7 @@ pub fn handle_fast_array_load(inst: &Instruction) -> Option<Statement> {
     let idx = reg_expr(&inst.operands, 2)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(arr),
             property: PropertyKey::Computed(Box::new(idx)),
@@ -394,7 +400,7 @@ pub fn handle_fast_array_length(inst: &Instruction) -> Option<Statement> {
     let arr = reg_expr(&inst.operands, 1)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::member(arr, "length"),
     })
 }
@@ -448,7 +454,7 @@ pub fn handle_create_regexp(
     };
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::RegExp { pattern, flags },
     })
 }
@@ -458,7 +464,7 @@ pub fn handle_get_arguments_length(inst: &Instruction) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::member(Expression::Value(crate::ir::Value::Arguments), "length"),
     })
 }
@@ -469,7 +475,7 @@ pub fn handle_get_arguments_prop_by_val(inst: &Instruction) -> Option<Statement>
     let idx = reg_expr(&inst.operands, 1)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Member {
             object: Box::new(Expression::Value(crate::ir::Value::Arguments)),
             property: PropertyKey::Computed(Box::new(idx)),
@@ -483,7 +489,7 @@ pub fn handle_reify_arguments(inst: &Instruction) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Value(crate::ir::Value::Arguments),
     })
 }
@@ -492,12 +498,13 @@ pub fn handle_reify_arguments(inst: &Instruction) -> Option<Statement> {
 pub fn handle_create_this(inst: &Instruction) -> Option<Statement> {
     // Allocates the constructor's `this`. The real instance is produced by the
     // following Construct + SelectObject, which overwrites this register, so this
-    // assignment is a placeholder that later cleanup drops. (operands 1/2 are the
-    // prototype and closure, not needed here.)
+    // assignment is a placeholder that later cleanup drops. What survives must
+    // read as `this`, not `new.target`: `new.target` is GetNewTarget only.
+    // (operands 1/2 are the prototype and closure, not needed here.)
     let dst = get_reg(&inst.operands, 0)?;
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
-        value: Expression::Value(crate::ir::Value::NewTarget),
+        target: AssignTarget::Binding(Binding::Register(dst)),
+        value: Expression::Value(crate::ir::Value::This),
     })
 }
 
@@ -506,7 +513,7 @@ pub fn handle_get_new_target(inst: &Instruction) -> Option<Statement> {
     let dst = get_reg(&inst.operands, 0)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Value(crate::ir::Value::NewTarget),
     })
 }
@@ -517,13 +524,13 @@ pub fn handle_iterator_begin(inst: &Instruction) -> Option<Statement> {
     let source = reg_expr(&inst.operands, 1)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(Expression::Member {
                 object: Box::new(source),
                 property: PropertyKey::Computed(Box::new(Expression::Member {
-                    object: Box::new(Expression::Value(crate::ir::Value::Variable(
-                        "Symbol".to_string(),
+                    object: Box::new(Expression::Value(crate::ir::Value::Binding(
+                        Binding::Variable("Symbol".to_string()),
                     ))),
                     property: PropertyKey::Ident("iterator".to_string()),
                     optional: false,
@@ -541,7 +548,7 @@ pub fn handle_iterator_next(inst: &Instruction) -> Option<Statement> {
     let iter = reg_expr(&inst.operands, 1)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(Expression::member(iter, "next")),
             arguments: vec![],
@@ -568,10 +575,12 @@ pub fn handle_get_pname_list(inst: &Instruction) -> Option<Statement> {
     let _size = reg_expr(&inst.operands, 3)?;
 
     Some(Statement::Assign {
-        target: AssignTarget::Register(dst),
+        target: AssignTarget::Binding(Binding::Register(dst)),
         value: Expression::Call {
             callee: Box::new(Expression::member(
-                Expression::Value(crate::ir::Value::Variable("Object".to_string())),
+                Expression::Value(crate::ir::Value::Binding(Binding::Variable(
+                    "Object".to_string(),
+                ))),
                 "keys",
             )),
             arguments: vec![obj],
@@ -594,10 +603,7 @@ pub fn handle_put_own_getter_setter_by_val(inst: &Instruction) -> Option<Stateme
     // (strip_hermes_this will remove it).
     Some(Statement::Expr(Expression::Call {
         callee: Box::new(Expression::member(
-            Expression::member(
-                Expression::Value(crate::ir::Value::Global),
-                "Object",
-            ),
+            Expression::member(Expression::Value(crate::ir::Value::Global), "Object"),
             "defineProperty",
         )),
         arguments: vec![

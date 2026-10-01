@@ -1,11 +1,7 @@
 // IR generation: transform bytecode into IR statements.
 // Contains generate_ir() and build_closure_context_from_file().
 
-use std::collections::BTreeMap;
-use crate::analysis::{
-    rename_registers, resolve_closures, ClosureContext,
-    StructureAnalysis,
-};
+use crate::analysis::{rename_registers, resolve_closures, ClosureContext, StructureAnalysis};
 use crate::error::Result;
 use crate::file::BytecodeFile;
 use crate::ir::{BinaryOp, Expression, IRBuilder, IRBuilderOptions, Statement, Terminator};
@@ -15,10 +11,12 @@ use crate::transforms::{
     optimize_statements, propagate, PropagationConfig,
 };
 use crate::util::is_valid_identifier;
+use std::collections::BTreeMap;
 
 use super::DecompileOptionsV2;
 
 // Generate IR for a function (Analysis + Transform phases).
+
 pub fn generate_ir(
     file: &BytecodeFile,
     format: &BytecodeFormat,
@@ -64,7 +62,9 @@ pub fn generate_ir(
     // STAGE F5: Structure Recovery (CFG -> if/while/for/switch/try)
     let statements = if options.recover_structures {
         let analysis = StructureAnalysis::analyze(&cfg);
-        analysis.root.to_statements(&cfg)
+        // The `f.call === functionPrototypeCall` diamonds hermesc emits are
+        // still plain if/else here; fold them before anything reshapes them.
+        transforms::fold_builtin_guards(analysis.root.to_statements(&cfg))
     } else {
         // Flatten blocks without structure recovery
         let mut stmts = Vec::new();
@@ -154,19 +154,24 @@ pub fn generate_ir(
 
         let mut statements = statements;
 
+        trace_supers("before F12", &statements);
         // STAGE F12: Object/Array Literal Reconstruction
         transforms::transform_object_literals(&mut statements);
         transforms::arrays::transform_array_literals(&mut statements);
+        trace_supers("before F13", &statements);
         // STAGE F13: Default Parameter Detection
         transforms::transform_default_params(&mut statements);
 
+        trace_supers("before F14", &statements);
         // STAGE F14: Spread/Rest Operators
         transforms::transform_spread_rest(&mut statements);
         let statements = statements;
 
+        trace_supers("before F15", &statements);
         // STAGE F15: Destructuring Detection
         let statements = transforms::detect_destructuring(statements);
 
+        trace_supers("before F16", &statements);
         // STAGE F16: Generator/Async Pattern Detection
         let statements = if has_generator {
             let statements = transforms::detect_generator_patterns(statements, is_async_function);
@@ -176,6 +181,7 @@ pub fn generate_ir(
             statements
         };
 
+        trace_supers("before F17", &statements);
         // STAGE F17: Yield-to-Await Conversion (async functions)
         let statements = if is_async_function {
             convert_yields_to_awaits(statements)
@@ -183,21 +189,26 @@ pub fn generate_ir(
             statements
         };
 
+        trace_supers("before F18", &statements);
         // STAGE F18: Cleanup (basic + advanced)
         let statements = cleanup_statements(statements);
         let statements = transforms::cleanup_advanced(statements);
 
+        trace_supers("before F19", &statements);
         // STAGE F19: Chain Access Optimization
         let statements = transforms::optimize_chain_access(statements);
 
+        trace_supers("before F20", &statements);
         // STAGE F20: Ternary Return Optimization
         let statements = transforms::optimize_ternary_returns(statements);
 
+        trace_supers("before F21", &statements);
         // STAGE F21: Logic Simplification (advanced)
         let statements = transforms::simplify_logic_advanced(statements);
 
         let mut statements = statements;
 
+        trace_supers("before F22", &statements);
         // STAGE F22: CommonJS Export Inference + Name Inference
         let param_count = file
             .function_headers
@@ -213,19 +224,25 @@ pub fn generate_ir(
         transforms::infer_names(&mut statements);
         let statements = statements;
 
+        trace_supers("before F23", &statements);
         // STAGE F23: Register Naming (analyze + debug info merge + rename)
         let statements = super::apply_register_naming(statements, file, function_id);
+        trace_supers("after F23", &statements);
 
+        trace_supers("before F24", &statements);
         // STAGE F24: Semantic Variable Naming
         let mut statements = transforms::infer_variable_names(statements);
+        trace_supers("after F24", &statements);
 
         // Shape-table slot fills (`obj[N] = val`) only fold while the object is
         // still a Register. After naming they are Variable/Let — fold again.
         transforms::fold_slot_index_fills(&mut statements);
 
+        trace_supers("before F25", &statements);
         // STAGE F25: Final Simplification
         crate::transforms::simplify_statements(&mut statements);
 
+        trace_supers("before F26", &statements);
         // STAGE F26: Bottom-tested `while (true) { …; if (EXIT) break; }` -> `do…while`,
         // then fold Hermes' guarded do-while shape back into a natural `for`/`while`.
         // Runs last, on fully-named statements, once cleanup has produced the clean
@@ -236,6 +253,7 @@ pub fn generate_ir(
         statements
     };
 
+    trace_supers("before F26", &statements);
     // STAGE F26: Closure Resolution (if context provided)
     if perform_resolve {
         if let Some(ctx) = closure_ctx {
@@ -265,7 +283,7 @@ pub fn build_closure_context_from_file(
 
     // Parallel: compute per-function data (name + analyzed statements).
     // rayon preserves input order in the output Vec.
-    type FunctionIr = (u32, Option<String>, Vec<Statement>);
+    type FunctionIr = (u32, Option<String>, Vec<Statement>, Vec<(u32, u32)>);
     let results: Vec<Option<FunctionIr>> = (0..file.function_headers.len())
         .into_par_iter()
         .map(|i| {
@@ -281,6 +299,7 @@ pub fn build_closure_context_from_file(
             let Ok(mut cfg) = builder.build_function(function_id) else {
                 return None;
             };
+            let created_in_block = std::mem::take(&mut builder.created_in_block);
             propagate(&mut cfg, &PropagationConfig::default());
 
             let analysis = StructureAnalysis::analyze(&cfg);
@@ -302,14 +321,20 @@ pub fn build_closure_context_from_file(
                 statements
             };
 
-            Some((function_id, func_name, statements))
+            Some((function_id, func_name, statements, created_in_block))
         })
         .collect();
 
     // Sequential: build ClosureContext from computed results (order is preserved).
+    // Creation scopes first, so every parent link the walk records sees them.
     let mut ctx = ClosureContext::new();
+    for item in results.iter().flatten() {
+        for &(child, level) in &item.3 {
+            ctx.set_creation_scope(child, item.0, level);
+        }
+    }
     for item in results.into_iter().flatten() {
-        let (function_id, func_name, statements) = item;
+        let (function_id, func_name, statements, _) = item;
         if let Some(name) = func_name {
             ctx.add_function_name(function_id, name);
         }
@@ -341,7 +366,8 @@ pub(crate) fn convert_yields_to_awaits(stmts: Vec<Statement>) -> Vec<Statement> 
         fn visit_expression(&mut self, expr: &mut Expression) {
             self.walk_expression(expr);
             if let Expression::Yield { value, .. } = expr {
-                let inner = std::mem::replace(value.as_mut(), Expression::Value(crate::ir::Value::This));
+                let inner =
+                    std::mem::replace(value.as_mut(), Expression::Value(crate::ir::Value::This));
                 *expr = Expression::Await(Box::new(inner));
             }
         }
@@ -350,4 +376,32 @@ pub(crate) fn convert_yields_to_awaits(stmts: Vec<Statement>) -> Vec<Statement> 
     let mut stmts = stmts;
     YieldToAwait.visit_statement_list(&mut stmts);
     stmts
+}
+
+// Trace target `supers`: the `extends` expression of every class in the
+// statements, tagged with the pipeline stage, to find the pass that rewrites it.
+pub(crate) fn trace_supers(tag: &str, statements: &[crate::ir::Statement]) {
+    if !log::log_enabled!(target: "supers", log::Level::Trace) {
+        return;
+    }
+    for s in statements {
+        if let crate::ir::Statement::Class {
+            name, super_class, ..
+        } = s
+        {
+            if let Some(sc) = super_class {
+                log::trace!(target: "supers", "{tag}: class {name} extends {sc}");
+                let needle = sc.to_string();
+                for other in statements {
+                    let text = other.to_string();
+                    if !matches!(other, crate::ir::Statement::Class { .. })
+                        && text.contains(&needle)
+                    {
+                        let line = text.lines().next().unwrap_or("");
+                        log::trace!(target: "supers", "{tag}:   uses {needle}: {line}");
+                    }
+                }
+            }
+        }
+    }
 }

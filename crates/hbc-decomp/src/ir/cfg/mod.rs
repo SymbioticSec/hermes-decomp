@@ -1,6 +1,6 @@
-use std::collections::HashSet;
 use super::{BlockId, Statement, Terminator};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 pub mod dot;
 pub use dot::generate_dot;
@@ -38,6 +38,11 @@ impl BasicBlock {
 pub struct CfgExceptionHandler {
     pub try_block_start: BlockId,
     pub catch_block: BlockId,
+    // Every block whose first instruction lies in the protected range. An
+    // exception can leave any of them for the catch block, so a forward
+    // dataflow has to feed the catch from all of them, not from a predecessor
+    // list that only knows about jumps.
+    pub try_blocks: Vec<BlockId>,
 }
 
 #[derive(Debug)]
@@ -117,6 +122,24 @@ impl CFG {
             .filter(|b| b.successors().contains(&target))
             .map(|b| b.id)
             .collect()
+    }
+
+    // The blocks an exception edge into `catch` can come from: the union of the
+    // protected ranges of every handler that targets it. Empty when `catch` is
+    // not a catch block.
+    pub fn exception_edge_sources(&self, catch: BlockId) -> Vec<BlockId> {
+        let mut out: Vec<BlockId> = Vec::new();
+        for handler in &self.exception_handlers {
+            if handler.catch_block != catch {
+                continue;
+            }
+            for &b in &handler.try_blocks {
+                if !out.contains(&b) {
+                    out.push(b);
+                }
+            }
+        }
+        out
     }
 
     pub fn postorder(&self) -> Vec<BlockId> {

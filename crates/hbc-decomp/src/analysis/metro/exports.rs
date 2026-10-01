@@ -1,5 +1,7 @@
 use super::registry::MetroModule;
-use crate::ir::{extract_function_id, AssignTarget, Expression, PropertyKey, Statement, Value};
+use crate::ir::{
+    extract_function_id, AssignTarget, Binding, Expression, PropertyKey, Statement, Value,
+};
 use std::collections::{BTreeMap, HashMap};
 
 // Analyzes the exports of a Metro module to find exported functions.
@@ -24,9 +26,9 @@ impl ExportAnalyzer {
         let mut definitions = HashMap::new();
         for stmt in stmts {
             if let Statement::Assign { target, value } = stmt {
-                if let AssignTarget::Variable(name) = target {
+                if let AssignTarget::Binding(Binding::Variable(name)) = target {
                     definitions.insert(name.clone(), value);
-                } else if let AssignTarget::Register(r) = target {
+                } else if let AssignTarget::Binding(Binding::Register(r)) = target {
                     definitions.insert(format!("r{r}"), value);
                 }
             }
@@ -59,14 +61,14 @@ impl<'a> ExpressionTracer<'a> {
             return expr;
         }
         match expr {
-            Expression::Value(Value::Variable(name)) => {
+            Expression::Value(Value::Binding(Binding::Variable(name))) => {
                 if let Some(def) = self.definitions.get(name) {
                     self.resolve_bounded(def, depth - 1)
                 } else {
                     expr
                 }
             }
-            Expression::Value(Value::Register(r)) => {
+            Expression::Value(Value::Binding(Binding::Register(r))) => {
                 let key = format!("r{r}");
                 if let Some(def) = self.definitions.get(&key) {
                     self.resolve_bounded(def, depth - 1)
@@ -272,8 +274,8 @@ fn get_base_and_prop(target: &AssignTarget) -> Option<(String, String)> {
 
 fn get_var_name(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Value(Value::Variable(n)) => Some(n.clone()),
-        Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => Some(n.clone()),
+        Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
         Expression::Value(Value::Parameter(idx)) => Some(format!("p{idx}")), // Normalized param name?
         // Note: Earlier pipeline/propagation normalization might have changed "argN" to "pN" or kept "argN".
         // We should check both or assume standard format. Old code checked "p2", "module".
@@ -289,7 +291,7 @@ mod tests {
     use super::*;
     use crate::ir::FunctionId;
     use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value};
-    use std::collections::{HashMap, BTreeMap};
+    use std::collections::{BTreeMap, HashMap};
 
     fn make_func_expr(id: u32) -> Expression {
         Expression::Function {
@@ -303,43 +305,43 @@ mod tests {
 
     #[test]
     fn test_export_assignments() {
-        let mut stmts = Vec::new();
-
-        // exports.foo = func(10)
-        stmts.push(Statement::Assign {
-            target: AssignTarget::Member {
-                object: Expression::Value(Value::Variable("exports".into())),
-                property: "foo".into(),
-            },
-            value: make_func_expr(10),
-        });
-
-        // module.exports.bar = func(20) - This pattern is now handled by the general member assignment
-        stmts.push(Statement::Assign {
-            target: AssignTarget::Member {
-                object: Expression::Member {
-                    object: Box::new(Expression::Value(Value::Variable("module".into()))),
-                    property: PropertyKey::String("exports".into()),
-                    optional: false,
+        let stmts = vec![
+            // exports.foo = func(10)
+            Statement::Assign {
+                target: AssignTarget::Member {
+                    object: Expression::Value(Value::Binding(Binding::Variable("exports".into()))),
+                    property: "foo".into(),
                 },
-                property: "bar".into(),
+                value: make_func_expr(10),
             },
-            value: make_func_expr(20),
-        });
-
-        // module.exports = { baz: func(30) }
-        stmts.push(Statement::Assign {
-            target: AssignTarget::Member {
-                object: Expression::Value(Value::Variable("module".into())),
-                property: "exports".into(),
+            // module.exports.bar = func(20), handled by the general member assignment
+            Statement::Assign {
+                target: AssignTarget::Member {
+                    object: Expression::Member {
+                        object: Box::new(Expression::Value(Value::Binding(Binding::Variable(
+                            "module".into(),
+                        )))),
+                        property: PropertyKey::String("exports".into()),
+                        optional: false,
+                    },
+                    property: "bar".into(),
+                },
+                value: make_func_expr(20),
             },
-            value: Expression::Object {
-                properties: vec![crate::ir::ObjectProperty {
-                    key: PropertyKey::String("baz".into()),
-                    value: make_func_expr(30),
-                }],
+            // module.exports = { baz: func(30) }
+            Statement::Assign {
+                target: AssignTarget::Member {
+                    object: Expression::Value(Value::Binding(Binding::Variable("module".into()))),
+                    property: "exports".into(),
+                },
+                value: Expression::Object {
+                    properties: vec![crate::ir::ObjectProperty {
+                        key: PropertyKey::String("baz".into()),
+                        value: make_func_expr(30),
+                    }],
+                },
             },
-        });
+        ];
 
         let mut module = MetroModule {
             module_id: 1,
@@ -348,6 +350,7 @@ mod tests {
             dependencies: vec![],
             exports: HashMap::new(),
             roles: crate::analysis::metro::registry::FactoryRoles::standard(),
+            name_from_default_export: false,
         };
 
         let mut functions = BTreeMap::new();

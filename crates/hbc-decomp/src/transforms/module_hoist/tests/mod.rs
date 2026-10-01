@@ -1,5 +1,5 @@
 //! Unit tests for module loader hoisting.
 
-mod helpers;
 mod detect_tests;
+mod helpers;
 mod hoist_tests;

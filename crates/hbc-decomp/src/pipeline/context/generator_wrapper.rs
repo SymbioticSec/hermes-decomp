@@ -16,15 +16,13 @@ pub(super) fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
     };
     let is_env_slot_name = |n: &str| {
         n.starts_with("closure_")
-            || (n.len() >= 2
-                && n.starts_with('c')
-                && n[1..].chars().all(|c| c.is_ascii_digit()))
+            || (n.len() >= 2 && n.starts_with('c') && n[1..].chars().all(|c| c.is_ascii_digit()))
     };
     let is_param_value = |e: &Expression| match e {
         Expression::Value(Value::Parameter(_))
         | Expression::Value(Value::This)
         | Expression::Value(Value::Arguments) => true,
-        Expression::Value(Value::Variable(v)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) => {
             v == "self"
                 || v == "arguments"
                 || (v.starts_with("arg")
@@ -39,11 +37,11 @@ pub(super) fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
                 is_env_slot_name(name) && (is_zero(value) || is_param_value(value))
             }
             Statement::Assign {
-                target: AssignTarget::ClosureVar { .. },
+                target: AssignTarget::Binding(crate::ir::Binding::ClosureVar { .. }),
                 value,
             } => is_zero(value) || is_param_value(value),
             Statement::Assign {
-                target: AssignTarget::Variable(n),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable(n)),
                 value,
             } => is_env_slot_name(n) && (is_zero(value) || is_param_value(value)),
             _ => false,
@@ -63,16 +61,14 @@ pub(super) fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
                 is_generator: true,
                 ..
             } => Some(id.0),
-            Expression::Call {
-                callee,
-                arguments,
-            } if arguments.is_empty()
-                || (arguments.len() == 1
-                    && matches!(
-                        &arguments[0],
-                        Expression::Value(Value::Constant(crate::ir::Constant::Undefined))
-                            | Expression::Value(Value::This)
-                    )) =>
+            Expression::Call { callee, arguments }
+                if arguments.is_empty()
+                    || (arguments.len() == 1
+                        && matches!(
+                            &arguments[0],
+                            Expression::Value(Value::Constant(crate::ir::Constant::Undefined))
+                                | Expression::Value(Value::This)
+                        )) =>
             {
                 match callee.as_ref() {
                     Expression::Function {
@@ -93,37 +89,47 @@ pub(super) fn generator_wrapper_target(body: &[Statement]) -> Option<u32> {
         // r = function*() { ... }; return r
         // r = (function*(){})(); return r
         [Statement::Assign {
-            target: AssignTarget::Register(r),
+            target: AssignTarget::Binding(crate::ir::Binding::Register(r)),
             value,
-        }, Statement::Return(Some(Expression::Value(Value::Register(rr))))]
+        }, Statement::Return(Some(Expression::Value(Value::Binding(
+            crate::ir::Binding::Register(rr),
+        ))))]
             if r == rr =>
         {
             inner_gen_id(value)
         }
         // let/const x = function*(){}; return x  (after naming)
-        [Statement::Let { name, value, .. }, Statement::Return(Some(Expression::Value(Value::Variable(v))))]
+        [Statement::Let { name, value, .. }, Statement::Return(Some(Expression::Value(Value::Binding(
+            crate::ir::Binding::Variable(v),
+        ))))]
             if name == v =>
         {
             inner_gen_id(value)
         }
         [Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
-        }, Statement::Return(Some(Expression::Value(Value::Variable(v))))]
+        }, Statement::Return(Some(Expression::Value(Value::Binding(
+            crate::ir::Binding::Variable(v),
+        ))))]
             if name == v =>
         {
             inner_gen_id(value)
         }
         // CreateGenerator + kick: `const g = (function*(){})(); g.next(); return g`
-        [Statement::Let { name, value, .. }, start, Statement::Return(Some(Expression::Value(Value::Variable(v))))]
+        [Statement::Let { name, value, .. }, start, Statement::Return(Some(Expression::Value(Value::Binding(
+            crate::ir::Binding::Variable(v),
+        ))))]
             if name == v && is_iterator_next(start, name) =>
         {
             inner_gen_id(value)
         }
         [Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
-        }, start, Statement::Return(Some(Expression::Value(Value::Variable(v))))]
+        }, start, Statement::Return(Some(Expression::Value(Value::Binding(
+            crate::ir::Binding::Variable(v),
+        ))))]
             if name == v && is_iterator_next(start, name) =>
         {
             inner_gen_id(value)
@@ -157,7 +163,7 @@ fn is_iterator_next(stmt: &Statement, name: &str) -> bool {
             property: PropertyKey::Ident(p) | PropertyKey::String(p),
             ..
         } if p == "next"
-            && matches!(object.as_ref(), Expression::Value(Value::Variable(v)) if v == name)
+            && matches!(object.as_ref(), Expression::Value(Value::Binding(crate::ir::Binding::Variable(v))) if v == name)
     )
 }
 
@@ -182,7 +188,9 @@ mod tests {
     fn next_stmt(name: &str) -> Statement {
         Statement::Expr(Expression::Call {
             callee: Box::new(Expression::Member {
-                object: Box::new(Expression::Value(Value::Variable(name.into()))),
+                object: Box::new(Expression::Value(Value::Binding(
+                    crate::ir::Binding::Variable(name.into()),
+                ))),
                 property: crate::ir::PropertyKey::Ident("next".into()),
                 optional: false,
             }),
@@ -194,11 +202,11 @@ mod tests {
     fn collapses_create_generator_plus_next() {
         let body = vec![
             Statement::Assign {
-                target: AssignTarget::Variable("c7".into()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("c7".into())),
                 value: Expression::Value(Value::Constant(crate::ir::Constant::Integer(0))),
             },
             Statement::Assign {
-                target: AssignTarget::Variable("closure_0".into()),
+                target: AssignTarget::Binding(crate::ir::Binding::Variable("closure_0".into())),
                 value: Expression::Value(Value::Parameter(0)),
             },
             Statement::Let {
@@ -207,7 +215,9 @@ mod tests {
                 kind: VarKind::Const,
             },
             next_stmt("iter"),
-            Statement::Return(Some(Expression::Value(Value::Variable("iter".into())))),
+            Statement::Return(Some(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("iter".into()),
+            )))),
         ];
         assert_eq!(generator_wrapper_target(&body), Some(9));
     }

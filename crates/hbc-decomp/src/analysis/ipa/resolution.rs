@@ -2,7 +2,7 @@ use crate::analysis::metro::registry::MetroRegistry;
 use crate::ir::{Expression, PropertyKey, Value};
 use std::collections::HashMap;
 
-use super::traversal::Definition;
+use super::traversal::{DefLookup, Definition};
 
 // Index of function names to candidate function IDs.
 // We keep all IDs because names are often duplicated in production bundles.
@@ -10,13 +10,14 @@ pub type FunctionNameIndex = HashMap<String, Vec<u32>>;
 
 pub(super) fn resolve_callee(
     callee: &Expression,
-    defs: &HashMap<String, Definition>,
+    defs: DefLookup<'_>,
     metro_registry: &MetroRegistry,
     func_name_index: &FunctionNameIndex,
 ) -> Option<u32> {
     match callee {
-        Expression::Value(Value::Variable(name)) => {
-            if let Some(fid) = resolve_named_definition(name, defs, metro_registry, func_name_index) {
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => {
+            if let Some(fid) = resolve_named_definition(name, defs, metro_registry, func_name_index)
+            {
                 return Some(fid);
             }
             // Fallback: check if variable name matches a known function name
@@ -25,7 +26,7 @@ pub(super) fn resolve_callee(
             }
             None
         }
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => {
             let r_name = format!("r{r}");
             resolve_named_definition(&r_name, defs, metro_registry, func_name_index)
         }
@@ -37,14 +38,14 @@ pub(super) fn resolve_callee(
         } => {
             // First try to resolve via module registry
             if let Some(base_name) = get_base_name(object) {
-                if let Some(def) = defs.get(&base_name) {
+                if let Some(def) = defs(&base_name) {
                     if let Definition::Module(mod_id) = def {
                         let prop_name = match property {
                             PropertyKey::String(s) | PropertyKey::Ident(s) => Some(s.as_str()),
                             _ => None,
                         };
                         if let Some(prop_name) = prop_name {
-                            if let Some(module) = metro_registry.get_module(*mod_id) {
+                            if let Some(module) = metro_registry.get_module(mod_id) {
                                 if let Some(fid) = module.exports.get(prop_name) {
                                     return Some(*fid);
                                 }
@@ -74,17 +75,17 @@ pub(super) fn resolve_callee(
 // name is unique in the bundle.
 fn resolve_named_definition(
     key: &str,
-    defs: &HashMap<String, Definition>,
+    defs: DefLookup<'_>,
     metro_registry: &MetroRegistry,
     func_name_index: &FunctionNameIndex,
 ) -> Option<u32> {
-    match defs.get(key)? {
-        Definition::Function(fid) => Some(*fid),
+    match defs(key)? {
+        Definition::Function(fid) => Some(fid),
         Definition::Module(mod_id) => metro_registry
-            .get_module(*mod_id)
+            .get_module(mod_id)
             .and_then(|m| m.exports.get("default"))
             .copied(),
-        Definition::GlobalMember(prop) => resolve_unique_by_name(prop, func_name_index),
+        Definition::GlobalMember(prop) => resolve_unique_by_name(&prop, func_name_index),
         _ => None,
     }
 }
@@ -98,8 +99,8 @@ fn resolve_unique_by_name(name: &str, func_name_index: &FunctionNameIndex) -> Op
 
 pub(super) fn get_base_name(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Value(Value::Variable(name)) => Some(name.clone()),
-        Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => Some(name.clone()),
+        Expression::Value(Value::Binding(crate::ir::Binding::Register(r))) => Some(format!("r{r}")),
         _ => None,
     }
 }
@@ -112,7 +113,7 @@ pub(super) fn get_base_name(expr: &Expression) -> Option<String> {
 // - This helps naming variables holding the result: `var email = getEmail();`
 pub(super) fn extract_name_from_callee(callee: &Expression) -> Option<String> {
     let name = match callee {
-        Expression::Value(Value::Variable(name)) => name.clone(),
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => name.clone(),
         Expression::Member {
             property: PropertyKey::String(prop),
             ..
@@ -126,8 +127,16 @@ pub(super) fn extract_name_from_callee(callee: &Expression) -> Option<String> {
 
     // Strip common prefixes: get, fetch, load, read, find, create, make, build
     let prefixes = [
-        "get", "fetch", "load", "read", "find", "create", "make", "build",
-        "compute", "calculate",
+        "get",
+        "fetch",
+        "load",
+        "read",
+        "find",
+        "create",
+        "make",
+        "build",
+        "compute",
+        "calculate",
     ];
     let lower = name.to_lowercase();
 
@@ -176,7 +185,9 @@ pub(super) fn extract_object_name_from_method_call(callee: &Expression) -> Optio
             }
         }
 
-        if let Expression::Value(Value::Variable(name)) = object.as_ref() {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+            object.as_ref()
+        {
             // Filter out generic names
             if !super::inference::is_generic_name(name) {
                 return Some(name.clone());
@@ -195,7 +206,9 @@ pub(super) fn extract_object_name_from_method_call(callee: &Expression) -> Optio
 // only ever propagate a meaningful, source-derived identifier.
 pub(super) fn extract_method_object_name(callee: &Expression) -> Option<String> {
     if let Expression::Member { object, .. } = callee {
-        if let Expression::Value(Value::Variable(name)) = object.as_ref() {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+            object.as_ref()
+        {
             if !super::inference::is_generic_name(name) {
                 return Some(name.clone());
             }
@@ -219,7 +232,7 @@ mod tests {
         // Caller body: r1 = globalThis.mid; r2 = r1(undefined, r0)
         let caller = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(Expression::Value(Value::Global)),
                     property: PropertyKey::Ident("mid".into()),
@@ -227,12 +240,14 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Register(1))),
+                    callee: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Register(1),
+                    ))),
                     arguments: vec![
                         Expression::Value(Value::Constant(crate::ir::Constant::Undefined)),
-                        Expression::Value(Value::Register(0)),
+                        Expression::Value(Value::Binding(crate::ir::Binding::Register(0))),
                     ],
                 },
             },
@@ -258,7 +273,7 @@ mod tests {
     fn indirect_global_member_ambiguous_name_does_not_resolve() {
         let caller = vec![
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Member {
                     object: Box::new(Expression::Value(Value::Global)),
                     property: PropertyKey::Ident("run".into()),
@@ -266,9 +281,11 @@ mod tests {
                 },
             },
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
-                    callee: Box::new(Expression::Value(Value::Register(1))),
+                    callee: Box::new(Expression::Value(Value::Binding(
+                        crate::ir::Binding::Register(1),
+                    ))),
                     arguments: vec![],
                 },
             },
@@ -281,7 +298,11 @@ mod tests {
 
         let analysis = crate::analysis::run_ipa(&functions, &MetroRegistry::new(), &name_index);
         assert!(
-            analysis.graph.calls.get(&0).is_none_or(|c| !c.contains(&3) && !c.contains(&4)),
+            analysis
+                .graph
+                .calls
+                .get(&0)
+                .is_none_or(|c| !c.contains(&3) && !c.contains(&4)),
             "ambiguous name must not create a call edge"
         );
     }

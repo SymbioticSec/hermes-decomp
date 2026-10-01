@@ -23,13 +23,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // We try to read whatever we found or the original path
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(_) => {
-            // Fallback for demo purposes if path resolution fails
-            vec![]
-        }
-    };
+    // An unreadable path leaves the demo with no bytes, which the checks below
+    // report rather than panicking on.
+    let bytes = std::fs::read(path).unwrap_or_default();
 
     if bytes.is_empty() {
         return Ok(());

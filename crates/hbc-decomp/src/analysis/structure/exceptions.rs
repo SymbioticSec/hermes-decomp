@@ -8,7 +8,9 @@ pub(super) fn recover_catch_body(
     block_id: BlockId,
     loop_stack: &[&LoopInfo],
 ) -> (Option<String>, Structure) {
-    let catch_param = ctx.cfg.get(block_id)
+    let catch_param = ctx
+        .cfg
+        .get(block_id)
         .and_then(|b| extract_catch_param(&b.statements));
 
     let body = recover_structure_inner(ctx, block_id, loop_stack);
@@ -43,21 +45,27 @@ fn extract_catch_param(stmts: &[Statement]) -> Option<String> {
 fn is_exception_value(value: &crate::ir::Expression) -> bool {
     matches!(
         value,
-        crate::ir::Expression::Value(Value::Variable(name)) if name == "__exception"
+        crate::ir::Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) if name == "__exception"
     )
 }
 
 fn strip_exception_assign(structure: Structure) -> Structure {
     match structure {
         Structure::Block(id, stmts) => {
-            let filtered: Vec<_> = stmts.into_iter().filter(|s| {
-                if let Statement::Assign { value, .. } = s {
-                    if let crate::ir::Expression::Value(Value::Variable(name)) = value {
-                        return name != "__exception";
+            let filtered: Vec<_> = stmts
+                .into_iter()
+                .filter(|s| {
+                    if let Statement::Assign { value, .. } = s {
+                        if let crate::ir::Expression::Value(Value::Binding(
+                            crate::ir::Binding::Variable(name),
+                        )) = value
+                        {
+                            return name != "__exception";
+                        }
                     }
-                }
-                true
-            }).collect();
+                    true
+                })
+                .collect();
             Structure::Block(id, filtered)
         }
         Structure::Sequence(mut parts) => {

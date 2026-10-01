@@ -8,7 +8,10 @@ pub fn encode_level_slot(level: u32, slot: u32) -> u32 {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ClosureSlotValue {
-    Function { id: u32, name: Option<String> },
+    Function {
+        id: u32,
+        name: Option<String>,
+    },
     Constant(String),
     /// Slot exclusively holds a RegExp literal (no non-regex stores observed).
     /// Only this variant is named `re{N}`, string constants starting with `/`
@@ -76,19 +79,31 @@ impl ClosureInfo {
 /// Names that are intermediate SSA-like temps, not the identity of a captured binding.
 pub(super) fn is_ephemeral_slot_name(name: &str) -> bool {
     if name == "tmp"
-        || name.strip_prefix("tmp").is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
+        || name
+            .strip_prefix("tmp")
+            .is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
     {
         return true;
     }
-    if name.strip_prefix('r').is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+    if name
+        .strip_prefix('r')
+        .is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
     {
         return true;
     }
     // Common names inferred from binary ops / short-lived results.
     matches!(
         name,
-        "sum" | "diff" | "product" | "quotient" | "text" | "result" | "value" | "ret"
-            | "tmpResult" | "callResult"
+        "sum"
+            | "diff"
+            | "product"
+            | "quotient"
+            | "text"
+            | "result"
+            | "value"
+            | "ret"
+            | "tmpResult"
+            | "callResult"
     ) || name.ends_with("Result")
         || name.ends_with("Return")
 }

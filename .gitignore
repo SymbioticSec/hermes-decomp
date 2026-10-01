@@ -18,9 +18,23 @@ Thumbs.db
 decompiled*.js
 debug_output.js
 global_snippet.js
-examples/**/*.js
-!examples/**/*.original.js
-examples/
+
+# Corpus. The inputs are tracked so it can be rebuilt from the repo
+# (fetch_hermesc.sh then build_corpus.sh). Everything the build compiles or
+# decompiles is generated and stays local.
+/examples/*
+!/examples/react-native/
+/examples/react-native/*
+!/examples/react-native/README.md
+!/examples/react-native/sample.js
+!/examples/react-native/metro_sample.js
+!/examples/react-native/expressions/
+/examples/react-native/expressions/*
+!/examples/react-native/expressions/*.js
+
+# Throwaway example binaries, kept local.
+/crates/hbc-decomp/examples/bench_git/
+/crates/hbc-decomp/examples/debug_buffer.rs
 
 # Logs and debug artifacts
 *.log
@@ -33,7 +47,6 @@ examples/
 IMPROVEMENTS_PLAN.md
 PLAN*.md
 ROADMAP.md
-DISCORD.md
 DISOCRD.md
 TESTING_DEVICE.md
 TESTING*.md
@@ -45,7 +58,15 @@ device_test.sh
 **/CLAUDE.md
 PLAN.md
 THIRD_PARTY_NOTICES.md
-scripts/
+# Validation scripts are the quality gates, so they are tracked. Anything else
+# under scripts/ stays local.
+/scripts/*
+!/scripts/build/
+/scripts/build/*
+!/scripts/build/*.sh
+!/scripts/build/*.mjs
+!/scripts/build/*.cpp
+!/scripts/build/*.tsv
 # IDE / AI tooling
 .claude/
 .cursor/
@@ -63,3 +84,38 @@ test_defaults.hbc
 *.hdcache
 *.hdcache.tmp
 paper/
+
+# Bytecode inputs and everything a decompile produces. Bundles pulled from an
+# APK live next to the repo for local runs and never belong in it.
+*.hbc
+# Tracked crash-regression fixtures, a few hundred bytes each (tests/e2e_corpus.rs).
+!/crates/hbc-decomp-cli/tests/fixtures/*.hbc
+*.bundle
+*.hasm
+*.apk
+*.deep.js
+*_decompiled.js
+*.decompiled.*
+/*.js
+/new_teqt/
+/runs/
+/out/
+
+# Local reports, notes and findings at the repo root. Only the documents
+# below are meant to be published.
+/*.md
+!/README.md
+!/CONTRIBUTING.md
+!/CHANGELOG.md
+/*.txt
+/*.tsv
+/*.csv
+/*.json
+!/mcp-config.example.json
+
+# Profiling and tooling artifacts
+*.profraw
+*.profdata
+flamegraph*.svg
+perf.data*
+/dist/

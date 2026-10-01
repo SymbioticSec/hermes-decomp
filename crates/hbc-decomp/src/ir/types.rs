@@ -48,15 +48,72 @@ impl fmt::Display for Constant {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Value {
+// The identity of a storage location.
+//
+// A name in the IR plays one of two roles: it designates a place that can be
+// written, or it designates a value that is read. Those roles lived in two
+// unrelated enums that each repeated the same three identities, so nothing
+// stopped a pass from writing to something that was never a place. `Binding` is
+// the identity itself, shared by both roles, which is what lets a pass ask what
+// a name refers to instead of guessing from its spelling.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Binding {
     Register(u32),
     Variable(String),
+    ClosureVar { level: u32, slot: u32 },
+}
+
+impl Binding {
+    /// The name this binding renders as, which is also how two bindings are
+    /// told apart once registers have been named.
+    pub fn name(&self) -> String {
+        match self {
+            Binding::Register(r) => format!("r{r}"),
+            Binding::Variable(n) => n.clone(),
+            Binding::ClosureVar { level, slot } => Value::closure_var_name(*level, *slot),
+        }
+    }
+}
+
+impl fmt::Display for Binding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Binding::Register(r) => write!(f, "r{r}"),
+            // Sanitised on the way out, as the codegen expects.
+            Binding::Variable(name) => write!(f, "{}", crate::util::sanitize_identifier(name)),
+            Binding::ClosureVar { level, slot } => {
+                write!(f, "{}", Value::closure_var_name(*level, *slot))
+            }
+        }
+    }
+}
+
+impl From<Binding> for Value {
+    fn from(b: Binding) -> Self {
+        Value::Binding(b)
+    }
+}
+
+impl Value {
+    /// The binding this value reads, when it reads one at all. A constant, `this`
+    /// or `arguments` designates no storage location and yields `None`.
+    pub fn as_binding(&self) -> Option<Binding> {
+        match self {
+            Value::Binding(b) => Some(b.clone()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Value {
+    /// A read of a named location: a register, a variable or an environment
+    /// slot. Everything else here designates no storage at all.
+    Binding(Binding),
     Constant(Constant),
     This,
     Global,
     Parameter(u32),
-    ClosureVar { level: u32, slot: u32 },
     Arguments,
     NewTarget,
     // The `super` keyword (ES6 class). Only valid inside a class method body;
@@ -84,19 +141,11 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Register(r) => write!(f, "r{r}"),
-            Value::Variable(name) => {
-                // Sanitize identifiers (handles @@symbols, invalid chars, etc.)
-                let sanitized = crate::util::sanitize_identifier(name);
-                write!(f, "{sanitized}")
-            }
+            Value::Binding(b) => write!(f, "{b}"),
             Value::Constant(c) => write!(f, "{c}"),
             Value::This => write!(f, "this"),
             Value::Global => write!(f, "globalThis"),
             Value::Parameter(i) => write!(f, "arg{i}"),
-            Value::ClosureVar { level, slot } => {
-                write!(f, "{}", Self::closure_var_name(*level, *slot))
-            }
             Value::Arguments => write!(f, "arguments"),
             Value::NewTarget => write!(f, "new.target"),
             Value::Super => write!(f, "super"),
@@ -104,3 +153,68 @@ impl fmt::Display for Value {
     }
 }
 
+#[cfg(test)]
+mod binding_tests {
+    use super::{Binding, Value};
+
+    #[test]
+    fn a_value_that_reads_a_location_yields_its_binding() {
+        assert_eq!(
+            Value::Binding(Binding::Register(5)).as_binding(),
+            Some(Binding::Register(5))
+        );
+        assert_eq!(
+            Value::Binding(Binding::Variable("env".into())).as_binding(),
+            Some(Binding::Variable("env".into()))
+        );
+        assert_eq!(
+            Value::Binding(Binding::ClosureVar { level: 1, slot: 2 }).as_binding(),
+            Some(Binding::ClosureVar { level: 1, slot: 2 })
+        );
+    }
+
+    #[test]
+    fn a_value_that_designates_no_location_yields_none() {
+        // These read no storage, so treating them as a place to write is the very
+        // confusion the type is there to prevent.
+        for v in [
+            Value::This,
+            Value::Global,
+            Value::Arguments,
+            Value::NewTarget,
+            Value::Super,
+            Value::Parameter(0),
+            Value::Constant(super::Constant::Integer(1)),
+        ] {
+            assert_eq!(v.as_binding(), None, "{v:?} designates no location");
+        }
+    }
+
+    #[test]
+    fn the_round_trip_through_value_keeps_the_identity() {
+        for b in [
+            Binding::Register(3),
+            Binding::Variable("obj".into()),
+            Binding::ClosureVar { level: 0, slot: 7 },
+        ] {
+            let v: Value = b.clone().into();
+            assert_eq!(v.as_binding(), Some(b));
+        }
+    }
+
+    #[test]
+    fn a_binding_renders_exactly_as_the_value_it_converts_to() {
+        // The refactor must not move a single character of output, so the two
+        // renderings have to agree.
+        for b in [
+            Binding::Register(3),
+            Binding::Variable("obj".into()),
+            Binding::Variable("get Foo".into()),
+            Binding::ClosureVar { level: 0, slot: 7 },
+            Binding::ClosureVar { level: 2, slot: 1 },
+        ] {
+            let v: Value = b.clone().into();
+            assert_eq!(format!("{b}"), format!("{v}"));
+        }
+    }
+}

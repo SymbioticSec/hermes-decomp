@@ -24,3 +24,28 @@ pub use patch::{
 };
 pub use reloc::RelocPlan;
 pub use serialize::{finalize_raw_image, serialize_file, write_file, SerializeOptions};
+
+// Whether a corpus fixture is present, for the tests that need real bytecode.
+//
+// The corpus is rebuilt from the repo by scripts/build/fetch_hermesc.sh then
+// build_corpus.sh, and its compiled artefacts are deliberately not tracked. A
+// missing fixture used to make these tests return quietly, which turned them
+// into permanent no-ops everywhere the corpus had not been built, CI included.
+// Now the default is to fail and say how to fix it, and a run that knowingly
+// has no corpus opts out through HBC_CORPUS_OPTIONAL.
+#[cfg(test)]
+pub(crate) fn corpus_fixture_present(path: &str) -> bool {
+    if std::path::Path::new(path).exists() {
+        return true;
+    }
+    if std::env::var_os("HBC_CORPUS_OPTIONAL").is_some() {
+        eprintln!("skip: corpus fixture missing ({path})");
+        return false;
+    }
+    panic!(
+        "corpus fixture missing:\n  {path}\n\
+         Build it with scripts/build/fetch_hermesc.sh then \
+         scripts/build/build_corpus.sh,\n\
+         or set HBC_CORPUS_OPTIONAL=1 to skip the tests that need one."
+    );
+}

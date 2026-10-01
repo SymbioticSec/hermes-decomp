@@ -1,8 +1,10 @@
-use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, PropertyKey, Statement, UnaryOp, Value};
+use crate::ir::{
+    AssignTarget, BinaryOp, Binding, Constant, Expression, PropertyKey, Statement, UnaryOp, Value,
+};
 
 pub fn expr_uses_register(expr: &Expression, reg: u32) -> bool {
     match expr {
-        Expression::Value(Value::Register(r)) => *r == reg,
+        Expression::Value(Value::Binding(Binding::Register(r))) => *r == reg,
         Expression::Binary { left, right, .. } => {
             expr_uses_register(left, reg) || expr_uses_register(right, reg)
         }
@@ -65,17 +67,19 @@ pub fn stmt_uses_register(stmt: &Statement, reg: u32) -> bool {
 
 pub fn target_to_key(target: &AssignTarget) -> Option<String> {
     match target {
-        AssignTarget::Register(r) => Some(format!("r{r}")),
-        AssignTarget::Variable(name) => Some(name.clone()),
-        AssignTarget::ClosureVar { slot, level, .. } => Some(format!("closure_{level}_{slot}")),
+        AssignTarget::Binding(Binding::Register(r)) => Some(format!("r{r}")),
+        AssignTarget::Binding(Binding::Variable(name)) => Some(name.clone()),
+        AssignTarget::Binding(Binding::ClosureVar { slot, level, .. }) => {
+            Some(format!("closure_{level}_{slot}"))
+        }
         _ => None,
     }
 }
 
 pub fn get_value_name(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Value(Value::Variable(n)) => Some(n.clone()),
-        Expression::Value(Value::Register(r)) => Some(format!("r{r}")),
+        Expression::Value(Value::Binding(Binding::Variable(n))) => Some(n.clone()),
+        Expression::Value(Value::Binding(Binding::Register(r))) => Some(format!("r{r}")),
         Expression::Value(Value::Parameter(idx)) => Some(format!("arg{idx}")),
         _ => None,
     }
@@ -171,9 +175,174 @@ pub fn exprs_equal(a: &Expression, b: &Expression) -> bool {
 // Apply a transformation function to all nested statement bodies in a statement.
 // Handles If, While, DoWhile, For, ForIn, ForOf, TryCatch, Switch, and Block.
 // Non-body fields (conditions, expressions) are preserved unchanged.
-pub fn map_nested_bodies(stmt: Statement, mut f: impl FnMut(Vec<Statement>) -> Vec<Statement>) -> Statement {
+// Hand every expression an assignment target contains to `f`.
+//
+// A target is a place, not a value, but the places that are not plain bindings
+// are built out of expressions: the object of a member access, the key of an
+// index, the default of a destructuring slot. A pass that used to recurse into a
+// target as though it were an expression uses this instead, and keeps seeing the
+// same sub-expressions it always did.
+pub fn for_each_target_expression(target: &AssignTarget, f: &mut impl FnMut(&Expression)) {
+    match target {
+        AssignTarget::Binding(_) => {}
+        AssignTarget::Member { object, .. } => f(object),
+        AssignTarget::Index { object, key } => {
+            f(object);
+            f(key);
+        }
+        AssignTarget::DestructuringArray(items) => {
+            for (slot, default) in items.iter().flatten() {
+                for_each_target_expression(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+        }
+        AssignTarget::DestructuringArrayRest { elements, rest } => {
+            for (slot, default) in elements.iter().flatten() {
+                for_each_target_expression(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+            for_each_target_expression(rest, f);
+        }
+        AssignTarget::DestructuringObject(props) => {
+            for (_, slot, default) in props {
+                for_each_target_expression(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+        }
+        AssignTarget::DestructuringObjectRest { properties, rest } => {
+            for (_, slot, default) in properties {
+                for_each_target_expression(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+            for_each_target_expression(rest, f);
+        }
+        AssignTarget::Rest(inner) => for_each_target_expression(inner, f),
+    }
+}
+
+// Rebuild a target, mapping every expression it contains. The owned counterpart
+// of `for_each_target_expression`, for the passes that transform by value.
+pub fn map_target_expressions(
+    target: AssignTarget,
+    f: &mut impl FnMut(Expression) -> Expression,
+) -> AssignTarget {
+    let mut target = target;
+    for_each_target_expression_mut(&mut target, &mut |e| {
+        let taken = std::mem::replace(e, Expression::Value(Value::Constant(Constant::Undefined)));
+        *e = f(taken);
+    });
+    target
+}
+
+// The mutable counterpart, same coverage.
+pub fn for_each_target_expression_mut(
+    target: &mut AssignTarget,
+    f: &mut impl FnMut(&mut Expression),
+) {
+    match target {
+        AssignTarget::Binding(_) => {}
+        AssignTarget::Member { object, .. } => f(object),
+        AssignTarget::Index { object, key } => {
+            f(object);
+            f(key);
+        }
+        AssignTarget::DestructuringArray(items) => {
+            for (slot, default) in items.iter_mut().flatten() {
+                for_each_target_expression_mut(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+        }
+        AssignTarget::DestructuringArrayRest { elements, rest } => {
+            for (slot, default) in elements.iter_mut().flatten() {
+                for_each_target_expression_mut(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+            for_each_target_expression_mut(rest, f);
+        }
+        AssignTarget::DestructuringObject(props) => {
+            for (_, slot, default) in props {
+                for_each_target_expression_mut(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+        }
+        AssignTarget::DestructuringObjectRest { properties, rest } => {
+            for (_, slot, default) in properties {
+                for_each_target_expression_mut(slot, f);
+                if let Some(default) = default {
+                    f(default);
+                }
+            }
+            for_each_target_expression_mut(rest, f);
+        }
+        AssignTarget::Rest(inner) => for_each_target_expression_mut(inner, f),
+    }
+}
+
+// The read only counterpart of `map_nested_bodies`: hand every statement body a
+// control structure owns to `f`, without rebuilding the statement. Same coverage,
+// so a reader and a rewriter never disagree about what counts as a nested body.
+pub fn for_each_nested_body(stmt: &Statement, f: &mut impl FnMut(&[Statement])) {
     match stmt {
-        Statement::If { condition, then_body, else_body } => Statement::If {
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            f(then_body);
+            f(else_body);
+        }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::For { body, .. }
+        | Statement::ForIn { body, .. }
+        | Statement::ForOf { body, .. } => f(body),
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            f(try_body);
+            f(catch_body);
+            f(finally_body);
+        }
+        Statement::Switch { cases, default, .. } => {
+            for (_, body) in cases {
+                f(body);
+            }
+            if let Some(body) = default {
+                f(body);
+            }
+        }
+        Statement::Block(stmts) => f(stmts),
+        _ => {}
+    }
+}
+
+pub fn map_nested_bodies(
+    stmt: Statement,
+    mut f: impl FnMut(Vec<Statement>) -> Vec<Statement>,
+) -> Statement {
+    match stmt {
+        Statement::If {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::If {
             condition,
             then_body: f(then_body),
             else_body: f(else_body),
@@ -186,29 +355,51 @@ pub fn map_nested_bodies(stmt: Statement, mut f: impl FnMut(Vec<Statement>) -> V
             body: f(body),
             condition,
         },
-        Statement::For { init, condition, update, body } => Statement::For {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
             init,
             condition,
             update,
             body: f(body),
         },
-        Statement::ForIn { variable, object, body } => Statement::ForIn {
+        Statement::ForIn {
+            variable,
+            object,
+            body,
+        } => Statement::ForIn {
             variable,
             object,
             body: f(body),
         },
-        Statement::ForOf { variable, iterable, body } => Statement::ForOf {
+        Statement::ForOf {
+            variable,
+            iterable,
+            body,
+        } => Statement::ForOf {
             variable,
             iterable,
             body: f(body),
         },
-        Statement::TryCatch { try_body, catch_param, catch_body, finally_body } => Statement::TryCatch {
+        Statement::TryCatch {
+            try_body,
+            catch_param,
+            catch_body,
+            finally_body,
+        } => Statement::TryCatch {
             try_body: f(try_body),
             catch_param,
             catch_body: f(catch_body),
             finally_body: f(finally_body),
         },
-        Statement::Switch { discriminant, cases, default } => Statement::Switch {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => Statement::Switch {
             discriminant,
             cases: cases.into_iter().map(|(e, stmts)| (e, f(stmts))).collect(),
             default: default.map(&mut f),
@@ -218,16 +409,25 @@ pub fn map_nested_bodies(stmt: Statement, mut f: impl FnMut(Vec<Statement>) -> V
     }
 }
 
-pub fn map_nested_bodies_mut(stmt: &mut Statement, mut f: impl FnMut(Vec<Statement>) -> Vec<Statement>) {
+pub fn map_nested_bodies_mut(
+    stmt: &mut Statement,
+    mut f: impl FnMut(Vec<Statement>) -> Vec<Statement>,
+) {
     match stmt {
-        Statement::If { then_body, else_body, .. } => {
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
             let t = std::mem::take(then_body);
             *then_body = f(t);
             let e = std::mem::take(else_body);
             *else_body = f(e);
         }
-        Statement::While { body, .. } | Statement::DoWhile { body, .. }
-        | Statement::For { body, .. } | Statement::ForIn { body, .. }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::For { body, .. }
+        | Statement::ForIn { body, .. }
         | Statement::ForOf { body, .. } => {
             let b = std::mem::take(body);
             *body = f(b);
@@ -236,7 +436,12 @@ pub fn map_nested_bodies_mut(stmt: &mut Statement, mut f: impl FnMut(Vec<Stateme
             let b = std::mem::take(inner);
             *inner = f(b);
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             let t = std::mem::take(try_body);
             *try_body = f(t);
             let c = std::mem::take(catch_body);
@@ -288,8 +493,8 @@ pub fn is_simple_value(expr: &Expression) -> bool {
     matches!(
         expr,
         Expression::Value(Value::Constant(_))
-            | Expression::Value(Value::Register(_))
-            | Expression::Value(Value::Variable(_))
+            | Expression::Value(Value::Binding(Binding::Register(_)))
+            | Expression::Value(Value::Binding(Binding::Variable(_)))
             | Expression::Value(Value::This)
             | Expression::Value(Value::Global)
     )
@@ -298,13 +503,27 @@ pub fn is_simple_value(expr: &Expression) -> bool {
 // Check if a condition is `x !== x` or `!(x === x)` (NaN check pattern).
 // This pattern arises from Hermes bytecode and indicates dead code.
 pub fn is_nan_check(condition: &Expression) -> bool {
-    if let Expression::Binary { op: BinaryOp::StrictNeq, left, right } = condition {
+    if let Expression::Binary {
+        op: BinaryOp::StrictNeq,
+        left,
+        right,
+    } = condition
+    {
         if left == right {
             return true;
         }
     }
-    if let Expression::Unary { op: UnaryOp::Not, operand } = condition {
-        if let Expression::Binary { op: BinaryOp::StrictEq, left, right } = operand.as_ref() {
+    if let Expression::Unary {
+        op: UnaryOp::Not,
+        operand,
+    } = condition
+    {
+        if let Expression::Binary {
+            op: BinaryOp::StrictEq,
+            left,
+            right,
+        } = operand.as_ref()
+        {
             if left == right {
                 return true;
             }
@@ -314,7 +533,10 @@ pub fn is_nan_check(condition: &Expression) -> bool {
 }
 
 pub fn is_undefined_expr(expr: &Expression) -> bool {
-    matches!(expr, Expression::Value(Value::Constant(Constant::Undefined)))
+    matches!(
+        expr,
+        Expression::Value(Value::Constant(Constant::Undefined))
+    )
 }
 
 #[cfg(test)]
@@ -323,7 +545,9 @@ mod tests {
     use crate::ir::Constant;
 
     fn make_body(n: i32) -> Vec<Statement> {
-        vec![Statement::Expr(Expression::Value(Value::Constant(Constant::Integer(n))))]
+        vec![Statement::Expr(Expression::Value(Value::Constant(
+            Constant::Integer(n),
+        )))]
     }
 
     #[test]
@@ -395,7 +619,10 @@ mod tests {
         let stmt = Statement::Block(make_body(1));
         let result = map_nested_bodies(stmt, |_| Vec::new());
         if let Statement::Block(body) = result {
-            assert!(body.is_empty(), "Body should have been replaced with empty vec");
+            assert!(
+                body.is_empty(),
+                "Body should have been replaced with empty vec"
+            );
         } else {
             panic!("Expected Block statement");
         }
@@ -411,7 +638,12 @@ mod tests {
 
         map_nested_bodies_mut(&mut stmt, |_| Vec::new());
 
-        if let Statement::If { then_body, else_body, .. } = &stmt {
+        if let Statement::If {
+            then_body,
+            else_body,
+            ..
+        } = &stmt
+        {
             assert!(then_body.is_empty());
             assert!(else_body.is_empty());
         } else {

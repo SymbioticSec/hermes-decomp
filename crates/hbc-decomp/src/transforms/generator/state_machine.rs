@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, Statement, Value};
+use crate::ir::{AssignTarget, BinaryOp, Binding, Constant, Expression, Statement, Value};
 
 // Detect and simplify generator state machine patterns.
 //
@@ -87,12 +87,13 @@ fn looks_like_state_machine(stmt: &Statement) -> bool {
             right,
         } = condition
         {
-            if matches!(left.as_ref(), Expression::Value(Value::Register(_)))
-                && matches!(
-                    right.as_ref(),
-                    Expression::Value(Value::Constant(Constant::Integer(_)))
-                )
-            {
+            if matches!(
+                left.as_ref(),
+                Expression::Value(Value::Binding(Binding::Register(_)))
+            ) && matches!(
+                right.as_ref(),
+                Expression::Value(Value::Constant(Constant::Integer(_)))
+            ) {
                 depth += 1;
             }
         }
@@ -176,7 +177,7 @@ fn collect_state_cases(stmt: &Statement, cases: &mut Vec<(i32, Vec<Statement>)>)
 
 // Flatten an if-else chain that looks like a state machine.
 fn flatten_state_if_chain(stmt: &Statement) -> Option<Vec<Statement>> {
-    flatten_state_switch(&[stmt.clone()])
+    flatten_state_switch(std::slice::from_ref(stmt))
 }
 
 // Check if a statement is a state assignment (state = N).
@@ -184,7 +185,7 @@ fn is_state_assignment_ref(stmt: &Statement) -> bool {
     matches!(
         stmt,
         Statement::Assign {
-            target: AssignTarget::Register(_),
+            target: AssignTarget::Binding(Binding::Register(_)),
             value: Expression::Value(Value::Constant(Constant::Integer(_)))
         }
     )
@@ -247,7 +248,7 @@ mod tests {
         let stmt = Statement::If {
             condition: Expression::Binary {
                 op: BinaryOp::StrictEq,
-                left: Box::new(Expression::Value(Value::Register(0))),
+                left: Box::new(Expression::Value(Value::Binding(Binding::Register(0)))),
                 right: Box::new(Expression::Value(Value::Constant(Constant::Integer(0)))),
             },
             then_body: vec![Statement::Return(Some(Expression::Value(Value::Constant(
@@ -256,7 +257,7 @@ mod tests {
             else_body: vec![Statement::If {
                 condition: Expression::Binary {
                     op: BinaryOp::StrictEq,
-                    left: Box::new(Expression::Value(Value::Register(0))),
+                    left: Box::new(Expression::Value(Value::Binding(Binding::Register(0)))),
                     right: Box::new(Expression::Value(Value::Constant(Constant::Integer(1)))),
                 },
                 then_body: vec![Statement::Return(Some(Expression::Value(Value::Constant(

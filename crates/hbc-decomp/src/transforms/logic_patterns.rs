@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, BinaryOp, Constant, Expression, Statement, Value};
+use crate::ir::{AssignTarget, BinaryOp, Binding, Constant, Expression, Statement, Value};
 
 pub fn transform_logic(stmts: &mut [Statement]) {
     for stmt in stmts.iter_mut() {
@@ -74,7 +74,7 @@ pub fn transform_logic(stmts: &mut [Statement]) {
             value: _v1,
         } = stmt1
         {
-            if let AssignTarget::Register(r1) = t1 {
+            if let AssignTarget::Binding(Binding::Register(r1)) = t1 {
                 if let Statement::If {
                     condition,
                     then_body,
@@ -90,7 +90,9 @@ pub fn transform_logic(stmts: &mut [Statement]) {
                             if t2 == t1 {
                                 // Check condition: if (r1) or if (r1 != null)
                                 let is_null_check = match condition {
-                                    Expression::Value(Value::Register(r)) => *r == *r1,
+                                    Expression::Value(Value::Binding(Binding::Register(r))) => {
+                                        *r == *r1
+                                    }
                                     Expression::Binary {
                                         op: BinaryOp::Neq | BinaryOp::StrictNeq,
                                         left,
@@ -119,7 +121,7 @@ pub fn transform_logic(stmts: &mut [Statement]) {
                                             // Transform the IF into: t = t?.prop
                                             let new_expr = Expression::Member {
                                                 object: Box::new(Expression::Value(
-                                                    Value::Register(*r1),
+                                                    Value::Binding(Binding::Register(*r1)),
                                                 )),
                                                 property: property.clone(),
                                                 optional: true,
@@ -154,7 +156,7 @@ fn are_equivalent(e1: &Expression, e2: &Expression) -> bool {
 }
 
 fn is_reg(expr: &Expression, reg: u32) -> bool {
-    matches!(expr, Expression::Value(Value::Register(r)) if *r == reg)
+    matches!(expr, Expression::Value(Value::Binding(Binding::Register(r))) if *r == reg)
 }
 
 fn is_null_or_undefined(expr: &Expression) -> bool {

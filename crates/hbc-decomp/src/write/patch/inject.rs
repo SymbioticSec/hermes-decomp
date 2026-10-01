@@ -119,9 +119,7 @@ fn build_log_entry(
         .iter()
         .position(|s| s.value == "print")
         .ok_or_else(|| {
-            Error::Write(
-                "inject log: no \"print\" string in the table to build a log call".into(),
-            )
+            Error::Write("inject log: no \"print\" string in the table to build a log call".into())
         })? as u32;
 
     // Read this function's name string id, then reserve the frame registers and a
@@ -185,7 +183,10 @@ fn build_log_entry(
     // r0=global, r1=print fn, r2=this(undefined), r3=message
     let mut seq = vec![
         mk(op_ggo, vec![reg(0)]),
-        mk(op_try, vec![reg(1), reg(0), u8v(cache_idx as u8), u16v(print_id as u16)]),
+        mk(
+            op_try,
+            vec![reg(1), reg(0), u8v(cache_idx as u8), u16v(print_id as u16)],
+        ),
         mk(op_lcu, vec![reg(2)]),
         mk(op_lcs, vec![reg(3), u16v(msg_id as u16)]),
         mk(op_call2, vec![reg(0), reg(1), reg(2), reg(3)]),
@@ -270,15 +271,20 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../examples/react-native/v96/expressions/generator/bytecode.hbc"
         );
-        if !std::path::Path::new(path).exists() {
+        if !crate::write::corpus_fixture_present(path) {
             return;
         }
         let bytes = std::fs::read(path).unwrap();
         let mut file = BytecodeFile::parse_auto(&bytes).unwrap();
         let format = BytecodeFormat::for_version(file.header.version).unwrap();
-        let out =
-            inject_stub(&mut file, &format, 0, InjectStubKind::NopPad, &PatchOptions::default())
-                .unwrap();
+        let out = inject_stub(
+            &mut file,
+            &format,
+            0,
+            InjectStubKind::NopPad,
+            &PatchOptions::default(),
+        )
+        .unwrap();
         assert!(verify_footer(&out));
         BytecodeFile::parse_auto(&out).expect("reparse after inject");
     }
@@ -293,7 +299,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../examples/react-native/v98/expressions/class_basic/bytecode.hbc"
         );
-        if !std::path::Path::new(path).exists() {
+        if !crate::write::corpus_fixture_present(path) {
             return;
         }
         let bytes = std::fs::read(path).unwrap();

@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use super::registry::MetroRegistry;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct DependencyTree {
@@ -45,13 +45,7 @@ impl DependencyGraph {
         module_id: u32,
         max_depth: usize,
     ) -> DependencyTree {
-        Self::build_tree(
-            registry,
-            module_id,
-            0,
-            max_depth,
-            &mut HashSet::new(),
-        )
+        Self::build_tree(registry, module_id, 0, max_depth, &mut HashSet::new())
     }
 
     fn build_tree(

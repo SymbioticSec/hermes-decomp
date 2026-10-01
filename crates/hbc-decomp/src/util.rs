@@ -69,6 +69,17 @@ pub fn sanitize_identifier(name: &str) -> String {
     }
 
     if is_valid_identifier(name) {
+        // `return`, `function` and the like are identifiers to the lexer
+        // and forbidden as names; a leading underscore keeps them readable.
+        // `arguments`, `eval` and the value names are reserved from being
+        // declared, not from being read, and the IR reads them as themselves.
+        let readable = matches!(
+            name,
+            "arguments" | "eval" | "undefined" | "NaN" | "Infinity" | "globalThis"
+        );
+        if crate::constants::is_reserved_word(name) && !readable {
+            return format!("_{name}");
+        }
         return name.to_string();
     }
 

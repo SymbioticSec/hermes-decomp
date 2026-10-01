@@ -1,4 +1,4 @@
-use crate::ir::{AssignTarget, Constant, Expression, PropertyKey, Statement, Value};
+use crate::ir::{AssignTarget, Binding, Constant, Expression, PropertyKey, Statement, Value};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Debug, Clone, Default)]
@@ -47,7 +47,7 @@ pub fn analyze_registers(stmts: &[Statement]) -> BTreeMap<u32, RegisterInfo> {
 fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
     match stmt {
         Statement::Assign { target, value } => {
-            if let AssignTarget::Register(r) = target {
+            if let AssignTarget::Binding(Binding::Register(r)) = target {
                 let entry = info.entry(*r).or_default();
                 infer_role_from_value(value, entry);
             }
@@ -87,7 +87,12 @@ fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
         Statement::Let { value, .. } => {
             analyze_expr(value, info);
         }
-        Statement::For { init, condition, update, body } => {
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
             if let Some(i) = init {
                 analyze_stmt(i, info);
             }
@@ -119,7 +124,11 @@ fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
                 analyze_stmt(s, info);
             }
         }
-        Statement::Switch { discriminant, cases, default } => {
+        Statement::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
             analyze_expr(discriminant, info);
             for (val, body) in cases {
                 analyze_expr(val, info);
@@ -133,7 +142,12 @@ fn analyze_stmt(stmt: &Statement, info: &mut BTreeMap<u32, RegisterInfo>) {
                 }
             }
         }
-        Statement::TryCatch { try_body, catch_body, finally_body, .. } => {
+        Statement::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             for s in try_body {
                 analyze_stmt(s, info);
             }
@@ -158,35 +172,43 @@ fn analyze_target(target: &AssignTarget, info: &mut BTreeMap<u32, RegisterInfo>)
         AssignTarget::DestructuringObject(props) => {
             for (key, t, def) in props {
                 // Name register after its destructuring key
-                if let AssignTarget::Register(r) = t {
+                if let AssignTarget::Binding(Binding::Register(r)) = t {
                     let entry = info.entry(*r).or_default();
                     entry.destructuring_key = Some(key.clone());
                 }
                 analyze_target(t, info);
-                if let Some(d) = def { analyze_expr(d, info); }
+                if let Some(d) = def {
+                    analyze_expr(d, info);
+                }
             }
         }
         AssignTarget::DestructuringObjectRest { properties, rest } => {
             for (key, t, def) in properties {
-                if let AssignTarget::Register(r) = t {
+                if let AssignTarget::Binding(Binding::Register(r)) = t {
                     let entry = info.entry(*r).or_default();
                     entry.destructuring_key = Some(key.clone());
                 }
                 analyze_target(t, info);
-                if let Some(d) = def { analyze_expr(d, info); }
+                if let Some(d) = def {
+                    analyze_expr(d, info);
+                }
             }
             analyze_target(rest, info);
         }
         AssignTarget::DestructuringArray(elements) => {
             for elem in elements.iter().flatten() {
                 analyze_target(&elem.0, info);
-                if let Some(d) = &elem.1 { analyze_expr(d, info); }
+                if let Some(d) = &elem.1 {
+                    analyze_expr(d, info);
+                }
             }
         }
         AssignTarget::DestructuringArrayRest { elements, rest } => {
             for elem in elements.iter().flatten() {
                 analyze_target(&elem.0, info);
-                if let Some(d) = &elem.1 { analyze_expr(d, info); }
+                if let Some(d) = &elem.1 {
+                    analyze_expr(d, info);
+                }
             }
             analyze_target(rest, info);
         }
@@ -196,14 +218,14 @@ fn analyze_target(target: &AssignTarget, info: &mut BTreeMap<u32, RegisterInfo>)
 
 fn analyze_expr(expr: &Expression, info: &mut BTreeMap<u32, RegisterInfo>) {
     match expr {
-        Expression::Value(Value::Register(r)) => {
+        Expression::Value(Value::Binding(Binding::Register(r))) => {
             info.entry(*r).or_default().use_count += 1;
         }
         Expression::Member {
             object, property, ..
         } => {
             // Track property access
-            if let Expression::Value(Value::Register(r)) = object.as_ref() {
+            if let Expression::Value(Value::Binding(Binding::Register(r))) = object.as_ref() {
                 let entry = info.entry(*r).or_default();
                 if let PropertyKey::Ident(name) = property {
                     entry.accessed_props.insert(name.clone());
@@ -224,7 +246,7 @@ fn analyze_expr(expr: &Expression, info: &mut BTreeMap<u32, RegisterInfo>) {
                 ..
             } = callee.as_ref()
             {
-                if let Expression::Value(Value::Register(r)) = object.as_ref() {
+                if let Expression::Value(Value::Binding(Binding::Register(r))) = object.as_ref() {
                     info.entry(*r)
                         .or_default()
                         .called_methods
@@ -267,7 +289,7 @@ fn analyze_expr(expr: &Expression, info: &mut BTreeMap<u32, RegisterInfo>) {
             analyze_expr(else_expr, info);
         }
         Expression::Assignment { target, value } => {
-            analyze_expr(target, info);
+            crate::ir::for_each_target_expression(target, &mut |e| analyze_expr(e, info));
             analyze_expr(value, info);
         }
         Expression::Spread(inner) => analyze_expr(inner, info),

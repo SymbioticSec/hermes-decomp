@@ -193,7 +193,10 @@ pub(super) fn recover_loop(
     }
 }
 
-pub(super) fn split_update_from_body(body: Structure, update_id: BlockId) -> Option<(Structure, Structure)> {
+pub(super) fn split_update_from_body(
+    body: Structure,
+    update_id: BlockId,
+) -> Option<(Structure, Structure)> {
     match body {
         Structure::Sequence(mut parts) => {
             if parts.is_empty() {

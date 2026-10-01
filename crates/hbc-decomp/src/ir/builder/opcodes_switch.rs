@@ -66,7 +66,9 @@ pub fn handle_switch_imm(
             let target = (inst.offset as i32).wrapping_add(rel_offset) as u32;
             let case_val = min_val.wrapping_add(i as u32);
             cases.push((
-                Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::Integer(case_val as i32))),
+                Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::Integer(
+                    case_val as i32,
+                ))),
                 target,
             ));
         }
@@ -82,7 +84,7 @@ pub fn handle_switch_imm(
 // Handle StringSwitchImm opcode.
 //
 // This is a string-switch variant present in the Hermes build React Native /
-// Discord ships (v98+); upstream Hermes has only the numeric `SwitchImm`, so the
+// shipped by v98+ bundles; upstream Hermes has only the numeric `SwitchImm`, so the
 // operand semantics and table layout below were recovered from the bytecode
 // itself, verified against the real notification-type dispatch it encodes.
 //
@@ -139,7 +141,9 @@ pub fn handle_string_switch_imm(
             .map(|e| e.value.clone())
             .unwrap_or_else(|| format!("string{string_id}"));
         cases.push((
-            Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::String(case_str))),
+            Expression::Value(crate::ir::Value::Constant(crate::ir::Constant::String(
+                case_str,
+            ))),
             target,
         ));
     }

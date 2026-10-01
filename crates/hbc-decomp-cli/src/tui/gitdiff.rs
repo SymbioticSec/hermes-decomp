@@ -58,9 +58,15 @@ pub enum GitRow {
         right: String,
     },
     // Line only in file 1 (removed).
-    Removed { old: usize, text: String },
+    Removed {
+        old: usize,
+        text: String,
+    },
     // Line only in file 2 (added).
-    Added { new: usize, text: String },
+    Added {
+        new: usize,
+        text: String,
+    },
     // Blank separator between functions.
     Blank,
 }
@@ -82,7 +88,11 @@ pub struct GitDiffJob {
 }
 
 // Resolve a function name to its file-2 id, following renames.
-fn id2_for(name: &str, map2: &HashMap<String, u32>, status: &HashMap<String, DiffStatus>) -> Option<u32> {
+fn id2_for(
+    name: &str,
+    map2: &HashMap<String, u32>,
+    status: &HashMap<String, DiffStatus>,
+) -> Option<u32> {
     if let Some(id) = map2.get(name) {
         return Some(*id);
     }
@@ -130,7 +140,9 @@ pub fn align(left: &str, right: &str, normalize_ids: bool) -> Vec<GitRow> {
             DiffTag::Equal => {
                 for (o, n) in op.old_range().zip(op.new_range()) {
                     // Equal under normalization: identical, or differs only by id.
-                    if old_lines.get(o).copied().unwrap_or("") == new_lines.get(n).copied().unwrap_or("") {
+                    if old_lines.get(o).copied().unwrap_or("")
+                        == new_lines.get(n).copied().unwrap_or("")
+                    {
                         rows.push(GitRow::Same {
                             old: o + 1,
                             new: n + 1,

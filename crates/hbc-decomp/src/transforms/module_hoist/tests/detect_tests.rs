@@ -13,7 +13,7 @@ use super::helpers::{call, int, member, var};
 fn aliases_follow_require_copies() {
     let stmts = vec![
         Statement::Assign {
-            target: AssignTarget::Variable("tmp4".into()),
+            target: AssignTarget::Binding(crate::ir::Binding::Variable("tmp4".into())),
             value: var("require"),
         },
         Statement::Let {

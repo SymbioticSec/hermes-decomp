@@ -8,8 +8,8 @@ use std::time::Instant;
 use hbc_decomp::{BytecodeFile, BytecodeFormat, PipelineContext};
 
 use super::debug_log;
-use super::gitdiff::{self, GitDiffJob, GitMsg, GitRow};
 use super::disasm_or_log;
+use super::gitdiff::{self, GitDiffJob, GitMsg, GitRow};
 
 // Build the analysis pipeline, reusing the on-disk cache (`<path>.hdcache`) when
 // possible. The cache key needs the raw file bytes, which the App doesn't keep,
@@ -168,7 +168,7 @@ pub struct App {
     pub content_search: String,
     pub is_content_searching: bool,
     pub content_search_matches: Vec<(usize, usize)>, // (line_idx, char_idx) pairs
-    pub content_search_index: usize, // Current match index (0-based)
+    pub content_search_index: usize,                 // Current match index (0-based)
 
     // Full pipeline context (IPA, Metro, naming), built in background
     pub pipeline_ctx: Option<Arc<PipelineContext>>,
@@ -389,7 +389,10 @@ impl App {
         // cores at startup, starving the (instant) disassembly views and making
         // the UI lag. It's kicked off the first time decompiled output is asked
         // for (Decompile view, or the git diff's `v`).
-        debug_log(&format!("[TUI] App::new done in {:.2?}", total_start.elapsed()));
+        debug_log(&format!(
+            "[TUI] App::new done in {:.2?}",
+            total_start.elapsed()
+        ));
         app
     }
 
@@ -416,12 +419,14 @@ impl App {
                 let (tx, rx) = std::sync::mpsc::channel();
                 self.pipeline_rx2 = Some(rx);
                 self.pipeline_building2 = true;
-                std::thread::spawn(move || match build_pipeline_cached(&file2, &format2, &path2) {
-                    Ok(ctx) => {
-                        let _ = tx.send(ctx);
-                    }
-                    Err(e) => debug_log(&format!("[pipeline] file 2 build failed: {e}")),
-                });
+                std::thread::spawn(
+                    move || match build_pipeline_cached(&file2, &format2, &path2) {
+                        Ok(ctx) => {
+                            let _ = tx.send(ctx);
+                        }
+                        Err(e) => debug_log(&format!("[pipeline] file 2 build failed: {e}")),
+                    },
+                );
             }
         }
     }
@@ -868,9 +873,7 @@ impl App {
                 }
             }
         } else {
-            let refs = hbc_decomp::analysis::find_function_refs(
-                &self.file, &self.format, func_id,
-            );
+            let refs = hbc_decomp::analysis::find_function_refs(&self.file, &self.format, func_id);
             let mut seen = std::collections::BTreeSet::new();
             for xref in &refs {
                 if seen.insert(xref.function_id) {
@@ -882,9 +885,7 @@ impl App {
             self.ensure_pipeline_building();
         }
 
-        items.sort_by(|a, b| {
-            a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0))
-        });
+        items.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)));
 
         self.xref_list = items;
         self.xref_selected = 0;
@@ -962,8 +963,7 @@ impl App {
             let line_lower = line.to_lowercase();
             let mut char_idx = 0;
             while let Some(pos) = line_lower[char_idx..].find(&query) {
-                self.content_search_matches
-                    .push((line_idx, char_idx + pos));
+                self.content_search_matches.push((line_idx, char_idx + pos));
                 char_idx += pos + 1;
             }
         }
@@ -1035,11 +1035,8 @@ impl App {
             return;
         }
 
-        let string_xrefs = hbc_decomp::analysis::find_string_xrefs(
-            &self.file,
-            &self.format,
-            &self.search_query,
-        );
+        let string_xrefs =
+            hbc_decomp::analysis::find_string_xrefs(&self.file, &self.format, &self.search_query);
 
         if !string_xrefs.is_empty() {
             let id_to_name: HashMap<u32, &String> =
@@ -1140,10 +1137,7 @@ fn render_cfg_text(
             out.push_str(&format!("    [{i}] {preview}\n"));
         }
         if block.statements.len() > 3 {
-            out.push_str(&format!(
-                "    … {} more\n",
-                block.statements.len() - 3
-            ));
+            out.push_str(&format!("    … {} more\n", block.statements.len() - 3));
         }
     }
     out

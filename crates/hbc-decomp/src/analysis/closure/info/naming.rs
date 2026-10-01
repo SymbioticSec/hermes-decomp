@@ -1,5 +1,5 @@
-use crate::analysis::metro::registry::FactoryRoles;
 use super::types::{ClosureInfo, ClosureSlotValue};
+use crate::analysis::metro::registry::FactoryRoles;
 
 impl ClosureInfo {
     // When a slot stores `Variable("argN")` and we have an IPA name for that parameter,
@@ -36,6 +36,7 @@ impl ClosureInfo {
     pub fn get_slot_name(&self, slot: u32) -> String {
         // The raw slot index (the key may be level-encoded for ancestor scopes).
         let raw_slot = slot & 0x00FF_FFFF;
+        let unresolved = format!("closure_{raw_slot}");
         match self.slots.get(&slot) {
             Some(ClosureSlotValue::Function { id, name }) => {
                 if let Some(n) = name {
@@ -69,10 +70,10 @@ impl ClosureInfo {
                 } else if is_meaningful_closure_name(v) {
                     v.clone()
                 } else {
-                    format!("closure_{raw_slot}")
+                    unresolved
                 }
             }
-            Some(ClosureSlotValue::Unknown) | None => format!("closure_{raw_slot}"),
+            Some(ClosureSlotValue::Unknown) | None => unresolved,
         }
     }
 }
@@ -115,7 +116,7 @@ fn metro_param_role_name(name: &str, roles: &FactoryRoles) -> Option<&'static st
 }
 
 // Derive a JS identifier from a constant's display text (e.g. `"foo"` → `foo`).
-fn name_from_constant_text(c: &str) -> Option<String> {
+pub(crate) fn name_from_constant_text(c: &str) -> Option<String> {
     let s = c.trim().trim_matches('"').trim_matches('\'');
     if s.is_empty() || s.len() > 40 {
         return None;

@@ -16,7 +16,6 @@ use super::HermesService;
 
 #[tool_router(router = write_router, vis = "pub(crate)")]
 impl HermesService {
-
     #[tool(
         description = "Scan the string table for likely secrets (AWS keys, JWTs, tokens, URLs, private keys)."
     )]

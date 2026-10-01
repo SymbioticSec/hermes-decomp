@@ -76,9 +76,15 @@ pub fn find_block_starts_with_handlers(
                     // Jump table is 4-byte aligned relative to the function start
                     // (`align4(ipLocalOffset + jmpTableIdx)`); without the round-up
                     // the table is read a few bytes early and yields garbage targets.
-                    let table_start_global = ((inst.offset as usize).saturating_add(jmp_table_idx as usize).saturating_add(func_bytecode_offset as usize) + 3) & !3;
+                    let table_start_global = ((inst.offset as usize)
+                        .saturating_add(jmp_table_idx as usize)
+                        .saturating_add(func_bytecode_offset as usize)
+                        + 3)
+                        & !3;
                     // Guard against maxVal < minVal (would underflow) in malformed bytecode.
-                    let count = max_val.checked_sub(min_val).map_or(0, |span| span as usize + 1);
+                    let count = max_val
+                        .checked_sub(min_val)
+                        .map_or(0, |span| span as usize + 1);
 
                     if count > 0
                         && table_start_global.saturating_add(count.saturating_mul(4))
@@ -117,7 +123,11 @@ pub fn find_block_starts_with_handlers(
                     // Jump table is 4-byte aligned relative to the function start
                     // (`align4(ipLocalOffset + jmpTableOffset)`); without the round-up
                     // the table is read a few bytes early and yields garbage targets.
-                    let table_start_global = ((inst.offset as usize).saturating_add(jmp_table_idx as usize).saturating_add(func_bytecode_offset as usize) + 3) & !3;
+                    let table_start_global = ((inst.offset as usize)
+                        .saturating_add(jmp_table_idx as usize)
+                        .saturating_add(func_bytecode_offset as usize)
+                        + 3)
+                        & !3;
                     let count = num_cases as usize;
 
                     if table_start_global + count * 8 <= file.instructions.len() {

@@ -65,7 +65,7 @@ fn is_module_registration(stmt: &Statement) -> bool {
 // member access whose property is `__d`).
 fn callee_is_define(expr: &Expression) -> bool {
     match expr {
-        Expression::Value(Value::Variable(name)) => name == "__d",
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) => name == "__d",
         Expression::Member { property, .. } => matches!(
             property,
             PropertyKey::Ident(p) | PropertyKey::String(p) if p == "__d"
@@ -79,12 +79,20 @@ mod tests {
     use super::*;
 
     fn factory() -> Expression {
-        Expression::Function { id: crate::ir::FunctionId(1), name: None, is_arrow: false, is_async: false, is_generator: false }
+        Expression::Function {
+            id: crate::ir::FunctionId(1),
+            name: None,
+            is_arrow: false,
+            is_async: false,
+            is_generator: false,
+        }
     }
 
     fn define(id: i32) -> Statement {
         Statement::Expr(Expression::Call {
-            callee: Box::new(Expression::Value(Value::Variable("__d".into()))),
+            callee: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("__d".into()),
+            ))),
             arguments: vec![
                 factory(),
                 Expression::Value(Value::Constant(Constant::Integer(id))),
@@ -95,7 +103,9 @@ mod tests {
 
     fn run_call(name: &str) -> Statement {
         Statement::Expr(Expression::Call {
-            callee: Box::new(Expression::Value(Value::Variable(name.into()))),
+            callee: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable(name.into()),
+            ))),
             arguments: vec![Expression::Value(Value::Constant(Constant::Integer(0)))],
         })
     }

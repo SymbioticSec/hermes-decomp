@@ -57,11 +57,13 @@ mod tests {
         let stmts = vec![
             Statement::Comment("StartGenerator".to_string()),
             Statement::Assign {
-                target: AssignTarget::Register(0),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
                 value: Expression::Value(Value::Constant(Constant::Integer(1))),
             },
             Statement::Comment("__yield_point__:100".to_string()),
-            Statement::Return(Some(Expression::Value(Value::Register(0)))),
+            Statement::Return(Some(Expression::Value(Value::Binding(
+                crate::ir::Binding::Register(0),
+            )))),
         ];
 
         assert!(has_generator_patterns(&stmts));
@@ -80,10 +82,12 @@ mod tests {
                 42,
             ))))),
             Statement::Assign {
-                target: AssignTarget::Register(5),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(5)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Member {
-                        object: Box::new(Expression::Value(Value::Register(0))),
+                        object: Box::new(Expression::Value(Value::Binding(
+                            crate::ir::Binding::Register(0),
+                        ))),
                         property: PropertyKey::Ident("resume".to_string()),
                         optional: false,
                     }),
@@ -97,7 +101,7 @@ mod tests {
         // Should have: r5 = yield 42
         let has_yield_assign = result.iter().any(|s| {
             if let Statement::Assign {
-                target: AssignTarget::Register(5),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(5)),
                 value,
             } = s
             {
@@ -114,16 +118,20 @@ mod tests {
         let stmts = vec![
             Statement::Comment("__yield_point__:100".to_string()),
             Statement::Return(Some(Expression::Call {
-                callee: Box::new(Expression::Value(Value::Variable("fetch".to_string()))),
+                callee: Box::new(Expression::Value(Value::Binding(
+                    crate::ir::Binding::Variable("fetch".to_string()),
+                ))),
                 arguments: vec![Expression::Value(Value::Constant(Constant::String(
                     "url".to_string(),
                 )))],
             })),
             Statement::Assign {
-                target: AssignTarget::Register(3),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(3)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Member {
-                        object: Box::new(Expression::Value(Value::Register(0))),
+                        object: Box::new(Expression::Value(Value::Binding(
+                            crate::ir::Binding::Register(0),
+                        ))),
                         property: PropertyKey::Ident("resume".to_string()),
                         optional: false,
                     }),
@@ -137,7 +145,7 @@ mod tests {
         // Should have: r3 = await fetch("url")
         let has_await_assign = result.iter().any(|s| {
             if let Statement::Assign {
-                target: AssignTarget::Register(3),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(3)),
                 value,
             } = s
             {
@@ -161,7 +169,9 @@ mod tests {
         assert_eq!(format!("{yield_expr}"), "yield 42");
 
         let yield_delegate = Expression::Yield {
-            value: Box::new(Expression::Value(Value::Variable("iter".to_string()))),
+            value: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("iter".to_string()),
+            ))),
             delegate: true,
         };
         assert_eq!(format!("{yield_delegate}"), "yield* iter");
@@ -171,7 +181,9 @@ mod tests {
     fn test_await_expression_display() {
         // Hermes convention: first arg is `this` (undefined for global calls)
         let await_expr = Expression::Await(Box::new(Expression::Call {
-            callee: Box::new(Expression::Value(Value::Variable("fetch".to_string()))),
+            callee: Box::new(Expression::Value(Value::Binding(
+                crate::ir::Binding::Variable("fetch".to_string()),
+            ))),
             arguments: vec![
                 Expression::Value(Value::Constant(Constant::Undefined)), // this
                 Expression::Value(Value::Constant(Constant::String("url".to_string()))),
@@ -185,11 +197,13 @@ mod tests {
         let stmts = vec![
             Statement::Comment("StartGenerator".to_string()),
             Statement::Assign {
-                target: AssignTarget::Register(0),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(0)),
                 value: Expression::Value(Value::Constant(Constant::Integer(1))),
             },
             Statement::Comment("__yield_point__:100".to_string()),
-            Statement::Return(Some(Expression::Value(Value::Register(0)))),
+            Statement::Return(Some(Expression::Value(Value::Binding(
+                crate::ir::Binding::Register(0),
+            )))),
             Statement::Comment("Some other comment".to_string()),
         ];
 
@@ -218,10 +232,12 @@ mod tests {
                 1,
             ))))),
             Statement::Assign {
-                target: AssignTarget::Register(1),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(1)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Member {
-                        object: Box::new(Expression::Value(Value::Register(0))),
+                        object: Box::new(Expression::Value(Value::Binding(
+                            crate::ir::Binding::Register(0),
+                        ))),
                         property: PropertyKey::Ident("resume".to_string()),
                         optional: false,
                     }),
@@ -233,10 +249,12 @@ mod tests {
                 2,
             ))))),
             Statement::Assign {
-                target: AssignTarget::Register(2),
+                target: AssignTarget::Binding(crate::ir::Binding::Register(2)),
                 value: Expression::Call {
                     callee: Box::new(Expression::Member {
-                        object: Box::new(Expression::Value(Value::Register(0))),
+                        object: Box::new(Expression::Value(Value::Binding(
+                            crate::ir::Binding::Register(0),
+                        ))),
                         property: PropertyKey::Ident("resume".to_string()),
                         optional: false,
                     }),

@@ -12,10 +12,26 @@ duplicate work and lets us agree on an approach before code is written.
 
    ```bash
    cargo build --release --workspace
-   cargo test --workspace
+   bash scripts/build/gates.sh
    ```
 
-   CI builds on **Linux**, **macOS**, and **Windows** keep all three green.
+   `gates.sh` runs every gate: clippy with warnings denied, the test suite,
+   the round trip corpus, and a parse check of the decompiled output against
+   a recorded ceiling per bundle. Use `--quick` to skip the parse check,
+   which has to decompile whole bundles.
+
+   The round trip corpus is generated, not committed. Build it once with:
+
+   ```bash
+   bash scripts/build/fetch_hermesc.sh
+   bash scripts/build/build_corpus.sh
+   ```
+
+   Without it the tests that read real bytecode fail and say so. Set
+   `HBC_CORPUS_OPTIONAL=1` to skip those, which is what CI does.
+
+   CI lints, tests and builds on **Linux**, **macOS** and **Windows**. Keep
+   all of them green.
 
 5. Open a pull request that references the issue.
 

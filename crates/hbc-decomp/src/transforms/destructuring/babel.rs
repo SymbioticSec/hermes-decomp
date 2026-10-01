@@ -1,6 +1,6 @@
 // Reconstruct ES6 array destructuring from the form Babel lowers it to.
 //
-// Discord and most React Native apps run Babel before Hermes, so `const [a, b] =
+// Most React Native apps run Babel before Hermes, so `const [a, b] =
 // src` never reaches the bytecode. What arrives instead is a call to a runtime
 // helper followed by one indexed read per binding:
 //
@@ -38,7 +38,9 @@ pub fn reconstruct_babel_array_destructuring(stmts: Vec<Statement>) -> Vec<State
             if let Some((slots, consumed, kept)) = collect_reads(&stmts, i + 1, &tmp) {
                 // The temporary must not survive the fold anywhere else.
                 let used_before = stmts[..i].iter().any(|s| reads_name(s, &tmp));
-                let used_after = stmts[i + 1 + consumed..].iter().any(|s| reads_name(s, &tmp));
+                let used_after = stmts[i + 1 + consumed..]
+                    .iter()
+                    .any(|s| reads_name(s, &tmp));
                 if !used_before && !used_after && slots.iter().any(|s| s.is_some()) {
                     out.push(Statement::Assign {
                         target: AssignTarget::DestructuringArray(slots),
@@ -75,7 +77,9 @@ fn unwrap_helper_source(stmt: Statement) -> Statement {
         return Statement::Assign { target, value };
     }
     if let Expression::Call { callee, arguments } = &value {
-        if let Expression::Value(Value::Variable(name)) = callee.as_ref() {
+        if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) =
+            callee.as_ref()
+        {
             if ARRAY_HELPERS.contains(&name.as_str()) {
                 if let Some(src) = arguments.first() {
                     return Statement::Assign {
@@ -94,7 +98,7 @@ fn helper_anchor(stmt: &Statement) -> Option<(String, Expression)> {
     let (name, value) = match stmt {
         Statement::Let { name, value, .. } => (name, value),
         Statement::Assign {
-            target: AssignTarget::Variable(name),
+            target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
             value,
         } => (name, value),
         _ => return None,
@@ -102,7 +106,9 @@ fn helper_anchor(stmt: &Statement) -> Option<(String, Expression)> {
     let Expression::Call { callee, arguments } = value else {
         return None;
     };
-    let Expression::Value(Value::Variable(callee_name)) = callee.as_ref() else {
+    let Expression::Value(Value::Binding(crate::ir::Binding::Variable(callee_name))) =
+        callee.as_ref()
+    else {
         return None;
     };
     if !ARRAY_HELPERS.contains(&callee_name.as_str()) {
@@ -159,7 +165,7 @@ fn collect_reads(
             if *pos < sk {
                 continue;
             }
-            if let AssignTarget::Variable(name) = target {
+            if let AssignTarget::Binding(crate::ir::Binding::Variable(name)) = target {
                 if reads_name(&stmts[sk], name) {
                     return None;
                 }
@@ -178,14 +184,21 @@ fn collect_reads(
 // `TARGET = tmp[N]` → (TARGET, N) for a non negative constant N.
 fn indexed_read(stmt: &Statement, tmp: &str) -> Option<(AssignTarget, usize)> {
     let (target, value) = match stmt {
-        Statement::Let { name, value, .. } => (AssignTarget::Variable(name.clone()), value),
+        Statement::Let { name, value, .. } => (
+            AssignTarget::Binding(crate::ir::Binding::Variable(name.clone())),
+            value,
+        ),
         Statement::Assign { target, value } => (target.clone(), value),
         _ => return None,
     };
-    let Expression::Member { object, property, .. } = value else {
+    let Expression::Member {
+        object, property, ..
+    } = value
+    else {
         return None;
     };
-    let Expression::Value(Value::Variable(name)) = object.as_ref() else {
+    let Expression::Value(Value::Binding(crate::ir::Binding::Variable(name))) = object.as_ref()
+    else {
         return None;
     };
     if name != tmp {
@@ -206,7 +219,7 @@ fn reads_name(stmt: &Statement, name: &str) -> bool {
     }
     impl<'b> Visitor<'b> for V<'_> {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(crate::ir::Binding::Variable(n))) = e {
                 if n == self.name {
                     self.found = true;
                 }
@@ -214,7 +227,7 @@ fn reads_name(stmt: &Statement, name: &str) -> bool {
             self.walk_expression(e);
         }
         fn visit_assign_target(&mut self, t: &'b AssignTarget) {
-            if let AssignTarget::Variable(n) = t {
+            if let AssignTarget::Binding(crate::ir::Binding::Variable(n)) = t {
                 if n == self.name {
                     self.found = true;
                 }
@@ -241,7 +254,7 @@ mod tests {
     use crate::ir::{AssignTarget, Expression, PropertyKey, Statement, Value, VarKind};
 
     fn var(n: &str) -> Expression {
-        Expression::Value(Value::Variable(n.into()))
+        Expression::Value(Value::Binding(crate::ir::Binding::Variable(n.into())))
     }
 
     fn helper_call(src: &str, n: i64) -> Expression {
@@ -297,7 +310,10 @@ mod tests {
             let_stmt("b", index_read("tmp", 1)),
         ]);
         let text = render(&out);
-        assert!(text.contains("keepMe"), "the in between statement was lost: {text}");
+        assert!(
+            text.contains("keepMe"),
+            "the in between statement was lost: {text}"
+        );
         assert!(text.contains("[a, b] = src"), "{text}");
     }
 
@@ -318,8 +334,14 @@ mod tests {
     fn an_already_reconstructed_pattern_drops_the_helper() {
         let out = reconstruct_babel_array_destructuring(vec![Statement::Assign {
             target: AssignTarget::DestructuringArray(vec![
-                Some((AssignTarget::Variable("a".into()), None)),
-                Some((AssignTarget::Variable("b".into()), None)),
+                Some((
+                    AssignTarget::Binding(crate::ir::Binding::Variable("a".into())),
+                    None,
+                )),
+                Some((
+                    AssignTarget::Binding(crate::ir::Binding::Variable("b".into())),
+                    None,
+                )),
             ]),
             value: helper_call("src", 2),
         }]);

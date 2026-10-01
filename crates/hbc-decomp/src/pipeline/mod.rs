@@ -14,15 +14,17 @@ pub use cache::{default_cache_path, CACHE_VERSION};
 pub use context::PipelineContext;
 pub use decompiler::Decompiler;
 pub use ir_gen::{build_closure_context_from_file, generate_ir};
-pub use progress::{is_enabled as progress_enabled, set_enabled as set_progress_enabled, status as progress_status};
+pub use progress::{
+    is_enabled as progress_enabled, set_enabled as set_progress_enabled, status as progress_status,
+};
 
-use std::collections::{HashMap};
 use crate::analysis::ClosureContext;
 use crate::error::Result;
 use crate::file::BytecodeFile;
 use crate::opcode::BytecodeFormat;
 use crate::transforms::{Codegen, CodegenOptions};
 use crate::util::is_valid_identifier;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct DecompileOptionsV2 {
@@ -39,6 +41,11 @@ pub struct DecompileOptionsV2 {
     /// a hash of their stable content instead of the volatile Metro id, so the same
     /// module keeps the same name across builds.
     pub stable: bool,
+    /// Path to a proposal artifact whose names are applied once the bytecode has
+    /// confirmed them (see `crate::cascade`). A proposal the bytecode refuses
+    /// changes nothing. The on-disk analysis cache does not key on this, so a run
+    /// that sets it has to bypass the cache.
+    pub cascade: Option<std::path::PathBuf>,
 }
 
 impl DecompileOptionsV2 {
@@ -52,6 +59,7 @@ impl DecompileOptionsV2 {
             assembly_mode: false,
             deep: false,
             stable: false,
+            cascade: None,
         }
     }
 
@@ -65,6 +73,7 @@ impl DecompileOptionsV2 {
             assembly_mode: false,
             deep: false,
             stable: false,
+            cascade: None,
         }
     }
 }
@@ -97,11 +106,16 @@ pub fn decompile_function_v2_with_context(
     // (single function has no IPA that needs the receiver slot), inline single use
     // temporaries, drop noise, then insert declarations.
     if options.simplify {
+        ir_gen::trace_supers("single: after ir", &statements);
         crate::transforms::strip_hermes_this(&mut statements);
+        ir_gen::trace_supers("single: after strip_this", &statements);
         statements = crate::transforms::inline_named_variables(statements);
+        ir_gen::trace_supers("single: after inline_named", &statements);
         statements = crate::transforms::cleanup_noise(statements);
+        ir_gen::trace_supers("single: after cleanup_noise", &statements);
         crate::transforms::rename_reserved_words(&mut statements);
         crate::transforms::insert_declarations(&mut statements, &params);
+        ir_gen::trace_supers("single: after declarations", &statements);
     }
 
     let codegen_options = CodegenOptions::default();
@@ -176,11 +190,11 @@ fn collect_existing_var_names(
     statements: &[crate::ir::Statement],
     out: &mut std::collections::HashSet<String>,
 ) {
-    use crate::ir::{AssignTarget, Expression, Value, Visitor};
+    use crate::ir::{AssignTarget, Binding, Expression, Value, Visitor};
     struct C<'a>(&'a mut std::collections::HashSet<String>);
     impl<'a, 'b> Visitor<'b> for C<'a> {
         fn visit_expression(&mut self, e: &'b Expression) {
-            if let Expression::Value(Value::Variable(n)) = e {
+            if let Expression::Value(Value::Binding(Binding::Variable(n))) = e {
                 self.0.insert(n.clone());
             }
             self.walk_expression(e);
@@ -189,10 +203,16 @@ fn collect_existing_var_names(
             collect_target_names(t, self.0);
             self.walk_assign_target(t);
         }
+        // A class or loop head binds its name as firmly as a variable does. A
+        // register loaded from `NativeModules.ExternalPip` took the property's
+        // name next to `class ExternalPip`, and the module did not parse.
+        fn visit_binding_def(&mut self, name: &'b str) {
+            self.0.insert(name.to_string());
+        }
     }
     fn collect_target_names(t: &AssignTarget, out: &mut std::collections::HashSet<String>) {
         match t {
-            AssignTarget::Variable(n) => {
+            AssignTarget::Binding(Binding::Variable(n)) => {
                 out.insert(n.clone());
             }
             AssignTarget::DestructuringArray(elems) => {
@@ -271,13 +291,36 @@ pub(crate) fn params_from_names(
     while count < names.len() && body_uses_param(body, count as u32) {
         count += 1;
     }
-    (0..count)
-        .map(|idx| {
-            names
-                .get(idx)
-                .cloned()
-                .flatten()
-                .unwrap_or_else(|| format!("arg{idx}"))
+    make_params_distinct((0..count).map(|idx| {
+        names
+            .get(idx)
+            .cloned()
+            .flatten()
+            .unwrap_or_else(|| format!("arg{idx}"))
+    }))
+}
+
+// One name per position, even when two positions recovered the same one.
+//
+// A module is always strict, so `function f(arr, arr)` is a syntax error rather
+// than merely confusing, and the whole module then fails to parse. The first
+// position keeps the recovered name and later ones take a suffix, which says they
+// are distinct without claiming to know what they hold.
+pub(crate) fn make_params_distinct(names: impl Iterator<Item = String>) -> Vec<String> {
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    names
+        .map(|base| {
+            if used.insert(base.clone()) {
+                return base;
+            }
+            let mut n = 2u32;
+            loop {
+                let candidate = format!("{base}{n}");
+                if used.insert(candidate.clone()) {
+                    return candidate;
+                }
+                n += 1;
+            }
         })
         .collect()
 }
@@ -329,4 +372,43 @@ fn build_function_name_index(file: &BytecodeFile) -> crate::analysis::FunctionNa
     }
 
     index
+}
+
+#[cfg(test)]
+mod param_name_tests {
+    use super::make_params_distinct;
+
+    fn run(v: &[&str]) -> Vec<String> {
+        make_params_distinct(v.iter().map(|s| (*s).to_string()))
+    }
+
+    #[test]
+    fn a_repeated_name_is_suffixed_rather_than_repeated() {
+        // `function f(arr, arr)` does not parse, and the module goes down with it.
+        assert_eq!(run(&["arr", "arr"]), vec!["arr", "arr2"]);
+        assert_eq!(
+            run(&["overshootClamping", "overshootClamping"]),
+            vec!["overshootClamping", "overshootClamping2"]
+        );
+    }
+
+    #[test]
+    fn three_of_a_kind_keep_counting() {
+        assert_eq!(run(&["x", "x", "x"]), vec!["x", "x2", "x3"]);
+    }
+
+    #[test]
+    fn distinct_names_are_left_exactly_as_recovered() {
+        assert_eq!(
+            run(&["self", "email", "arg2"]),
+            vec!["self", "email", "arg2"]
+        );
+    }
+
+    #[test]
+    fn a_suffix_that_is_already_taken_is_skipped() {
+        // Handing out `x2` when the signature already carries one would only move
+        // the collision.
+        assert_eq!(run(&["x", "x2", "x"]), vec!["x", "x2", "x3"]);
+    }
 }

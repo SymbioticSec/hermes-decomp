@@ -339,7 +339,7 @@ pub fn build_minimal_modern(
 }
 
 fn align4(buf: &mut Vec<u8>) {
-    while buf.len() % 4 != 0 {
+    while !buf.len().is_multiple_of(4) {
         buf.push(0);
     }
 }
@@ -386,7 +386,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../examples/react-native/v96/expressions/generator/bytecode.hbc"
         );
-        if !std::path::Path::new(path).exists() {
+        if !crate::write::corpus_fixture_present(path) {
             return;
         }
         let bytes = std::fs::read(path).unwrap();

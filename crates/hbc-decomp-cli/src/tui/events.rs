@@ -204,12 +204,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         },
         // `u` enters the full-program git diff (whole code, base vs modified,
         // side by side). Only meaningful when a second file is loaded.
-        KeyCode::Char('u') => {
-            if app.file2.is_some() {
-                app.git_diff = true;
-                app.scroll = 0;
-                app.request_git_diff();
-            }
+        KeyCode::Char('u') if app.file2.is_some() => {
+            app.git_diff = true;
+            app.scroll = 0;
+            app.request_git_diff();
         }
         _ => {}
     }
@@ -221,10 +219,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                     app.set_selected(app.selected + 1);
                 }
             }
-            KeyCode::Char('p') => {
-                if app.selected > 0 {
-                    app.set_selected(app.selected - 1);
-                }
+            KeyCode::Char('p') if app.selected > 0 => {
+                app.set_selected(app.selected - 1);
             }
             _ => {}
         }
@@ -257,13 +253,11 @@ fn handle_mouse(app: &mut App, me: MouseEvent) {
                 app.selection_target = Some((me.column, me.row));
             }
         }
-        MouseEventKind::Up(MouseButton::Left) => {
-            if app.selecting {
-                app.selecting = false;
-                // Only copy when the user actually dragged (anchor != target).
-                if app.selection_anchor != app.selection_target {
-                    app.copy_selection_to_clipboard();
-                }
+        MouseEventKind::Up(MouseButton::Left) if app.selecting => {
+            app.selecting = false;
+            // Only copy when the user actually dragged (anchor != target).
+            if app.selection_anchor != app.selection_target {
+                app.copy_selection_to_clipboard();
             }
         }
         _ => {}

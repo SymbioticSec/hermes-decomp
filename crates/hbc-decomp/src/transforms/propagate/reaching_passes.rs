@@ -1,5 +1,5 @@
 use super::substitute::{substitute_stmt, substitute_terminator};
-use crate::ir::{AssignTarget, BlockId, Expression, Statement, Value, CFG};
+use crate::ir::{AssignTarget, Binding, BlockId, Expression, Statement, Value, CFG};
 use std::collections::BTreeMap;
 
 // Replace every register read whose reaching definitions are ALL `globalThis`
@@ -23,7 +23,7 @@ pub fn resolve_global_reads(cfg: &mut CFG) {
     for block in cfg.blocks() {
         for (i, stmt) in block.statements.iter().enumerate() {
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 value: Expression::Value(Value::Global),
             } = stmt
             {
@@ -75,7 +75,7 @@ pub fn resolve_global_reads(cfg: &mut CFG) {
             };
             // A def at this position becomes the sole reaching def for `r`.
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 ..
             } = &new_stmt
             {
@@ -140,7 +140,7 @@ pub fn propagate_copies(cfg: &mut CFG) {
     for block in cfg.blocks() {
         for stmt in &block.statements {
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 ..
             } = stmt
             {
@@ -156,8 +156,8 @@ pub fn propagate_copies(cfg: &mut CFG) {
     for block in cfg.blocks() {
         for (i, stmt) in block.statements.iter().enumerate() {
             if let Statement::Assign {
-                target: AssignTarget::Register(a),
-                value: Expression::Value(Value::Register(b)),
+                target: AssignTarget::Binding(Binding::Register(a)),
+                value: Expression::Value(Value::Binding(Binding::Register(b))),
             } = stmt
             {
                 if a != b && def_count.get(a).copied().unwrap_or(0) == 1 {
@@ -205,7 +205,7 @@ pub fn propagate_copies(cfg: &mut CFG) {
                 }
             }
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 ..
             } = stmt
             {
@@ -230,7 +230,7 @@ pub fn propagate_copies(cfg: &mut CFG) {
                 let sig = signatures.get(a)?;
                 let now = cur.get(b).cloned().unwrap_or_default();
                 if &now == sig {
-                    Some((*a, Expression::Value(Value::Register(*b))))
+                    Some((*a, Expression::Value(Value::Binding(Binding::Register(*b)))))
                 } else {
                     None
                 }
@@ -254,7 +254,7 @@ pub fn propagate_copies(cfg: &mut CFG) {
                 substitute_stmt(&stmt, &active)
             };
             if let Statement::Assign {
-                target: AssignTarget::Register(r),
+                target: AssignTarget::Binding(Binding::Register(r)),
                 ..
             } = &new_stmt
             {

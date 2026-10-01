@@ -43,8 +43,16 @@ pub(super) fn is_ephemeral_name(name: &str) -> bool {
     }
     matches!(
         name,
-        "sum" | "diff" | "product" | "quotient" | "text" | "result" | "value" | "ret"
-            | "tmpResult" | "callResult"
+        "sum"
+            | "diff"
+            | "product"
+            | "quotient"
+            | "text"
+            | "result"
+            | "value"
+            | "ret"
+            | "tmpResult"
+            | "callResult"
     ) || name.ends_with("Result")
         || name.ends_with("Return")
 }

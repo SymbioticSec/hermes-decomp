@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CallGraph {
@@ -55,12 +55,7 @@ impl CallGraph {
         post_order
     }
 
-    fn dfs_post_order(
-        &self,
-        u: u32,
-        visited: &mut HashSet<u32>,
-        post_order: &mut Vec<u32>,
-    ) {
+    fn dfs_post_order(&self, u: u32, visited: &mut HashSet<u32>, post_order: &mut Vec<u32>) {
         visited.insert(u);
         if let Some(callees) = self.calls.get(&u) {
             for &v in callees {

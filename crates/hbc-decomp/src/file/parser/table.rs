@@ -167,7 +167,7 @@ pub fn decode_string_table(
             } else {
                 let slice = &storage[start..end];
                 let mut units = Vec::with_capacity(length as usize);
-                for chunk in slice.chunks_exact(2) {
+                for chunk in slice.as_chunks::<2>().0 {
                     units.push(u16::from_le_bytes([chunk[0], chunk[1]]));
                 }
                 String::from_utf16_lossy(&units)
