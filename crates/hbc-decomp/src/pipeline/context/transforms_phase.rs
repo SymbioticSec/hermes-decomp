@@ -10,6 +10,22 @@ use crate::transforms;
 use std::collections::BTreeMap;
 
 impl PipelineContext {
+    // Print one function's IR after a stage: `HBC_WATCH_FN=<id>` with
+    // `--log watch=debug`. Pins the stage that produced a given shape without
+    // reasoning about the pipeline from the outside.
+    pub(super) fn watch(all_ir: &BTreeMap<u32, Vec<Statement>>, stage: &str) {
+        let Some(fid) = std::env::var("HBC_WATCH_FN")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+        else {
+            return;
+        };
+        if let Some(stmts) = all_ir.get(&fid) {
+            let text: Vec<String> = stmts.iter().map(|s| s.to_string()).collect();
+            log::debug!(target: "watch", "[{stage}] fn {fid}:\n{}", text.join("\n"));
+        }
+    }
+
     pub(super) fn run_transform_pipeline(
         all_ir: &mut BTreeMap<u32, Vec<Statement>>,
         closure_ctx: &mut Option<crate::analysis::ClosureContext>,
@@ -22,6 +38,7 @@ impl PipelineContext {
             transforms::strip_hermes_this(stmts);
         }
 
+        Self::watch(all_ir, "W12 strip this");
         // STAGE W13: Inline single-use temporaries (tmp*, closure_*, rN), parallel.
         // A name a nested function reads stays bound here whatever this body
         // does with it.
@@ -52,6 +69,7 @@ impl PipelineContext {
             }
         }
         log::debug!("[pipeline] variable inlining: {:.2?}", t.elapsed());
+        Self::watch(all_ir, "W13 inline");
 
         // STAGE W14: Detect async generator patterns (yield → await)
         if let Some(ctx) = closure_ctx.as_mut() {
@@ -168,6 +186,7 @@ impl PipelineContext {
                 .unwrap_or(&empty);
             let hoisted = transforms::hoist_repeated_closures(all_ir, parent_of, factories);
             log::debug!("[pipeline] hoisted {hoisted} repeated closures");
+            Self::watch(all_ir, "hoist closures");
         }
     }
 
@@ -513,6 +532,7 @@ impl PipelineContext {
             let old = std::mem::take(stmts);
             *stmts = transforms::fold_array_literals(old);
         }
+        Self::watch(all_ir, "post-ipa folds");
 
         // Simplify Babel arguments-to-array copy pattern
         for stmts in all_ir.values_mut() {

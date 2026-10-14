@@ -242,3 +242,59 @@ fn props_substitution_stops_at_a_direct_cycle() {
         "the recursive edge stays a reference: {text}"
     );
 }
+
+// A fill whose value is bound after the object, or computed behind a call,
+// stays where it is: folding it reads `obj` and `obj3` before they exist.
+#[test]
+fn a_fill_bound_after_the_object_is_not_hoisted_into_it() {
+    let var = |n: &str| Expression::Value(Value::Binding(Binding::Variable(n.into())));
+    let set = |n: &str, v: Expression| Statement::Assign {
+        target: AssignTarget::Binding(Binding::Variable(n.into())),
+        value: v,
+    };
+    let put = |o: &str, k: &str, v: Expression| Statement::Assign {
+        target: AssignTarget::Member {
+            object: var(o),
+            property: k.into(),
+        },
+        value: v,
+    };
+    let prop = |k: &str, v: Expression| ObjectProperty {
+        key: PropertyKey::Ident(k.into()),
+        value: v,
+    };
+    let stmts = vec![
+        set(
+            "request",
+            Expression::Object {
+                properties: vec![
+                    prop("url", var("u")),
+                    prop("body", Expression::constant(Constant::Null)),
+                ],
+            },
+        ),
+        set(
+            "obj",
+            Expression::Object {
+                properties: vec![prop("nick", var("nick"))],
+            },
+        ),
+        put("request", "body", var("obj")),
+        set("obj3", Expression::call(var("_require"), vec![])),
+        put(
+            "request",
+            "rejectWithError",
+            Expression::call(Expression::member(var("obj3"), "f"), vec![]),
+        ),
+        Statement::Expr(Expression::call(var("patch"), vec![var("request")])),
+    ];
+    let out = reconstruct_jsx(stmts);
+    let text: Vec<String> = out.iter().map(|s| s.to_string()).collect();
+    assert_eq!(out.len(), 6, "{text:?}");
+    assert!(text[0].contains("body: null"), "{text:?}");
+    assert!(text[2].contains("request.body = obj"), "{text:?}");
+    assert!(
+        text[4].contains("request.rejectWithError = obj3"),
+        "{text:?}"
+    );
+}

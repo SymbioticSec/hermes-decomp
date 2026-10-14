@@ -107,6 +107,7 @@ impl PipelineContext {
             None => BTreeMap::new(),
         };
 
+        Self::watch(&all_ir, "before naming");
         // STAGE W5-W11: Name resolution (module names, closures, exports, IPA)
         let phase = super::progress::Phase::start("naming / IPA / closures");
         let mut global_analysis = Self::run_naming_pipeline(
@@ -119,6 +120,7 @@ impl PipelineContext {
         );
         phase.finish();
 
+        Self::watch(&all_ir, "after naming");
         // STAGE W12-W16: Transform pipeline (inlining, async detection, post-IPA)
         let phase = super::progress::Phase::start("transforms (inline / async / cleanup)");
         Self::run_transform_pipeline(
@@ -130,6 +132,7 @@ impl PipelineContext {
         );
         phase.finish();
 
+        Self::watch(&all_ir, "after transforms");
         // Recover original worklet sources from embedded `__initData.code` strings.
         let worklet_sources = transforms::collect_worklet_sources(&all_ir);
         log::debug!(
@@ -175,6 +178,7 @@ impl PipelineContext {
             phase.finish();
         }
 
+        Self::watch(&all_ir, "after module hoist");
         // STAGE W17: Inline body rendering
         let mut ctx = PipelineContext {
             all_ir,
