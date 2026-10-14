@@ -16,7 +16,7 @@
 
 mod detect;
 mod hoist;
-mod kinds;
+pub(crate) mod kinds;
 mod lazy;
 mod names;
 

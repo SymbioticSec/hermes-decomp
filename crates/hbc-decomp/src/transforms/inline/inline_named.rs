@@ -396,17 +396,37 @@ fn flush_pending_blocked_by(
     let written = assigned_variable_names(stmt);
     let blocked: Vec<String> = pending
         .iter()
-        .filter(|(_, value)| {
+        .filter(|(name, value)| {
             if structured || written.iter().any(|w| expr_reads_variable(value, w)) {
                 return true;
             }
             if matches!(value, Expression::Value(_)) {
                 return false;
             }
+            // A module load (`importDefault(706)`) becomes a module-level import
+            // whatever its position, so it orders like a read, not like a call.
+            // Inlining runs before the loads are hoisted; treating them as effects
+            // left `obj = importDefault(706); obj.dispatch(…)` at every use.
+            let effectful = value.has_side_effects() && !is_module_load(value);
+            // A pure value this statement reads is substituted at its use:
+            // `obj = { type, id }; dispatch(obj)` is `dispatch({ type, id })`,
+            // the call runs after its argument is built either way. Writing
+            // it out before the call turned every argument object and every
+            // property chain back into a named temporary (v0.2.4 regression).
+            if !effectful && stmt_reads_variable(stmt, name) {
+                return false;
+            }
+            // A literal built from constants, names and functions reads no
+            // memory, so no call or store can change it: `obj = { update() {…} };
+            // size.fileFinishedImporting(…); exports.default = obj` folds into
+            // `export default { update() {…} }`.
+            if !expr_reads_memory(value) {
+                return false;
+            }
             // A value that runs code keeps its place among the other effects. A
             // value that only reads memory (`a.b.c`) may cross a literal or a
             // plain copy, but not a call or a store, which could change it.
-            if value.has_side_effects() {
+            if effectful {
                 effects
             } else {
                 writes_memory
@@ -478,6 +498,81 @@ fn assigned_variable_names(stmt: &Statement) -> Vec<String> {
     let mut c = C(Vec::new());
     c.visit_statement(stmt);
     c.0
+}
+
+// `require(N)` / `importDefault(N)` / `importAll(N)` with a constant or
+// dependency-map id.
+fn is_module_load(expr: &Expression) -> bool {
+    let Expression::Call { callee, arguments } = expr else {
+        return false;
+    };
+    let Expression::Value(Value::Binding(Binding::Variable(n))) = callee.as_ref() else {
+        return false;
+    };
+    if !crate::transforms::module_hoist::kinds::LOADER_NAMES.contains(&n.as_str()) {
+        return false;
+    }
+    let id = match arguments.first() {
+        Some(Expression::Value(Value::Constant(crate::ir::Constant::Undefined))) => {
+            arguments.get(1)
+        }
+        other => other,
+    };
+    matches!(
+        id,
+        Some(Expression::Value(Value::Constant(
+            crate::ir::Constant::Integer(_)
+        ))) | Some(Expression::Member {
+            property: crate::ir::PropertyKey::Index(_),
+            ..
+        })
+    ) && arguments.len() <= 2
+}
+
+// Whether evaluating `expr` looks at anything a statement could change: a
+// property or index read, a call, a construction, a suspension.
+fn expr_reads_memory(expr: &Expression) -> bool {
+    use crate::ir::Visitor;
+    struct C(bool);
+    impl<'a> Visitor<'a> for C {
+        fn visit_expression(&mut self, e: &'a Expression) {
+            if !matches!(
+                e,
+                Expression::Value(_)
+                    | Expression::Object { .. }
+                    | Expression::Array { .. }
+                    | Expression::Function { .. }
+                    | Expression::Binary { .. }
+                    | Expression::Unary { .. }
+                    | Expression::Conditional { .. }
+                    | Expression::TemplateLiteral { .. }
+            ) {
+                self.0 = true;
+            }
+            self.walk_expression(e);
+        }
+    }
+    let mut c = C(false);
+    c.visit_expression(expr);
+    c.0
+}
+
+fn stmt_reads_variable(stmt: &Statement, name: &str) -> bool {
+    use crate::ir::Visitor;
+    struct C<'n>(&'n str, bool);
+    impl<'a> Visitor<'a> for C<'_> {
+        fn visit_expression(&mut self, e: &'a Expression) {
+            if let Expression::Value(Value::Binding(Binding::Variable(n))) = e {
+                if n == self.0 {
+                    self.1 = true;
+                }
+            }
+            self.walk_expression(e);
+        }
+    }
+    let mut c = C(name, false);
+    c.visit_statement(stmt);
+    c.1
 }
 
 fn expr_reads_variable(expr: &Expression, name: &str) -> bool {
@@ -711,5 +806,134 @@ mod pending_order_tests {
         let rendered: Vec<String> = out.iter().map(|s| s.to_string()).collect();
         let calls = rendered.iter().filter(|s| s.contains("f()")).count();
         assert_eq!(calls, 1, "f() rendered once: {rendered:?}");
+    }
+}
+
+#[cfg(test)]
+mod use_site_tests {
+    use super::inline_named_variables;
+    use crate::ir::{
+        AssignTarget, Binding, Constant, Expression, ObjectProperty, PropertyKey, Statement, Value,
+    };
+
+    fn var(n: &str) -> Expression {
+        Expression::Value(Value::Binding(Binding::Variable(n.into())))
+    }
+    fn assign(n: &str, v: Expression) -> Statement {
+        Statement::Assign {
+            target: AssignTarget::Binding(Binding::Variable(n.into())),
+            value: v,
+        }
+    }
+
+    // v0.2.4 wrote `obj2 = {…}` out before the call that was its only use and
+    // re-emitted `obj = X` after it: three statements where one was right.
+    #[test]
+    fn a_pure_temporary_is_substituted_into_the_call_that_reads_it() {
+        let stmts = vec![
+            assign("obj", var("DispatcherDefault")),
+            assign(
+                "obj2",
+                Expression::Object {
+                    properties: vec![
+                        ObjectProperty {
+                            key: PropertyKey::Ident("type".into()),
+                            value: Expression::constant(Constant::String("X".into())),
+                        },
+                        ObjectProperty {
+                            key: PropertyKey::Ident("channelId".into()),
+                            value: Expression::Value(Value::Parameter(1)),
+                        },
+                    ],
+                },
+            ),
+            Statement::Expr(Expression::call(
+                Expression::member(var("obj"), "dispatch"),
+                vec![var("obj2")],
+            )),
+        ];
+        let out = inline_named_variables(stmts);
+        assert_eq!(out.len(), 1, "{out:?}");
+        let text = format!("{:?}", out[0]);
+        assert!(
+            text.contains("DispatcherDefault") && text.contains("channelId"),
+            "{text}"
+        );
+        assert!(!text.contains("\"obj"), "{text}");
+    }
+
+    // An object of functions reads no memory, so it crosses the calls between
+    // its definition and the export that reads it.
+    #[test]
+    fn a_literal_of_functions_crosses_a_call_to_its_export() {
+        let stmts = vec![
+            assign(
+                "obj",
+                Expression::Object {
+                    properties: vec![ObjectProperty {
+                        key: PropertyKey::Ident("update".into()),
+                        value: Expression::Function {
+                            id: crate::ir::FunctionId(7),
+                            name: Some("update".into()),
+                            is_arrow: false,
+                            is_async: false,
+                            is_generator: false,
+                        },
+                    }],
+                },
+            ),
+            Statement::Expr(Expression::call(
+                Expression::member(var("size"), "fileFinishedImporting"),
+                vec![Expression::constant(Constant::String("a.tsx".into()))],
+            )),
+            Statement::Assign {
+                target: AssignTarget::Member {
+                    object: var("exports"),
+                    property: "default".into(),
+                },
+                value: var("obj"),
+            },
+        ];
+        let out = inline_named_variables(stmts);
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert!(format!("{:?}", out[1]).contains("update"), "{out:?}");
+    }
+
+    // A module load is hoisted to an import later, so it is substituted at its
+    // use like a plain name.
+    #[test]
+    fn a_module_load_is_substituted_into_the_call_that_reads_it() {
+        let stmts = vec![
+            assign(
+                "obj",
+                Expression::call(
+                    var("importDefault"),
+                    vec![Expression::constant(Constant::Integer(706))],
+                ),
+            ),
+            Statement::Expr(Expression::call(
+                Expression::member(var("obj"), "dispatch"),
+                vec![Expression::constant(Constant::Integer(1))],
+            )),
+        ];
+        let out = inline_named_variables(stmts);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(format!("{:?}", out[0]).contains("importDefault"), "{out:?}");
+    }
+
+    // A value that runs code still keeps its place before a call that does
+    // not read it.
+    #[test]
+    fn a_call_result_does_not_cross_another_call() {
+        let stmts = vec![
+            assign("tmp1", Expression::call(var("f"), vec![])),
+            Statement::Expr(Expression::call(var("g"), vec![])),
+            Statement::Expr(Expression::call(var("h"), vec![var("tmp1")])),
+        ];
+        let out = inline_named_variables(stmts);
+        let text = format!("{out:?}");
+        let f = text.find("\"f\"").unwrap();
+        let g = text.find("\"g\"").unwrap();
+        assert!(f < g, "{text}");
     }
 }

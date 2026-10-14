@@ -46,6 +46,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    // `k<fid>` prints the names the keep set holds for a function and the
+    // functions whose parent it is.
+    for arg in args[2..].iter() {
+        if let Some(fid) = arg.strip_prefix('k').and_then(|m| m.parse::<u32>().ok()) {
+            let empty = std::collections::BTreeMap::new();
+            let parents = ctx
+                .closure_ctx
+                .as_ref()
+                .map(|c| &c.parent_function)
+                .unwrap_or(&empty);
+            let children: Vec<u32> = parents
+                .iter()
+                .filter(|(_, p)| **p == fid)
+                .map(|(c, _)| *c)
+                .collect();
+            let keep = hbc_decomp::transforms::names_used_by_descendants(&ctx.all_ir, parents);
+            let mut names: Vec<&String> = keep
+                .get(&fid)
+                .map(|s| s.iter().collect())
+                .unwrap_or_default();
+            names.sort();
+            println!("== keep {fid}: children={children:?} names={names:?}");
+        }
+    }
     for fid in args[2..].iter().filter_map(|a| a.parse::<u32>().ok()) {
         println!(
             "== function {fid} name={:?} module={:?}",

@@ -12,7 +12,7 @@ mod hoist_closures;
 mod inline;
 pub mod logic_patterns;
 pub mod logic_simplify;
-mod module_hoist;
+pub(crate) mod module_hoist;
 mod name_inference;
 pub mod objects;
 mod optimize;

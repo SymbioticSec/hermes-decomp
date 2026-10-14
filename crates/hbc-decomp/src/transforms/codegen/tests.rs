@@ -436,3 +436,49 @@ mod nested_write_import_tests {
         );
     }
 }
+
+// hermesc reloads a dependency before each use. Every load is the same import,
+// so the name is bound once by the import and not aliased through `size_mod`.
+#[test]
+fn repeated_loads_of_one_module_bind_the_import_once() {
+    let load = || {
+        Expression::call(
+            Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+                "require".into(),
+            ))),
+            vec![Expression::constant(Constant::Integer(2))],
+        )
+    };
+    let size = || {
+        Expression::Value(crate::ir::Value::Binding(crate::ir::Binding::Variable(
+            "size".into(),
+        )))
+    };
+    let stmts = vec![
+        Statement::let_stmt("size", load()),
+        Statement::Expr(Expression::call(
+            Expression::member(size(), "clear"),
+            vec![],
+        )),
+        Statement::Assign {
+            target: crate::ir::AssignTarget::Binding(crate::ir::Binding::Variable("size".into())),
+            value: load(),
+        },
+        Statement::Expr(Expression::call(
+            Expression::member(size(), "fileFinishedImporting"),
+            vec![Expression::constant(Constant::String("a.tsx".into()))],
+        )),
+    ];
+    let mut import_map = BTreeMap::new();
+    import_map.insert(2u32, "module_2".to_string());
+    let mut codegen = Codegen::new(CodegenOptions::new())
+        .with_imports(import_map)
+        .with_esm_mode(BTreeMap::new());
+    let output = codegen.generate_esm_module(&stmts, 15, None);
+    assert_eq!(output.matches("import size from").count(), 1, "{output}");
+    assert!(!output.contains("size_mod"), "{output}");
+    assert!(
+        output.contains("size.clear()") && output.contains("size.fileFinishedImporting"),
+        "{output}"
+    );
+}

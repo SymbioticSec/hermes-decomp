@@ -81,12 +81,39 @@ impl Codegen {
             // Bodies inlined into this module are rendered strings by now, so their
             // writes are folded in from the count the pipeline took over the IR of
             // every descendant function.
+            // A name whose every write is the same module load is not rebound:
+            // hermesc reloads a dependency at each use (`size = require(2)` before
+            // each `size.fileFinishedImporting(...)`), and all those loads yield
+            // the one import. Aliasing it printed `let size = size_mod;` and then
+            // `size = size_mod;` before every use. A write that is not that load,
+            // or any write inside a nested body, still makes it a local.
+            let mut same_load: HashMap<String, (Option<String>, u32)> = HashMap::new();
+            for stmt in statements {
+                let (name, value) = match stmt {
+                    Statement::Let { name, value, .. } => (name, value),
+                    Statement::Assign {
+                        target: AssignTarget::Binding(crate::ir::Binding::Variable(name)),
+                        value,
+                    } => (name, value),
+                    _ => continue,
+                };
+                let imp = self.try_import_from_expr(name, value);
+                let entry = same_load
+                    .entry(name.clone())
+                    .or_insert_with(|| (imp.clone(), 0));
+                if entry.0 != imp {
+                    entry.0 = None;
+                }
+                entry.1 += 1;
+            }
             for (name, count) in &self.nested_writes {
                 *writes.entry(name.clone()).or_insert(0) += *count as u32;
             }
             writes
                 .into_iter()
-                .filter(|(_, c)| *c > 1)
+                .filter(|(n, c)| {
+                    *c > 1 && !matches!(same_load.get(n), Some((Some(_), loads)) if *loads == *c)
+                })
                 .map(|(n, _)| n)
                 .collect()
         };

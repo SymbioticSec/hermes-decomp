@@ -83,38 +83,28 @@ pub(super) fn apply_pending_to_stmt(
     pending: &mut BTreeMap<String, Expression>,
 ) {
     match stmt {
+        // The names a statement consumes are read off it before the
+        // substitution rewrites them, otherwise a substituted name stayed
+        // pending and was written out again at the end of the block.
         Statement::Assign { target, value } => {
+            remove_used_from_target(target, pending);
+            let consumed = value.clone();
             apply_pending_to_target(target, pending);
             substitute_vars_in_expr(value, pending);
-            remove_used_from_pending(value, pending);
-            remove_used_from_target(target, pending);
+            remove_used_from_pending(&consumed, pending);
         }
-        Statement::Let { value, .. } => {
-            substitute_vars_in_expr(value, pending);
-            remove_used_from_pending(value, pending);
-        }
-        Statement::Class {
-            super_class: Some(sc),
+        Statement::Let { value, .. }
+        | Statement::Class {
+            super_class: Some(value),
             ..
-        } => {
-            substitute_vars_in_expr(sc, pending);
-            remove_used_from_pending(sc, pending);
         }
-        Statement::Expr(e) => {
-            substitute_vars_in_expr(e, pending);
-            remove_used_from_pending(e, pending);
-        }
-        Statement::Return(Some(e)) => {
-            substitute_vars_in_expr(e, pending);
-            remove_used_from_pending(e, pending);
-        }
-        Statement::Throw(e) => {
-            substitute_vars_in_expr(e, pending);
-            remove_used_from_pending(e, pending);
-        }
-        Statement::Delete { target, .. } => {
-            substitute_vars_in_expr(target, pending);
-            remove_used_from_pending(target, pending);
+        | Statement::Expr(value)
+        | Statement::Return(Some(value))
+        | Statement::Throw(value)
+        | Statement::Delete { target: value, .. } => {
+            let consumed = value.clone();
+            substitute_vars_in_expr(value, pending);
+            remove_used_from_pending(&consumed, pending);
         }
         _ => {
             // For structured statements (if/while/for/etc.), flush all pending first

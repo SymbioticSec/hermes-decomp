@@ -20,7 +20,7 @@ impl LoaderKind {
 
 pub(super) type HoistKey = (u32, LoaderKind);
 
-pub(super) const LOADER_NAMES: &[&str] = &["require", "importDefault", "importAll"];
+pub(crate) const LOADER_NAMES: &[&str] = &["require", "importDefault", "importAll"];
 
 // Reserved so injected bindings never shadow Metro factory roles or loaders.
 pub(super) const RESERVED_BINDINGS: &[&str] = &[
